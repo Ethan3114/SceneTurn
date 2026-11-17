@@ -25,6 +25,7 @@ interface AssetPickerProps {
   onClose: () => void;
   onSelect: (asset: PickerAsset) => void;
   allowAudio?: boolean;
+  importBehavior?: 'select' | 'library';
 }
 
 interface ProjectAsset {
@@ -81,7 +82,7 @@ const AssetPreview = ({ asset }: { asset: OpenFMVAsset }) => {
   return <Icon size={21} />;
 };
 
-export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = false }: AssetPickerProps) {
+export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = false, importBehavior = 'select' }: AssetPickerProps) {
   const t = useTranslations('assets');
   const inputRef = useRef<HTMLInputElement>(null);
   const currentProjectId = useProjectSessionStore((state) => state.projectId);
@@ -146,11 +147,7 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
   const importAsset = async (asset: OpenFMVAsset | null) => {
     if (!asset) return;
     await persistAssetToCurrentProject(asset);
-    if (asset.type === 'audio' && !allowAudio) {
-      refreshProjectAssets();
-      alert(t('audioCannotBind'));
-      return;
-    }
+    if (importBehavior === 'library') return;
     selectAsset(asset);
   };
 

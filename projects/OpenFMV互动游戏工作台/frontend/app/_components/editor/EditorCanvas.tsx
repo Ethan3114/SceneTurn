@@ -539,7 +539,10 @@ const EditorContent = ({ projectId }: { projectId?: string | null }) => {
           onLayout={handleLayout}
           toolMode={toolMode}
           onToolModeChange={setToolMode}
-          onOpenAssets={() => setAssetPickerOpen(true)}
+          onOpenAssets={() => {
+            setTargetNodeIdForAsset(null);
+            setAssetPickerOpen(true);
+          }}
         />
       )}
       
@@ -547,6 +550,7 @@ const EditorContent = ({ projectId }: { projectId?: string | null }) => {
         isOpen={isAssetPickerOpen} 
         onClose={() => setAssetPickerOpen(false)}
         onSelect={handleAssetSelect}
+        importBehavior={targetNodeIdForAsset ? 'select' : 'library'}
       />
       
       {pendingConnectMenu && (

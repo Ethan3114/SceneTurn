@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { cp, mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
-import { ProjectApi } from "./api.js";
+import { BridgeHttpError, ProjectApi } from "./api.js";
 import { CodexProtocol, type DynamicCall } from "./protocol.js";
 import { checkpointSchema, productRoot, stateDirectory, writePrivateJson, type Checkpoint, type Credentials } from "./storage.js";
 
@@ -21,6 +21,38 @@ const completedSchema = z.object({ threadId: z.string(), turn: turnSchema });
 const tokenSchema = z.object({ threadId: z.string(), turnId: z.string(), tokenUsage: z.record(z.string(), z.unknown()) });
 const heartbeatSchema = z.object({ activeRuns: z.array(z.object({ id: z.string(), stopRequested: z.boolean() }).passthrough()) }).passthrough();
 const argumentSchema = z.record(z.string(), z.unknown());
+
+const correctableTools = new Map<string, ReadonlySet<string>>([
+  ["apply_story_ops", new Set()],
+  ["prepare_scene_media", new Set()],
+  ["edit_interaction", new Set(["INTERACTION_TIME_INVALID", "INTERACTION_TARGET_INVALID"])],
+  ["edit_timeline", new Set(["MEDIA_DURATION_CONFLICT", "ASSET_TYPE_UNSUPPORTED"])],
+  ["arrange_story", new Set(["STORY_CONNECTION_INVALID"])],
+  ["place_interaction", new Set(["BUTTON_RECT_INVALID"])],
+  ["move_timeline_clip", new Set(["TRACK_TYPE_MISMATCH"])],
+]);
+const correctionMessages: Readonly<Record<string, string>> = {
+  AGENT_TOOL_ARGUMENTS_INVALID: "参数没有通过工具结构校验。请按照当前工具的Schema修正参数。",
+  INTERACTION_TIME_INVALID: "互动开始时间加持续时间必须位于场景时间线内。请先读取当前场景时间线，再调整互动范围。",
+  INTERACTION_TARGET_INVALID: "互动需要有效的其他场景或结尾目标。请先读取当前故事节点，再修正跳转目标。",
+  MEDIA_DURATION_CONFLICT: "裁切范围超过媒体真实时长。请先读取当前媒体时长和播放速度，再修正裁切范围。",
+  ASSET_TYPE_UNSUPPORTED: "时间线只接受图片、视频和音频。请读取当前素材并选择支持的媒体类型。",
+  STORY_CONNECTION_INVALID: "剧情连接需要有效的起点和终点。请读取当前故事节点，再修正连接。",
+  BUTTON_RECT_INVALID: "互动位置和尺寸必须完整位于画面内。请修正归一化坐标及宽高。",
+  TRACK_TYPE_MISMATCH: "目标轨道需要与原片段类型相同。请读取当前时间线，再选择同类型轨道。",
+};
+
+export function correctableToolFailure(toolName: string, error: unknown) {
+  const allowed = correctableTools.get(toolName);
+  if (!(error instanceof BridgeHttpError) || error.status !== 422 || !allowed
+    || (error.code !== "AGENT_TOOL_ARGUMENTS_INVALID" && !allowed.has(error.code))) return null;
+  return {
+    error: { code: error.code, message: correctionMessages[error.code] },
+    executed: false,
+    correctionRequired: true,
+    instruction: "本次操作未写入项目。请核对当前状态并修正参数，再通过新的工具调用提交。",
+  };
+}
 
 function finalText(turn: z.infer<typeof turnSchema>): string {
   return (turn.items ?? []).filter((item) => item.type === "agentMessage" && typeof item.text === "string").map((item) => item.text as string).join("\n");
@@ -105,9 +137,19 @@ export async function runBridge(credentials: Credentials, once: boolean): Promis
           checkpoint.pendingCallId = call.callId;
           await writePrivateJson(`${claim.run.id}.json`, checkpoint);
           const operationId = createHash("sha256").update(`${claim.run.id}:${call.callId}`).digest("hex");
-          const response = z.object({ result: z.record(z.string(), z.unknown()) }).parse(await api.post("/connections/tools", {
-            runId: claim.run.id, operationId, expectedRevision: checkpoint.revision, toolName: call.tool, arguments: body,
-          }));
+          let response;
+          try {
+            response = z.object({ result: z.record(z.string(), z.unknown()) }).parse(await api.post("/connections/tools", {
+              runId: claim.run.id, operationId, expectedRevision: checkpoint.revision, toolName: call.tool, arguments: body,
+            }));
+          } catch (error) {
+            const failure = correctableToolFailure(call.tool, error);
+            if (!failure) throw error;
+            checkpoint.pendingCallId = null;
+            await writePrivateJson(`${claim.run.id}.json`, checkpoint);
+            protocol.respond(id, { success: false, contentItems: [{ type: "inputText", text: JSON.stringify(failure) }] });
+            return;
+          }
           if (typeof response.result.revision === "number") checkpoint.revision = response.result.revision;
           checkpoint.pendingCallId = null;
           await writePrivateJson(`${claim.run.id}.json`, checkpoint);

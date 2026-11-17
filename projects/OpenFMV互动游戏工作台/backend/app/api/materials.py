@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import current_user, get_db
 from app.core.config import get_settings
 from app.material_models import MaterialConversation
-from app.material_schemas import MaterialAnswer, MaterialCreate, MaterialEnvelope, MaterialList, MaterialSend
+from app.material_schemas import MaterialAnswer, MaterialCreate, MaterialEnvelope, MaterialList, MaterialSend, material_request_payload
 from app.models import User
 from app.services import materials
 from app.services.projects import require_project, require_scene
@@ -46,9 +46,9 @@ def send(project_id: str, scene_id: str, conversation_id: str, body: MaterialSen
 def answer(project_id: str, scene_id: str, conversation_id: str, body: MaterialAnswer, user: User = Depends(current_user), session: Session = Depends(get_db)):
     lock_write(session)
     conversation = materials.require_material(session, project_id, scene_id, conversation_id, user.id)
-    payload = {"conversationId": conversation_id, **body.model_dump(by_alias=True)}
+    payload = {"conversationId": conversation_id, **material_request_payload(body)}
     if not get_operation(session, user.id, project_id, body.operation_id, "materials.answer", payload):
-        answer_review(session, conversation, body)
+        answer_review(session, conversation, body, get_settings())
         save_operation(session, user.id, project_id, body.operation_id, "materials.answer", payload, {"reviewId": body.review_id})
         session.commit()
     return {"conversation": materials.view(session, conversation)}

@@ -7,8 +7,10 @@ from app.agent_models import AgentRun, AgentStep
 from app.core.errors import AppError
 from app.creative_artifacts import image_prompt_items
 from app.image_models import ImageAccount, ImageJob
+from app.material_schemas import material_request_payload
 from app.models import Generation, new_id
 from app.services.projects import payload_digest, require_project, require_revision
+from app.services.material_references import frozen_reference_assets, validate_reference_assets
 
 
 VISUAL_ROLES = {"character_designer", "scene_designer", "storyboarder"}
@@ -40,7 +42,7 @@ def supported_dimensions(spec):
     return width, height
 
 
-def pause_for_review(session, run, step, node, artifact):
+def pause_for_review(session, run, step, node, artifact, settings=None):
     if step is None:
         raise AppError(422, "MATERIAL_STEP_REQUIRED", "素材交付必须属于明确岗位")
     previous = (run.result_json or {}).get("materialReview")
@@ -53,6 +55,7 @@ def pause_for_review(session, run, step, node, artifact):
         questions.extend({"id": new_id(), "question": text, "suggestedAnswer": "确认"} for text in artifact["approvalGates"])
     jobs = []
     if artifact["role"] in VISUAL_ROLES:
+        selected_references = frozen_reference_assets(session, run, settings)
         if artifact["role"] == "storyboarder" and artifact.get("schemaVersion") != 2:
             raise AppError(422, "STORYBOARD_BOUNDARIES_REQUIRED", "请按连续首尾帧结构保存分镜")
         accounts = session.scalars(select(ImageAccount).where(ImageAccount.owner_id == run.owner_id)).all()
@@ -64,21 +67,32 @@ def pause_for_review(session, run, step, node, artifact):
         source_ids = {item["referenceId"] for item in artifact["sources"] if item["kind"] in {"artifact", "canvas_node"}}
         prior = [item for item in prior if (item.node_id, item.artifact_hash) in approved and item.node_id in source_ids]
         representatives = list({item.node_id: item for item in reversed(prior)}.values())
-        anchors = list(dict.fromkeys(item.asset_id for item in [*representatives, *prior] if item.asset_id))[:4]
+        selected_ids = [item["assetId"] for item in selected_references]
+        prior_anchors = list(dict.fromkeys(item.asset_id for item in [*representatives, *prior] if item.asset_id))[:4]
+        specifications = []
         for index, item in enumerate(image_prompt_items(artifact)):
             spec = item["outputSpec"]
             width, height = supported_dimensions(spec)
             if artifact["role"] == "storyboarder" and spec["imageCount"] != 1:
                 raise AppError(422, "STORYBOARD_SINGLE_FRAME_REQUIRED", "每个边界帧必须生成一张独立图片")
             for variant in range(spec["imageCount"]):
-                job = ImageJob(id=new_id(), owner_id=run.owner_id, project_id=run.project_id, scene_id=run.scene_id,
-                    run_id=run.id, node_id=node["id"], artifact_hash=artifact_hash,
-                    operation_id=f"{run.id}:{artifact_hash}:{index}:{variant}", label=item["label"] + (f" · {variant + 1}" if spec["imageCount"] > 1 else ""),
-                    frame_key=artifact["keyframes"][index]["key"] if artifact["role"] == "storyboarder" else None,
-                    status="awaiting_confirmation", request_json={"prompt": item["prompt"], "width": width, "height": height},
-                    reference_asset_ids=anchors, dependency_ids=[jobs[-1].id] if artifact["role"] == "storyboarder" and jobs else [])
-                session.add(job)
-                jobs.append(job)
+                specifications.append((index, item, spec, width, height, variant))
+        previous_frame_slots = 1 if artifact["role"] == "storyboarder" and len(specifications) > 1 else 0
+        if len(selected_ids) + previous_frame_slots > 5:
+            raise AppError(422, "MATERIAL_REFERENCE_CAPACITY_EXCEEDED",
+                f"已选择{len(selected_ids)}张参考图片，连续分镜还需要{previous_frame_slots}张上一画面作为参考，共{len(selected_ids) + previous_frame_slots}张，超过单次5张上限；请在新素材对话中选择至多{5 - previous_frame_slots}张参考图片后继续")
+        anchor_limit = max(len(selected_ids), min(4, 5 - previous_frame_slots))
+        anchors = list(dict.fromkeys([*selected_ids, *prior_anchors]))[:anchor_limit]
+        for index, item, spec, width, height, variant in specifications:
+            job = ImageJob(id=new_id(), owner_id=run.owner_id, project_id=run.project_id, scene_id=run.scene_id,
+                run_id=run.id, node_id=node["id"], artifact_hash=artifact_hash,
+                operation_id=f"{run.id}:{artifact_hash}:{index}:{variant}", label=item["label"] + (f" · {variant + 1}" if spec["imageCount"] > 1 else ""),
+                frame_key=artifact["keyframes"][index]["key"] if artifact["role"] == "storyboarder" else None,
+                status="awaiting_confirmation", request_json={"prompt": item["prompt"], "width": width, "height": height,
+                    "referenceAssets": selected_references},
+                reference_asset_ids=anchors, dependency_ids=[jobs[-1].id] if artifact["role"] == "storyboarder" and jobs else [])
+            session.add(job)
+            jobs.append(job)
         session.flush()
     review = {"id": new_id(), "stepId": step.id, "nodeId": node["id"], "artifactHash": artifact_hash,
         "status": "pending", "questions": questions, "imageJobIds": [job.id for job in jobs],
@@ -109,7 +123,7 @@ def public_review(session, run):
         "message": "请回答视频制作前的问题；提交视频时还会核对首尾画面和参数。" if status == "pending" and review.get("role") == "media_producer" else "请核对以下事项，并确认当前成果。" if status == "pending" else "图片生成中，完成后请确认图片成果。" if status == "generating" else "图片已生成，请查看画布并确认后继续。"}
 
 
-def answer_review(session, conversation, body):
+def answer_review(session, conversation, body, settings=None):
     run = session.get(AgentRun, conversation.active_run_id)
     if run is None or run.owner_id != conversation.owner_id:
         raise AppError(404, "MATERIAL_REVIEW_NOT_FOUND", "待确认事项不存在")
@@ -117,13 +131,20 @@ def answer_review(session, conversation, body):
     if not review or review["id"] != body.review_id:
         raise AppError(409, "MATERIAL_REVIEW_STALE", "待确认事项已经更新，请重新读取")
     if review.get("operationId") == body.operation_id:
-        if review.get("answerPayload") != body.model_dump(by_alias=True):
+        if review.get("answerPayload") != material_request_payload(body):
             raise AppError(409, "OPERATION_CONFLICT", "确认请求内容已经变化")
         return
     if run.status != "waiting_confirmation":
         raise AppError(409, "MATERIAL_REVIEW_STATE", "当前任务没有等待这次确认")
     project = require_project(session, run.project_id, run.owner_id)
     require_revision(project, body.expected_revision)
+    context = run.limits_json["materialContext"]
+    frozen = context.get("referenceAssets", [])
+    previous_ids = [item["assetId"] for item in frozen]
+    added_ids = [identifier for identifier in body.reference_asset_ids if identifier not in previous_ids]
+    if added_ids and not body.requested_changes.strip():
+        raise AppError(422, "MATERIAL_REFERENCE_CHANGES_REQUIRED", "新增参考图片后，请填写成果修改要求，当前岗位需要重新制作成果后再次确认")
+    reference_assets = validate_reference_assets(session, project, [*previous_ids, *added_ids], settings, frozen)
     from app.services.materials import canvas_nodes
     node = next((item for item in canvas_nodes(session, run.project_id, run.scene_id, run.owner_id) if item["id"] == review["nodeId"]), None)
     if node is None or payload_digest(node.get("metadata", {}).get("creativeArtifact")) != review["artifactHash"]:
@@ -135,12 +156,13 @@ def answer_review(session, conversation, body):
     if set(body.answers) != expected or any(not value.strip() for value in body.answers.values()):
         raise AppError(422, "MATERIAL_ANSWERS_REQUIRED", "请逐项回答全部待确认问题")
     review = {**review, "answers": {**review.get("answers", {}), **body.answers}, "operationId": body.operation_id,
-        "answerPayload": body.model_dump(by_alias=True), "answeredAt": time.time()}
-    context = run.limits_json["materialContext"]
+        "answerPayload": material_request_payload(body), "answeredAt": time.time()}
     answer_record = {"reviewId": review["id"], "nodeId": review["nodeId"], "artifactHash": review["artifactHash"],
-        "questions": review["questions"], "answers": body.answers, "requestedChanges": body.requested_changes}
-    run.limits_json = {**run.limits_json, "materialContext": {**context, "humanAnswers": [*context.get("humanAnswers", []), answer_record]}}
-    changed = bool(body.requested_changes) or any(body.answers[item["id"]].strip() != item["suggestedAnswer"].strip() for item in public["questions"])
+        "questions": review["questions"], "answers": body.answers, "requestedChanges": body.requested_changes,
+        "referenceAssets": reference_assets, "addedReferenceAssetIds": added_ids}
+    run.limits_json = {**run.limits_json, "materialContext": {**context, "referenceAssets": reference_assets,
+        "referenceAssetsRevision": project.revision, "humanAnswers": [*context.get("humanAnswers", []), answer_record]}}
+    changed = bool(body.requested_changes.strip()) or any(body.answers[item["id"]].strip() != item["suggestedAnswer"].strip() for item in public["questions"])
     step = session.get(AgentStep, review["stepId"])
     if changed:
         review["status"] = "revision_requested"

@@ -60,7 +60,8 @@ def test_real_writer_delivery_omits_prompts_sources_and_internal_receipts(actual
         session.commit()
         result = view(session, conversation)
         writer = next(item for item in result["nodes"] if item["id"] == node["id"])
-        assert artifact["plot"] in writer["metadata"]["content"]
+        assert artifact["title"] in writer["metadata"]["content"]
+        assert artifact["plot"] not in writer["metadata"]["content"]
         assert all(item["action"] in writer["metadata"]["content"] for item in artifact["scenes"])
         encoded = json.dumps(result, ensure_ascii=False)
         assert '"creativeArtifact"' not in encoded and '"generationPrompts"' not in encoded
@@ -68,6 +69,36 @@ def test_real_writer_delivery_omits_prompts_sources_and_internal_receipts(actual
         assert result["pendingReview"]["questions"]
         assert len(result["pendingReview"]["questions"]) == sum(item["confirmationNeeded"] for item in artifact["assumptions"])
         assert result["messages"][-1]["run"]["steps"] and run.status == "waiting_confirmation"
+
+
+def test_actual_saved_script_and_public_titles_preserve_final_words_and_private_records(actual_database):
+    with Session(actual_database) as session:
+        run, _, node, conversation = actual_role(session, "writer")
+        artifact = copy.deepcopy(node["metadata"]["creativeArtifact"])
+        original_plan = copy.deepcopy(run.plan_json)
+        original_steps = [(step.id, step.title) for step in session.scalars(select(AgentStep).where(AgentStep.run_id == run.id).order_by(AgentStep.index))]
+        result = view(session, conversation)
+        writer = next(item for item in result["nodes"] if item["id"] == node["id"])
+        text = writer["delivery"]["text"]
+        assert text == writer["metadata"]["content"]
+        assert artifact["plot"] not in text
+        names = {item["key"]: item["name"] for item in artifact["characters"]}
+        for scene in artifact["scenes"]:
+            assert scene["heading"] in text and scene["action"] in text and scene["endingState"] in text
+            for line in scene["dialogues"]:
+                assert names[line["speaker"]] in text and line["line"] in text and line["performance"] in text
+        for ending in artifact["endings"]:
+            assert all(ending[field] in text for field in ("condition", "resolution", "finalState"))
+        titles = {"director": "核对制作成果", "writer": "编写脚本", "character_designer": "设计角色形象", "scene_designer": "设计场景",
+                  "storyboarder": "制作分镜图片", "media_producer": "制作镜头视频", "sound_designer": "设计声音"}
+        visible = next(message["run"] for message in result["messages"] if message["run"]["id"] == run.id)
+        for public, original in zip(visible["plan"], original_plan, strict=True):
+            assert public["title"] == ("核对制作成果" if original.get("kind") == "verify" else titles[original["role"]])
+            assert public["instruction"] == ""
+        for public, original in zip(visible["steps"], original_plan, strict=True):
+            assert public["title"] == ("核对制作成果" if original.get("kind") == "verify" else titles[original["role"]])
+        assert run.plan_json == original_plan and node["metadata"]["creativeArtifact"] == artifact
+        assert [(step.id, step.title) for step in session.scalars(select(AgentStep).where(AgentStep.run_id == run.id).order_by(AgentStep.index))] == original_steps
 
 
 def test_real_confirmation_cannot_be_bypassed_and_answers_survive_session_restart(actual_database):

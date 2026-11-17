@@ -7,12 +7,14 @@ from app.agent_models import AgentRun, AgentStep
 from app.agent_schemas import RunCreate
 from app.core.errors import AppError
 from app.material_models import MaterialConversation, MaterialMessage
+from app.material_schemas import material_request_payload
 from app.image_models import ImageAccount, ImageJob
 from app.models import Canvas, Generation, ProviderSettings, TextProviderSettings
 from app.services.projects import get_operation, iso_timestamp, lock_write, payload_digest, require_project, require_revision, require_scene, save_operation
 from app.services.image_queue import public_job
 from app.services.material_delivery import public_node, public_run
 from app.services.material_review import public_review
+from app.services.material_references import validate_reference_assets
 from app.tools.project_tools import BOUNDARY_TOOL_CATALOG_VERSION
 
 
@@ -35,6 +37,7 @@ MATERIAL_INSTRUCTIONS = (
     "materialNodes中的professionalRole为空时，该节点属于普通素材。普通文字正文通过read_project或retrieve_context读取；read_artifact只用于已有专业结构。"
     "每次只调用一个函数，收到实际结果后再调用下一个。计划title使用用户能理解的制作目标；节点标识和工具操作只写入后台instruction。"
     "本轮只使用本次需求、本轮已保存产物和用户明确选择的references；其他历史素材保留在项目中。"
+    "referenceAssets是用户明确选择并冻结版本的项目参考图片，通过read_project读取；后续生图直接使用这些真实图片。不得声称已经观察到图片中未提供的细节。"
 )
 
 
@@ -98,6 +101,7 @@ def view(session, value):
                 if generation and generation.owner_id == value.owner_id and generation.project_id == value.project_id and generation.status == "ready" and generation.asset_id:
                     video_results[generation.input_json["outputNodeId"]] = generation.asset_id
     return {**summary(value), "revision": project.revision, "capabilities": capabilities(session, value.owner_id),
+        "selectedReferenceAssets": current.limits_json.get("materialContext", {}).get("referenceAssets", []) if current else [],
         "pendingReview": public_review(session, current) if current else None,
         "nodes": [public_node({**node, "metadata": {**node.get("metadata", {}), **({"assetId": video_results[node["id"]]} if node["id"] in video_results else {})}}, producers.get(node["id"]), node_hash(node),
             [public_job(job) for job in jobs if job.node_id == node["id"] and job.status != "cancelled" and job.artifact_hash == payload_digest(node.get("metadata", {}).get("creativeArtifact"))])
@@ -128,7 +132,7 @@ def send(session, project_id, scene_id, conversation_id, user, body, settings):
 
     lock_write(session)
     conversation = require_material(session, project_id, scene_id, conversation_id, user.id)
-    payload = {"conversationId": conversation_id, **body.model_dump(by_alias=True)}
+    payload = {"conversationId": conversation_id, **material_request_payload(body)}
     if get_operation(session, user.id, project_id, body.operation_id, "materials.send", payload):
         return conversation
     active = session.get(AgentRun, conversation.active_run_id) if conversation.active_run_id else None
@@ -136,6 +140,7 @@ def send(session, project_id, scene_id, conversation_id, user, body, settings):
         raise AppError(409, "MATERIAL_CONVERSATION_BUSY", "当前素材任务尚未结束，请等待完成或停止后继续")
     project = require_project(session, project_id, user.id)
     require_revision(project, body.expected_revision)
+    reference_assets = validate_reference_assets(session, project, body.reference_asset_ids, settings)
     nodes = {node["id"]: node for node in canvas_nodes(session, project_id, scene_id, user.id)}
     references = []
     if len({item.node_id for item in body.references}) != len(body.references):
@@ -152,6 +157,7 @@ def send(session, project_id, scene_id, conversation_id, user, body, settings):
         target_ids=[item["nodeId"] for item in references], limits={"maxSteps": 24, "maxTokens": 32768, "maxCostMicros": 10000000}), settings, commit=False)
     run.limits_json = {**run.limits_json, "toolCatalogVersion": BOUNDARY_TOOL_CATALOG_VERSION, "materialConversationId": conversation_id, "materialContext": {"instructions": MATERIAL_INSTRUCTIONS,
         "requireHumanReview": True,
+        "referenceAssets": reference_assets, "referenceAssetsRevision": project.revision,
         "references": references, "scope": "current_round", "readableNodeIds": [item["nodeId"] for item in references],
         "capabilities": capabilities(session, user.id), "history": []}}
     sequence = (session.scalar(select(func.max(MaterialMessage.sequence)).where(MaterialMessage.conversation_id == conversation_id)) or 0) + 1

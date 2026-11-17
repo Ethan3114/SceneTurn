@@ -12,7 +12,7 @@
 
 当前完整剧情样例以《斗破苍穹》为题材，先查找已有剧情与媒体素材，再设计开头、中间剧情、选择点和两条后续线路，确认后细化每段视频制作清单。所有岗位成果及媒体生成继续执行本人逐项确认。
 
-[素材来源](docs/剧情设计/斗破苍穹-素材来源.md)、[本机素材预览](docs/剧情设计/斗破苍穹-素材预览.html)及[剧情与视频制作清单](docs/剧情设计/斗破苍穹-剧情与视频制作清单.md)已保存。当前《戒中人》设计包含九段视频、十张边界帧和两条后续线路，等待本人确认剧情后制作媒体。
+[素材来源](docs/剧情设计/斗破苍穹-素材来源.md)、[本机素材预览](docs/剧情设计/斗破苍穹-素材预览.html)及[剧情与视频制作清单](docs/剧情设计/斗破苍穹-剧情与视频制作清单.md)已保存。《戒中人》剧情与两条后续线路已确认，九个八秒剧情片段依次制作，每段按动作和对白拆成独立生成的子镜头。C01采用3秒、3秒、2秒方案进入平台确认，人物使用动画式正常身材比例。全部实际制作通过平台界面进行，记录位于[平台制作验收](docs/剧情设计/斗破苍穹-平台制作验收.md)。
 
 ## 本机预览服务
 
@@ -30,12 +30,14 @@ backend/.venv/bin/python scripts/preview.py status
 注销或重启电脑后重新启动当前预览：
 
 ```bash
-backend/.venv/bin/python scripts/preview.py start --web-root "$PWD/.intermediate/frontend-web-play-r14-20261116"
+backend/.venv/bin/python scripts/preview.py start --web-root "$PWD/.intermediate/frontend-web-play-r16-20261117"
 ```
 
 停止本产品预览使用backend/.venv/bin/python scripts/preview.py stop。重复启动相同配置保持现有进程；更换独立构建目录前先停止当前预览。端口被其他进程占用时，启动命令会明确失败，维护者核实该进程后处理。
 
-当前独立构建为frontend-web-play-r14-20261116，网页3210与API8310由预览管理程序检查。生成素材的岗位画布和媒体任务只显示当前一轮产物；旧素材继续保存在项目及手动画布中。新一轮模型读取范围限定为本次需求、本轮产物及明确选择的引用，历史对话仍完整保存。素材交互测试为frontend/tests/browser/material-workspace.spec.ts，连续首尾帧及候选测试位于media-candidates.spec.ts，完整项目及前端网页游玩测试位于project-transfers.spec.ts。素材岗位每次执行一个函数，多操作响应按真实调用标识返回拒绝结果并有限重试；普通文字可按原文读取并标明来源类型。提交结果待核实的文字请求需要本人明确确认重试，原请求及预留继续计入原任务费用上限。scripts/recover_material_task.py提供管理员本人任务恢复及重启核验；retry-unknown必须提供原call-id、confirmed和max-steps，extend-limit在本人确认后提高请求次数，平台最高60次，费用上限保持。每次snapshot和record使用新的capture-id，原证明与登记记录保留。scripts/smoke_materials.py验证真实Flash岗位交接和引用改稿；scripts/smoke_project_transfers.py复用实际模型成片验证备份、固定版本及网页游玩。阶段是否表的正式六项结果由流程管家自检输出确定。
+当前独立构建为frontend-web-play-r16-20261117，网页3210与API8310由预览管理程序检查。生成素材的岗位画布和媒体任务只显示当前一轮产物；旧素材继续保存在项目及手动画布中。新一轮模型读取范围限定为本次需求、本轮产物及明确选择的引用，历史对话仍完整保存。对话的“添加参考图片”可选择当前项目图片，最多五张，真实文件归属、类型与摘要在服务端验证并绑定到当前任务；确认卡中补充图片需要填写修改要求，当前岗位重新制作后再次等待确认。素材库普通导入保存图片并保持面板打开。
+
+素材交互测试为frontend/tests/browser/material-workspace.spec.ts，连续首尾帧及候选测试位于media-candidates.spec.ts，完整项目及前端网页游玩测试位于project-transfers.spec.ts。素材岗位每次执行一个函数，多操作响应按真实调用标识返回拒绝结果并有限重试；普通文字可按原文读取并标明来源类型。提交结果待核实的文字请求需要本人明确确认重试，原请求及预留继续计入原任务费用上限。scripts/recover_material_task.py提供管理员本人任务恢复及重启核验；retry-unknown必须提供原call-id、confirmed和max-steps，extend-limit在本人确认后提高请求次数，平台最高60次，费用上限保持。每次snapshot和record使用新的capture-id，原证明与登记记录保留。scripts/smoke_materials.py验证真实Flash岗位交接和引用改稿；scripts/smoke_project_transfers.py复用实际模型成片验证备份、固定版本及网页游玩。阶段是否表的正式六项结果由流程管家自检输出确定。
 
 ## 本机启动
 

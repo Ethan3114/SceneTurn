@@ -81,6 +81,27 @@ const createDirtyPatch = (revision: number) => ({
   dirty: true,
 });
 
+const nodeDisplayFields = new Set(['selected', 'dragging', 'resizing', 'measured']);
+const edgeDisplayFields = new Set(['selected']);
+const contentFields = (value: object, displayFields: ReadonlySet<string>) => (
+  Object.fromEntries(Object.entries(value).filter(([key]) => !displayFields.has(key)))
+);
+const graphContent = (graph: OpenFMVGraph) => JSON.stringify({
+  nodes: graph.nodes.map((node) => contentFields(node, nodeDisplayFields)),
+  edges: graph.edges.map((edge) => contentFields(edge, edgeDisplayFields)),
+});
+
+const retainDisplayState = <T extends { id: string }>(saved: T[], current: T[], displayFields: ReadonlySet<string>) => {
+  const currentById = new Map(current.map((item) => [item.id, item]));
+  return saved.map((item) => {
+    const displayed = currentById.get(item.id);
+    return displayed ? {
+      ...contentFields(item, displayFields),
+      ...Object.fromEntries(Object.entries(displayed).filter(([key]) => displayFields.has(key))),
+    } as T : item;
+  });
+};
+
 const createCleanProjectPatch = (project: OpenFMVProject | null) => {
   const graph = normalizeGraph(project?.graphData ?? defaultGraphData());
   return {
@@ -117,7 +138,7 @@ export const createProjectSessionStateCreator = (repository: ProjectSessionRepos
     set((state) => ({
       nodes: normalizedGraph.nodes,
       edges: normalizedGraph.edges,
-      ...createDirtyPatch(state.revision),
+      ...(graphContent(state) === graphContent(normalizedGraph) ? {} : createDirtyPatch(state.revision)),
     }));
   };
 
@@ -275,8 +296,8 @@ export const createProjectSessionStateCreator = (repository: ProjectSessionRepos
             project: savedProject,
             projectId: savedProject.id,
             title: changedDuringSave ? state.title : savedProject.title,
-            nodes: changedDuringSave ? state.nodes : graph.nodes,
-            edges: changedDuringSave ? state.edges : graph.edges,
+            nodes: changedDuringSave ? state.nodes : retainDisplayState(graph.nodes, state.nodes, nodeDisplayFields),
+            edges: changedDuringSave ? state.edges : retainDisplayState(graph.edges, state.edges, edgeDisplayFields),
             assets: savedProject.assets ?? [],
             status: 'ready',
             error: null,

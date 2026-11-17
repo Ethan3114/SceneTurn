@@ -553,6 +553,11 @@ def _validate_artifact_sources(session: Session, run: AgentRun, project: Project
     bindings = {}
 
     def require_asset(identifier: str) -> Asset:
+        if run.limits_json.get("materialContext", {}).get("scope") == "current_round":
+            from app.services.material_references import current_round_asset_ids, frozen_reference_assets
+            frozen_reference_assets(session, run, settings)
+            if identifier not in current_round_asset_ids(session, run, canvas):
+                raise AppError(422, "AGENT_ARTIFACT_SOURCE_INVALID", "专业产物只能引用本轮明确选择或已生成的素材")
         asset = session.get(Asset, identifier)
         if asset is None or asset.owner_id != run.owner_id or asset.project_id != project.id:
             raise AppError(422, "AGENT_ARTIFACT_SOURCE_INVALID", "专业产物引用的素材不属于当前用户与项目")
@@ -824,9 +829,13 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
                   "storyTopology": {"nodes": [{"id": node["id"], "type": node["type"], "title": node["data"].get("title")} for node in project.data_json["graphData"]["nodes"]], "edges": project.data_json["graphData"]["edges"]},
                   "capabilities": {"text": True, "videoQuote": True, "imageGeneration": False, "audioGeneration": False, "publish": False}}
         if current_round:
+            from app.services.material_references import frozen_reference_assets
+            selected_references = frozen_reference_assets(session, run, settings)
+            result["referenceAssets"] = selected_references
             scene = require_scene(project, run.scene_id)
             result["scene"] = {"id": scene["id"], "type": scene["type"], "data": {"title": scene["data"].get("title")}}
             asset_ids = {node.get("metadata", {}).get(key) for node in business_canvas["nodes"] for key in ("assetId", "storageKey")}
+            asset_ids.update(item["assetId"] for item in selected_references)
             if run.limits_json.get("materialContext", {}).get("requireHumanReview"):
                 from app.image_models import ImageJob
                 generated = session.scalars(select(ImageJob).where(ImageJob.run_id == run.id, ImageJob.status == "ready")).all()
@@ -905,7 +914,7 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
                 result.update(patch_proof)
             if run.limits_json.get("materialContext", {}).get("requireHumanReview"):
                 from app.services.material_review import pause_for_review
-                pause_for_review(session, run, step, written, artifact)
+                pause_for_review(session, run, step, written, artifact, settings)
     elif tool_name == "write_memory":
         memory_payload = {**body.model_dump(by_alias=True, exclude_none=True), "sceneId": run.scene_id, "branchId": run.branch_id, "expectedRevision": expected_revision, "operationId": service_operation}
         result = write_memory(session, run.project_id, run.owner_id, memory_payload, manage_transaction=False)

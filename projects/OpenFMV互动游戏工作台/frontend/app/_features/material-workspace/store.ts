@@ -4,7 +4,7 @@ import { createMaterialConversation, getMaterialConversation, listMaterialConver
 type Scope = { projectId: string; sceneId: string };
 type State = {
   scope: Scope | null; chatOpen: boolean; conversation: MaterialConversation | null;
-  references: MaterialReference[]; draft: string; error: string; loading: boolean;
+  references: MaterialReference[]; referenceAssetIds: string[]; draft: string; error: string; loading: boolean;
   open: (scope: Scope) => Promise<void>; close: () => void; refresh: () => Promise<void>;
   select: (reference: MaterialReference) => void; remove: (id: string) => void;
   setConversation: (value: MaterialConversation) => void;
@@ -12,11 +12,11 @@ type State = {
 };
 
 export const useMaterialWorkspace = create<State>((set, get) => ({
-  scope: null, chatOpen: false, conversation: null, references: [], draft: '', error: '', loading: false,
+  scope: null, chatOpen: false, conversation: null, references: [], referenceAssetIds: [], draft: '', error: '', loading: false,
   savePending: async () => {},
   open: async (scope) => {
     if (get().scope?.projectId === scope.projectId && get().scope?.sceneId === scope.sceneId) { set({ chatOpen: true }); return; }
-    set({ scope, chatOpen: true, loading: true, error: '', conversation: null, references: [], draft: '' });
+    set({ scope, chatOpen: true, loading: true, error: '', conversation: null, references: [], referenceAssetIds: [], draft: '' });
     try {
       const items = await listMaterialConversations(scope.projectId, scope.sceneId);
       if (get().scope !== scope) return;
@@ -24,7 +24,7 @@ export const useMaterialWorkspace = create<State>((set, get) => ({
       if (get().scope === scope) set({ conversation: value, loading: false });
     } catch (error) { if (get().scope === scope) set({ error: error instanceof Error ? error.message : '素材对话读取失败', loading: false }); }
   },
-  close: () => set({ scope: null, chatOpen: false, conversation: null, references: [], draft: '' }),
+  close: () => set({ scope: null, chatOpen: false, conversation: null, references: [], referenceAssetIds: [], draft: '' }),
   refresh: async () => {
     const value = get().conversation;
     if (!value) return;

@@ -17,6 +17,7 @@ from app.core.security import decode_secret
 from app.image_models import ImageAccount, ImageJob
 from app.models import Asset, new_id
 from app.services.media import resolve_asset_path
+from app.services.material_references import validate_reference_assets
 from app.services.projects import iso_timestamp, lock_write, record_project_version, require_project
 from app.services.sensetime import MAX_IMAGE_BYTES, MODEL, decode_image, submit_image
 
@@ -153,6 +154,10 @@ async def _execute_job(job_id, settings, session_factory):
         account = session.get(ImageAccount, job.account_id)
         if job.status != "claimed" or account.active_job_id != job.id:
             raise ValueError("图片任务未持有独占账号")
+        frozen = job.request_json.get("referenceAssets", [])
+        if frozen:
+            project = require_project(session, job.project_id, job.owner_id)
+            validate_reference_assets(session, project, [item["assetId"] for item in frozen], settings, frozen)
         reference_ids = [*job.reference_asset_ids]
         for identifier in job.dependency_ids:
             dependency = session.get(ImageJob, identifier)
@@ -165,7 +170,7 @@ async def _execute_job(job_id, settings, session_factory):
             if asset is None or asset.owner_id != job.owner_id or asset.project_id != job.project_id or not asset.mime_type.startswith("image/") or asset.bytes > MAX_IMAGE_BYTES:
                 raise ValueError("参考图片无法使用")
             raw = resolve_asset_path(settings, asset.relpath).read_bytes()
-            if hashlib.sha256(raw).hexdigest() != asset.sha256:
+            if len(raw) != asset.bytes or len(raw) > MAX_IMAGE_BYTES or hashlib.sha256(raw).hexdigest() != asset.sha256:
                 raise ValueError("参考图片内容发生改变")
             references.append((asset.mime_type, raw))
         if len(references) > 5:
@@ -209,7 +214,7 @@ async def _execute_job(job_id, settings, session_factory):
 async def execute_job(job_id, settings, session_factory):
     try:
         await _execute_job(job_id, settings, session_factory)
-    except (ValueError, ValidationError, binascii.Error, OSError):
+    except (AppError, ValueError, ValidationError, binascii.Error, OSError):
         with session_factory() as session:
             lock_write(session)
             job = session.get(ImageJob, job_id)
