@@ -1,0 +1,38 @@
+import { expect, it } from 'vitest';
+import type { ProjectEnvelope } from '@/app/_utils/cloudApi';
+import { mergeProjectChanges } from '@/app/_utils/mergeProjectChanges';
+
+it('真实项目保存后合并其他页面的剧情，保留本地位置及同字段人工修订', async () => {
+  const origin = 'http://127.0.0.1:8310/api/v1';
+  const registered = await fetch(`${origin}/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `story-merge-${crypto.randomUUID()}@example.com`, password: crypto.randomUUID() }) });
+  expect(registered.status).toBe(201);
+  const headers = { 'Content-Type': 'application/json', Cookie: registered.headers.getSetCookie().map((item) => item.split(';')[0]).join('; ') };
+  const created = await fetch(`${origin}/projects`, { method: 'POST', headers, body: JSON.stringify({ title: '总画布编辑合并验证' }) });
+  expect(created.status).toBe(201);
+  const base = await created.json() as ProjectEnvelope;
+  const local = structuredClone(base.project);
+  const edited = local.graphData.nodes.find((node) => node.type === 'scene')!;
+  edited.position.x += 170;
+  const remote = structuredClone(base.project);
+  const updated = remote.graphData.nodes.find((node) => node.id === edited.id)!;
+  if (updated.data.type !== 'scene') throw new Error('真实项目缺少场景');
+  updated.data.bodyText = '窗外的薄雾逐渐散开。';
+  const response = await fetch(`${origin}/projects/${remote.id}`, { method: 'PUT', headers, body: JSON.stringify({ project: remote, expectedRevision: base.revision, operationId: crypto.randomUUID() }) });
+  expect(response.status).toBe(200);
+  const saved = await response.json() as ProjectEnvelope;
+  const result = mergeProjectChanges(base.project, local, saved.project);
+  expect(result.conflicts).toEqual([]);
+  const merged = result.project.graphData.nodes.find((node) => node.id === edited.id)!;
+  expect(merged.position).toEqual(edited.position);
+  expect(merged.data).toMatchObject({ bodyText: updated.data.bodyText });
+  if (edited.data.type !== 'scene') throw new Error('本地场景类型无效');
+  edited.data.bodyText = '保留我手动输入的对白。';
+  const conflict = mergeProjectChanges(base.project, local, saved.project);
+  expect(conflict.conflicts).toContain(`/graphData/nodes/${edited.id}/data/bodyText`);
+  expect(conflict.project.graphData.nodes.find((node) => node.id === edited.id)!.data).toMatchObject({ bodyText: edited.data.bodyText });
+  const persisted = await fetch(`${origin}/projects/${remote.id}`, { method: 'PUT', headers, body: JSON.stringify({ project: conflict.project, expectedRevision: saved.revision, operationId: crypto.randomUUID() }) });
+  expect(persisted.status).toBe(200);
+  const restored = await (await fetch(`${origin}/projects/${remote.id}`, { headers })).json() as ProjectEnvelope;
+  expect(restored.project.graphData.nodes.find((node) => node.id === edited.id)!.position).toEqual(edited.position);
+  expect(restored.project.graphData.nodes.find((node) => node.id === edited.id)!.data).toMatchObject({ bodyText: edited.data.bodyText });
+});

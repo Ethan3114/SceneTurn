@@ -1,0 +1,5 @@
+.fmv-creation-workspace.fmv-material-embedded{display:flex;height:100%;min-height:0;flex-direction:column;overflow:hidden}
+.fmv-material-embedded .fmv-studio-toolbar{flex-shrink:0;flex-wrap:wrap;gap:8px;padding:10px 14px}
+.fmv-creation-workspace.fmv-material-embedded .fmv-studio-body{height:auto;min-height:0;flex:1;grid-template-columns:minmax(0,1fr)}
+.fmv-material-embedded .fmv-canvas-column{min-height:0}
+@media(max-width:600px){.fmv-material-embedded .fmv-studio-toolbar{font-size:11px}.fmv-material-embedded .fmv-save-state{max-width:120px}.fmv-material-embedded .fmv-node-top-tools{max-width:calc(100% - 20px);flex-wrap:wrap}}

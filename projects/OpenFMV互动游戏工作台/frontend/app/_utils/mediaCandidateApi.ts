@@ -1,0 +1,22 @@
+import { z } from 'zod';
+import { api, operationId } from './cloudApi';
+
+const frame = z.object({ assetId: z.string(), name: z.string(), sha256: z.string(), width: z.number(), height: z.number() });
+const segment = z.object({ key: z.string(), title: z.string(), duration: z.number(), resolution: z.string(), clipId: z.string(), firstFrame: frame, lastFrame: frame, generationIds: z.array(z.string()) });
+const sequence = z.object({ id: z.string(), projectId: z.string(), sceneId: z.string(), title: z.string(), frames: z.array(frame), segments: z.array(segment), createdAt: z.string() });
+const adoption = z.object({ id: z.string(), projectId: z.string(), sceneId: z.string(), assetId: z.string(), generationId: z.string().nullable(), clipId: z.string(), projectRevision: z.number(), confirmationHash: z.string(), status: z.string(), targetName: z.string(), availableSeconds: z.number(), requiredSeconds: z.number(), sourceStart: z.number(), message: z.string(), appliedRevision: z.number().nullable() });
+const candidate = z.object({ id: z.string(), assetId: z.string().nullable(), generationId: z.string().nullable(), clipId: z.string(), title: z.string(), status: z.string(), adopted: z.boolean(), durationSeconds: z.number().nullable(), resolution: z.string().nullable(), confirmationHash: z.string().nullable(), projectRevision: z.number().nullable(), frames: z.array(z.object({ type: z.string(), assetId: z.string() })) });
+const candidates = z.object({ projectId: z.string(), sceneId: z.string(), revision: z.number(), sequences: z.array(sequence), candidates: z.array(candidate), adoptions: z.array(adoption), clips: z.array(z.object({ id: z.string(), name: z.string().optional(), assetId: z.string().optional(), startTime: z.number(), duration: z.number() }).passthrough()), images: z.array(frame), publishAllowed: z.boolean() });
+export type MediaCandidates = z.infer<typeof candidates>;
+export type MediaCandidate = z.infer<typeof candidate>;
+export type MediaAdoption = z.infer<typeof adoption>;
+export type MediaSequence = z.infer<typeof sequence>;
+export type SequenceSegmentInput = { title: string; prompt: string; duration: number; resolution: string; clipId?: string };
+
+export const getMediaCandidates = async (projectId: string, sceneId: string, conversationId: string) => candidates.parse(await api(`/projects/${projectId}/scenes/${sceneId}/media-candidates?conversation_id=${encodeURIComponent(conversationId)}`));
+export const createMediaSequence = async (projectId: string, sceneId: string, conversationId: string, title: string, frameAssetIds: string[], segments: SequenceSegmentInput[], revision: number, operation: string) => z.object({ sequence }).parse(await api(`/projects/${projectId}/scenes/${sceneId}/media-sequences`, { method: 'POST', body: JSON.stringify({ title, conversationId, frameAssetIds, segments, expectedRevision: revision, operationId: operation }) })).sequence;
+export const quoteSequenceSegment = async (projectId: string, sequenceId: string, key: string, revision: number, operation: string) => api(`/projects/${projectId}/media-sequences/${sequenceId}/segments/${key}/quote`, { method: 'POST', body: JSON.stringify({ expectedRevision: revision, operationId: operation }) });
+export const confirmMediaCandidate = async (value: MediaCandidate, revision: number) => api(`/generations/${value.generationId}/confirm`, { method: 'POST', body: JSON.stringify({ expectedRevision: revision, confirmationHash: value.confirmationHash }) });
+export const checkMediaAdoption = async (projectId: string, sceneId: string, value: MediaCandidate, revision: number, mode: 'append' | 'replace', operation: string) => z.object({ adoption }).parse(await api(`/projects/${projectId}/media-adoptions/check`, { method: 'POST', body: JSON.stringify({ sceneId, assetId: value.assetId, generationId: value.generationId, clipId: value.clipId, mode, expectedRevision: revision, operationId: operation }) })).adoption;
+export const applyMediaAdoption = async (projectId: string, value: MediaAdoption, operation: string) => api(`/projects/${projectId}/media-adoptions/${value.id}/apply`, { method: 'POST', body: JSON.stringify({ expectedRevision: value.projectRevision, confirmationHash: value.confirmationHash, operationId: operation }) });
+export const keepMediaVersion = async (projectId: string, value: MediaAdoption) => api(`/projects/${projectId}/media-adoptions/${value.id}/keep`, { method: 'POST', body: JSON.stringify({ operationId: operationId() }) });

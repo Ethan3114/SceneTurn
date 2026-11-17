@@ -1,0 +1,31 @@
+[project]
+name = "openfmv-workbench-api"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.34,<1",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+  "jsonschema>=4.26,<5",
+  "jsonpatch==1.47",
+  "jsonpointer==3.12",
+  "referencing==0.37.0",
+  "sqlalchemy>=2.0,<3",
+  "alembic>=1.14,<2",
+  "httpx>=0.28,<1",
+  "pwdlib[argon2]>=0.3,<1",
+  "cryptography>=44",
+  "email-validator>=2.2,<3",
+  "python-multipart>=0.0.20",
+  "pillow>=11",
+  "filetype>=1.2,<2",
+  "charset-normalizer>=3,<4",
+  "chinesecalendar>=1.11,<2",
+  "networkx>=3.4,<4",
+  "pytest>=8,<10",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--basetemp=../.intermediate/pytest"

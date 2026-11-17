@@ -1,0 +1,17 @@
+.fmv-transfers { min-width: 0; color: #e7e5e4; font-size: 14px; line-height: 1.6; }
+.fmv-transfer-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.fmv-transfers button, .fmv-transfers a { display: inline-flex; margin: 5px 8px 5px 0; padding: 9px 14px; border: 1px solid #4b4946; border-radius: 10px; background: #292724; color: #f5f5f4; }
+.fmv-transfers button:disabled { opacity: .5; cursor: wait; }
+.fmv-transfer-upload { display: grid; gap: 8px; max-width: 100%; }
+.fmv-transfer-upload input { max-width: 100%; }
+.fmv-transfer-note { color: #b7b2aa; }
+.fmv-transfer-job { margin: 14px 0; padding: 16px; border: 1px solid #45413b; border-radius: 14px; background: #211f1c; overflow-wrap: anywhere; }
+.fmv-transfer-heading { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.fmv-transfer-heading span { color: #d2bb8d; }
+.fmv-transfer-mappings { max-height: 260px; overflow: auto; }
+.fmv-transfer-mappings p { display: grid; grid-template-columns: 50px minmax(0, 1fr) 14px minmax(0, 1fr); gap: 8px; font-size: 12px; }
+.fmv-transfers [role=alert] { color: #ffb7a8; }
+.fmv-transfer-dialog { width: min(820px, calc(100% - 16px)); max-height: 90dvh; overflow: auto; padding: 24px; border: 1px solid #4b4946; border-radius: 20px; background: #181715; color: #f5f5f4; }
+.fmv-transfer-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.fmv-transfer-dialog > header button { padding: 8px 14px; border: 1px solid #514b41; border-radius: 9px; }
+@media (max-width: 600px) { .fmv-transfer-dialog { padding: 16px; } .fmv-transfer-job { padding: 12px; } }

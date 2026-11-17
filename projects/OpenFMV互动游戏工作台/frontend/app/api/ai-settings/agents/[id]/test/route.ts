@@ -1,0 +1,13 @@
+import { NextResponse } from 'next/server';
+
+import { OpenFMVAgentId } from '@/app/_types';
+import { testOpenFMVAiAgentOnServer } from '@/app/_utils/aiAgentRuntime';
+
+export async function POST(_request: Request, { params }: { params: Promise<{ id: OpenFMVAgentId }> }) {
+  if (process.env.OPENFMV_DESKTOP_LOCAL_AI !== '1') {
+    return NextResponse.json({ error: { code: 'LOCAL_CODEX_NOT_CONNECTED', message: '尚未连接本人的本机Codex。' } }, { status: 503 });
+  }
+  const { id } = await params;
+
+  return NextResponse.json(await testOpenFMVAiAgentOnServer(id));
+}
