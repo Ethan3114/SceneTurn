@@ -568,18 +568,18 @@ def validate_artifact(role: str, payload: dict) -> dict:
     return artifact.model_dump(mode="json", by_alias=True)
 
 
-@lru_cache(maxsize=18)
-def _arguments_model(role: str, boundary_frames: bool = False) -> type[BaseModel]:
+@lru_cache(maxsize=36)
+def _arguments_model(role: str, boundary_frames: bool = False, explicit_null: bool = False) -> type[BaseModel]:
     return create_model(
         f"{artifact_model(role, boundary_frames).__name__}Arguments", __base__=ArtifactModel,
-        target_id=(Key | None, Field(default=None, title="授权目标文字节点，省略时创建新文字节点")),
-        title=(Title | None, Field(default=None, title="画布节点名称，省略时使用产物名称")),
+        target_id=(Key | None, Field(default=None, title="授权目标文字节点，新建产物填写null" if explicit_null else "授权目标文字节点，省略时创建新文字节点")),
+        title=(Title | None, Field(default=None, title="画布节点名称，使用产物名称填写null" if explicit_null else "画布节点名称，省略时使用产物名称")),
         artifact=(artifact_model(role, boundary_frames), Field(title="当前角色的完整专业创作产物")),
     )
 
 
-def artifact_arguments_schema(role: str, boundary_frames: bool = False) -> dict:
-    return _arguments_model(role, boundary_frames).model_json_schema(by_alias=True)
+def artifact_arguments_schema(role: str, boundary_frames: bool = False, explicit_null: bool = False) -> dict:
+    return _arguments_model(role, boundary_frames, explicit_null).model_json_schema(by_alias=True)
 
 
 def parse_artifact(payload: dict):

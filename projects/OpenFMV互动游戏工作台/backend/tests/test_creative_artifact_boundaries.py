@@ -85,7 +85,7 @@ def test_editor_float_sum_keeps_valid_decimal_inputs_and_rejects_visible_differe
 
 
 def test_professional_prompts_explain_unique_keys_unoccupied_scene_and_net_duration():
-    assert PROMPT_VERSION.endswith("r17")
+    assert PROMPT_VERSION.endswith("r18")
     for role in ("character_designer", "scene_designer", "storyboarder", "media_producer", "sound_designer"):
         assert "每项代号必须唯一" in native_agent_prompt(role, False)
     assert "characters=[]、dialogues=[]" in native_agent_prompt("writer", False)

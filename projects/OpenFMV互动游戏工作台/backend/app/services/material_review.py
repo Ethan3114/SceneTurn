@@ -157,12 +157,18 @@ def answer_review(session, conversation, body, settings=None):
         raise AppError(422, "MATERIAL_ANSWERS_REQUIRED", "请逐项回答全部待确认问题")
     review = {**review, "answers": {**review.get("answers", {}), **body.answers}, "operationId": body.operation_id,
         "answerPayload": material_request_payload(body), "answeredAt": time.time()}
+    changed = bool(body.requested_changes.strip()) or any(body.answers[item["id"]].strip() != item["suggestedAnswer"].strip() for item in public["questions"])
     answer_record = {"reviewId": review["id"], "nodeId": review["nodeId"], "artifactHash": review["artifactHash"],
         "questions": review["questions"], "answers": body.answers, "requestedChanges": body.requested_changes,
-        "referenceAssets": reference_assets, "addedReferenceAssetIds": added_ids}
-    run.limits_json = {**run.limits_json, "materialContext": {**context, "referenceAssets": reference_assets,
-        "referenceAssetsRevision": project.revision, "humanAnswers": [*context.get("humanAnswers", []), answer_record]}}
-    changed = bool(body.requested_changes.strip()) or any(body.answers[item["id"]].strip() != item["suggestedAnswer"].strip() for item in public["questions"])
+        "referenceAssets": reference_assets, "addedReferenceAssetIds": added_ids,
+        "stepId": review["stepId"], "operationId": body.operation_id, "answeredAt": review["answeredAt"], "requiresRevision": changed}
+    material_context = {**context, "referenceAssets": reference_assets,
+        "referenceAssetsRevision": project.revision, "humanAnswers": [*context.get("humanAnswers", []), answer_record]}
+    if changed:
+        material_context["revisionRequest"] = {"reviewId": review["id"], "stepId": review["stepId"], "nodeId": review["nodeId"],
+            "artifactHash": review["artifactHash"], "operationId": body.operation_id, "requestedAt": review["answeredAt"],
+            "answers": review["answers"], "requestedChanges": body.requested_changes}
+    run.limits_json = {**run.limits_json, "materialContext": material_context}
     step = session.get(AgentStep, review["stepId"])
     if changed:
         review["status"] = "revision_requested"
@@ -171,6 +177,9 @@ def answer_review(session, conversation, body, settings=None):
             if job.status == "awaiting_confirmation":
                 job.status = "cancelled"
         run.status, step.status = "queued", "queued"
+        step.result_json = None
+        run.result_json = {key: value for key, value in run.result_json.items()
+            if key not in {"nativeCorrection", "toolError", "manualNativeRepairOf", "manualRepairOperationId"}}
     elif public["status"] == "pending" and any(item["id"] not in review["answers"] for item in review["questions"]):
         review["status"] = "pending"
     elif public["status"] == "pending" and review["imageJobIds"]:

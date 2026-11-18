@@ -215,7 +215,9 @@ def allowed_tools(role: str, catalog_version: str = TOOL_CATALOG_VERSION) -> set
 
 
 def tool_catalog(role: str, catalog_version: str = TOOL_CATALOG_VERSION) -> list[dict]:
-    return [{"name": name, "description": DESCRIPTIONS[name], "inputSchema": artifact_arguments_schema(role, catalog_version == BOUNDARY_TOOL_CATALOG_VERSION) if name == "write_artifact" else tool_schema(name, catalog_version).model_json_schema(by_alias=True)} for name in sorted(allowed_tools(role, catalog_version))]
+    explicit_null = catalog_version in MATERIAL_CATALOG_VERSIONS
+    return [{"name": name, "description": "严格保存当前角色完整专业结构、完整中文正文及可直接使用的生图提示词；创建文字节点时targetId填写null，保留来源、哈希及历史，不调用媒体模型。" if name == "write_artifact" and explicit_null else DESCRIPTIONS[name],
+        "inputSchema": artifact_arguments_schema(role, catalog_version == BOUNDARY_TOOL_CATALOG_VERSION, explicit_null) if name == "write_artifact" else tool_schema(name, catalog_version).model_json_schema(by_alias=True)} for name in sorted(allowed_tools(role, catalog_version))]
 
 
 def tool_schema(name, catalog_version):
@@ -462,7 +464,7 @@ def _read_artifact(session: Session, run: AgentRun, project: Project, canvas: Ca
         return {"kind": "plain_text", "targetId": target_id, "title": node.get("title", "文字素材"), "text": content,
             "revision": project.revision, "contentSha256": hashlib.sha256(content.encode()).hexdigest(), "artifact": None,
             "referenceScope": "plain_text", "professionalAvailable": False, "patchablePaths": [], "sourceKind": "canvas_node",
-            "instruction": "这是实际普通文字，可作为canvas_node来源。新专业产物使用write_artifact创建独立节点，省略targetId；此文字没有可修订的专业字段。"}
+            "instruction": "这是实际普通文字，可作为canvas_node来源。新专业产物使用write_artifact创建独立节点，targetId填写null；此文字没有可修订的专业字段。"}
     scope = "current"
     if payload is None:
         payload, scope = metadata.get("artifactDraft"), "archive"
@@ -865,7 +867,7 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
             if tool_name == "write_artifact" and body.target_id and run.limits_json.get("toolCatalogVersion") in MATERIAL_CATALOG_VERSIONS:
                 authorized(run, body.target_id)
                 if find_node(data, body.target_id).get("metadata", {}).get("creativeArtifact"):
-                    raise AppError(422, "MATERIAL_PATCH_REQUIRED", "修改已有专业产物须先read_artifact，再用patch_artifact修改具体字段；新完整候选可省略targetId创建")
+                    raise AppError(422, "MATERIAL_PATCH_REQUIRED", "修改已有专业产物须先read_artifact，再用patch_artifact修改具体字段；新完整候选的targetId填写null创建")
             if tool_name == "patch_artifact":
                 artifact, patch_proof = _patch_artifact(session, run, step, project, canvas, body, actual_role, settings)
             else:

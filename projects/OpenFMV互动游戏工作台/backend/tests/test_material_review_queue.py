@@ -137,7 +137,7 @@ def test_custom_answer_requires_real_revision_before_handoff(actual_database):
         assert run.result_json["materialReview"]["status"] == "revision_requested"
         with pytest.raises(AppError) as failure:
             require_step_delivery(session, run, step, session.get(Project, run.project_id), Settings())
-        assert failure.value.code == "MATERIAL_CONFIRMATION_REQUIRED"
+        assert failure.value.code == "MATERIAL_REVISION_REQUIRED"
 
 
 def test_concurrent_claims_respect_all_three_real_accounts_and_keep_unknown_occupied(actual_database):
