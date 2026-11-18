@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { ChevronLeft, FileText, Image as ImageIcon, Music, Plus, Search, Upload, Video, X } from 'lucide-react';
 
 import { useProjectSessionStore } from '@/app/_features/project-session/store';
+import { useMaterialWorkspace } from '@/app/_features/material-workspace/store';
 import { getAssetSource } from '@/app/_utils/assetIdentity';
 import { useResolvedMediaSrc } from '@/app/_hooks/useResolvedMediaSrc';
 import { OpenFMVAsset } from '@/app/_types';
@@ -93,8 +94,14 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
   const [filter, setFilter] = useState<AssetFilter>('all');
   const [view, setView] = useState<'library' | 'generate'>('library');
   const [error, setError] = useState('');
+  const [materialScope, setMaterialScope] = useState<{ projectId: string; sceneId: string } | null>(null);
+  const [switchingScene, setSwitchingScene] = useState(false);
   const materialRef = useRef<MaterialCanvasHandle>(null);
-  const activeScene = useProjectSessionStore((state) => state.nodes.find((node) => node.type === 'scene' && node.selected)?.id || state.nodes.find((node) => node.type === 'scene')?.id);
+  const nodes = useProjectSessionStore((state) => state.nodes);
+  const scenes = useMemo(() => nodes.filter((node) => node.type === 'scene'), [nodes]);
+  const activeScene = scenes.find((node) => node.selected)?.id || scenes[0]?.id;
+  const materialScene = materialScope?.projectId === currentProjectId && scenes.some((scene) => scene.id === materialScope.sceneId) ? materialScope.sceneId : activeScene;
+  const materialLoading = useMaterialWorkspace((state) => state.loading);
   const useNativeAssetPicker = canUseNativeAssetPicker();
 
   const refreshProjectAssets = useCallback(() => {
@@ -187,9 +194,27 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
 
   async function changeView(next: 'library' | 'generate') {
     setError('');
+    const sceneId = materialScene;
     if (view === 'generate') await materialRef.current?.save();
     if (currentProjectId) { await syncProjectSession(currentProjectId); await useProjectSessionStore.getState().flushPendingChanges(); }
+    if (next === 'generate' && currentProjectId && sceneId) setMaterialScope({ projectId: currentProjectId, sceneId });
     refreshProjectAssets(); setView(next);
+  }
+  async function changeMaterialScene(sceneId: string) {
+    const material = useMaterialWorkspace.getState();
+    if (!currentProjectId || sceneId === materialScene || switchingScene || material.loading) return;
+    if (!scenes.some((scene) => scene.id === sceneId)) throw new Error('请选择当前项目的剧情场景。');
+    setError(''); setSwitchingScene(true);
+    useMaterialWorkspace.setState({ loading: true });
+    try {
+      await materialRef.current?.save();
+      if (useProjectSessionStore.getState().projectId !== currentProjectId) throw new Error('项目已切换，请重新选择素材场景。');
+      useMaterialWorkspace.getState().close();
+      setMaterialScope({ projectId: currentProjectId, sceneId });
+    } catch (problem) {
+      if (useMaterialWorkspace.getState().scope === material.scope) useMaterialWorkspace.setState({ loading: false });
+      throw problem;
+    } finally { setSwitchingScene(false); }
   }
   async function close() {
     setError('');
@@ -225,8 +250,9 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
         </div>
 
         <div className="flex gap-2 border-b border-white/10 px-4 py-2"><button data-testid="materials-library-tab" className="rounded px-3 py-2 text-sm" onClick={() => { void changeView('library').catch((problem: Error) => setError(problem.message)); }}>项目素材</button><button data-testid="materials-generate-tab" className="rounded bg-white/10 px-3 py-2 text-sm" disabled={!currentProjectId} onClick={() => { void changeView('generate').catch((problem: Error) => setError(problem.message)); }}>生成素材</button></div>
+        {view === 'generate' && <label className="flex items-center gap-3 border-b border-white/10 px-4 py-2 text-sm"><span className="shrink-0">剧情场景</span><select aria-label="素材制作剧情场景" className="min-w-0 flex-1 rounded border border-white/15 bg-[#232326] px-3 py-2 text-white disabled:opacity-50" value={materialScene || ''} disabled={switchingScene || materialLoading || !currentProjectId || scenes.length === 0} onChange={(event) => { void changeMaterialScene(event.target.value).catch((problem: Error) => setError(problem.message)); }}>{scenes.length === 0 && <option value="">暂无剧情场景</option>}{scenes.map((scene) => <option key={scene.id} value={scene.id}>{typeof scene.data.title === 'string' ? scene.data.title : '未命名剧情场景'}</option>)}</select>{switchingScene && <span role="status">正在保存并切换…</span>}</label>}
         {error && <p role="alert" className="px-4 py-2 text-sm text-red-300">{error}</p>}
-        {view === 'generate' && currentProjectId && activeScene ? <div className="min-h-0 flex-1"><MaterialCanvas projectId={currentProjectId} sceneId={activeScene} saveRef={materialRef} /></div> : <>
+        {view === 'generate' && currentProjectId && materialScene ? <div className="min-h-0 flex-1" inert={switchingScene}><MaterialCanvas key={`${currentProjectId}:${materialScene}`} projectId={currentProjectId} sceneId={materialScene} saveRef={materialRef} /></div> : <>
         <div className="space-y-4 border-b border-white/10 p-4">
           <div className="relative">
             <Search size={17} className="absolute left-4 top-1/2 -translate-y-1/2 text-openfmv-muted" />

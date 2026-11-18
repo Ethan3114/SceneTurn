@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogTitle } from '@/app/_components/ui/alert-dialog';
 import { agentErrorMessage, agentStatuses, controlAgentRun, retryUnknownAgentRun } from '@/app/_utils/agentApi';
 import { assetContentUrl, confirmGeneration, getCloudProject, getGenerations, operationId, resumeGeneration, type GenerationView } from '@/app/_utils/cloudApi';
-import { createMaterialConversation, getMaterialConversation, listMaterialConversations, sendMaterialMessage } from '@/app/_utils/materialApi';
+import { createMaterialConversation, getMaterialConversation, listMaterialConversations, sendMaterialMessage, type MaterialConversation } from '@/app/_utils/materialApi';
 import { syncProjectSession } from '@/app/_utils/syncProjectSession';
 import { useProjectSessionStore } from '@/app/_features/project-session/store';
 import { taskLabels } from '@/app/_features/creation-canvas/GenerationTaskCard';
@@ -27,6 +27,11 @@ function materialError(value: unknown, canResume?: boolean) {
     return canResume ? '本次生成已暂停，可以继续当前任务。' : '本次生成未完成，已保留产物和任务记录。';
   }
   return agentErrorMessage(value);
+}
+
+function isCurrentConversation(value: MaterialConversation) {
+  const current = useMaterialWorkspace.getState();
+  return !current.loading && current.scope?.projectId === value.projectId && current.scope.sceneId === value.sceneId && current.conversation?.id === value.id;
 }
 
 export default function MaterialChat({ onClose }: { onClose: () => void }) {
@@ -70,26 +75,28 @@ export default function MaterialChat({ onClose }: { onClose: () => void }) {
   }, [value]);
 
   async function perform(action: () => Promise<void>) {
+    if (useMaterialWorkspace.getState().loading) return;
     setBusy(true); useMaterialWorkspace.setState({ error: '' });
     try { await action(); }
     catch (problem) { useMaterialWorkspace.setState({ error: problem instanceof Error ? problem.message : '操作失败' }); }
     finally { setBusy(false); }
   }
   async function send() {
-    if (!value || !state.draft.trim() || busy || active) return;
+    if (!value || !state.draft.trim() || busy || active || !isCurrentConversation(value)) return;
     await perform(async () => {
       requireProjectReferenceImages(value.projectId, state.referenceAssetIds);
       await state.savePending();
       await syncProjectSession(value.projectId);
       await useProjectSessionStore.getState().flushPendingChanges();
       const remote = await getCloudProject(value.projectId);
+      if (!isCurrentConversation(value)) return;
       const content = state.draft.trim();
       const references = JSON.stringify({ nodes: state.references, assets: state.referenceAssetIds });
       const previous = operationRef.current;
       const operation = previous?.conversationId === value.id && previous.content === content && previous.references === references && previous.revision === remote.revision ? previous : { conversationId: value.id, content, references, revision: remote.revision, id: operationId() };
       operationRef.current = operation;
       const updated = await sendMaterialMessage(value, content, state.references, remote.revision, operation.id, state.referenceAssetIds);
-      useMaterialWorkspace.setState({ conversation: updated, draft: '', references: [], referenceAssetIds: [] });
+      if (isCurrentConversation(value)) useMaterialWorkspace.setState({ conversation: updated, draft: '', references: [], referenceAssetIds: [] });
       operationRef.current = null;
     });
   }
@@ -128,8 +135,8 @@ export default function MaterialChat({ onClose }: { onClose: () => void }) {
   }
 
   return <section className="material-chat" data-testid="material-chat">
-    <header className="material-chat-header" data-chat-drag-handle><Bot size={19} /><div><strong>问问 AI</strong><span>素材总监与制作团队</span></div><button aria-label="新建素材对话" disabled={!value || switchingBlocked} onClick={() => { if (value) void perform(async () => { const created = await createMaterialConversation(value.projectId, value.sceneId); useMaterialWorkspace.setState({ conversation: created, references: [], referenceAssetIds: [] }); }); }}><Plus size={17} /></button><button aria-label="关闭素材对话" onClick={onClose}><X size={17} /></button></header>
-    {value && <label className="material-conversation-selector"><span>对话记录</span><select aria-label="素材对话记录" value={value.id} disabled={switchingBlocked} onChange={(event) => { const id = event.target.value; void perform(async () => { const selected = await getMaterialConversation(value.projectId, value.sceneId, id); useMaterialWorkspace.setState({ conversation: selected, references: [], referenceAssetIds: [] }); }); }}>{conversations.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>}
+    <header className="material-chat-header" data-chat-drag-handle><Bot size={19} /><div><strong>问问 AI</strong><span>素材总监与制作团队</span></div><button aria-label="新建素材对话" disabled={!value || switchingBlocked || state.loading} onClick={() => { if (value && isCurrentConversation(value)) void perform(async () => { const created = await createMaterialConversation(value.projectId, value.sceneId); if (isCurrentConversation(value)) useMaterialWorkspace.setState({ conversation: created, references: [], referenceAssetIds: [] }); }); }}><Plus size={17} /></button><button aria-label="关闭素材对话" onClick={onClose}><X size={17} /></button></header>
+    {value && <label className="material-conversation-selector"><span>对话记录</span><select aria-label="素材对话记录" value={value.id} disabled={switchingBlocked || state.loading} onChange={(event) => { const id = event.target.value; if (!isCurrentConversation(value)) return; void perform(async () => { const selected = await getMaterialConversation(value.projectId, value.sceneId, id); if (isCurrentConversation(value)) useMaterialWorkspace.setState({ conversation: selected, references: [], referenceAssetIds: [] }); }); }}>{conversations.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>}
     <div className="material-chat-history">
       {!value?.messages.length && <div className="material-chat-welcome"><span className="material-director-avatar">总监</span><h3>你想制作什么素材？</h3><p>告诉我故事想法、画面要求，或者选择已有产物提出修改。我会梳理需求，安排对应岗位接续制作。</p><p className="material-subtle">剧本 → 角色与场景 → 分镜 → 视频</p></div>}
       {value?.messages.map((message) => <div key={message.id} className="material-turn">
@@ -168,7 +175,7 @@ export default function MaterialChat({ onClose }: { onClose: () => void }) {
       {state.references.length > 0 && <div className="material-reference-list">{state.references.map((reference) => <span key={reference.nodeId}>{reference.title} · 版本 {reference.revision}<button type="button" aria-label={`移除引用 ${reference.title}`} onClick={() => state.remove(reference.nodeId)}><X size={12} /></button></span>)}</div>}
       {value && <MaterialReferenceImages projectId={value.projectId} selectedIds={state.referenceAssetIds} onChange={(referenceAssetIds) => useMaterialWorkspace.setState({ referenceAssetIds })} disabled={busy || state.loading} />}
       <textarea aria-label="素材需求" value={state.draft} onChange={(event) => useMaterialWorkspace.setState({ draft: event.target.value })} placeholder="描述素材需求，或选择画布产物提出修改…" disabled={!value || state.loading} rows={4} onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send(); } }} />
-      <footer><span>{active ? '当前任务处理中，可以先整理下一条需求' : '⌘ / Ctrl + Enter 发送'}</span><button aria-label="发送素材需求" type="submit" className="material-primary" disabled={busy || !!active || !state.draft.trim() || !value}><ArrowUp size={18} /></button></footer>
+      <footer><span>{active ? '当前任务处理中，可以先整理下一条需求' : '⌘ / Ctrl + Enter 发送'}</span><button aria-label="发送素材需求" type="submit" className="material-primary" disabled={busy || state.loading || !!active || !state.draft.trim() || !value}><ArrowUp size={18} /></button></footer>
     </form>
   </section>;
 }

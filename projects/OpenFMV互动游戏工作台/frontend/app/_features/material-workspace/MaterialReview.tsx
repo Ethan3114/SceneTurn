@@ -19,7 +19,8 @@ export default function MaterialReview({ value }: { value: MaterialConversation 
   if (!review) return null;
 
   async function submit() {
-    if (!review || busy || !review.canConfirm) return;
+    const current = useMaterialWorkspace.getState();
+    if (!review || busy || !review.canConfirm || current.loading || current.conversation?.id !== value.id) return;
     if (needsReferenceChanges) {
       useMaterialWorkspace.setState({ error: '请填写成果修改要求，说明如何使用新增参考图片。' });
       return;
@@ -31,7 +32,7 @@ export default function MaterialReview({ value }: { value: MaterialConversation 
       const request = requestRef.current?.payload === payload ? requestRef.current : { payload, operation: operationId() };
       requestRef.current = request;
       const updated = await answerMaterialReview(value, review.id, answers, changes, value.revision, request.operation, addedReferenceAssetIds);
-      useMaterialWorkspace.setState({ conversation: updated, error: '' });
+      if (useMaterialWorkspace.getState().conversation?.id === value.id && !useMaterialWorkspace.getState().loading) useMaterialWorkspace.setState({ conversation: updated, error: '' });
       setReferenceAssetIds([]);
       setChanges('');
     } catch (problem) {
