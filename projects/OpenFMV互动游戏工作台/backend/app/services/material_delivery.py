@@ -33,7 +33,8 @@ def public_node(node, role, content_hash, jobs):
         role = artifact["role"]
         content = writer_body(artifact) if role == "writer" else artifact["productionBrief"]["objective"] if role == "director" else ""
         delivery = {"kind": "script" if role == "writer" else "images" if role in {"character_designer", "scene_designer", "storyboarder"} else "video" if role == "media_producer" else "audio",
-            "text": content, "images": jobs, "segments": [{"key": shot["key"], "firstFrameKey": shot["firstFrameKey"], "lastFrameKey": shot["lastFrameKey"], "durationSeconds": shot["durationSeconds"]} for shot in artifact.get("shots", [])] if artifact.get("schemaVersion") == 2 else []}
+            "text": content, "images": jobs, "reusedFrames": metadata.get("reusedBoundaryFrames", []),
+            "segments": [{"key": shot["key"], "firstFrameKey": shot["firstFrameKey"], "lastFrameKey": shot["lastFrameKey"], "durationSeconds": shot["durationSeconds"]} for shot in artifact.get("shots", [])] if artifact.get("schemaVersion") in {2, 3} else []}
         safe_metadata = {"content": content}
     else:
         role = role or ("character_designer" if jobs else None)

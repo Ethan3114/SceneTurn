@@ -193,7 +193,7 @@ class AgentRunView(WireModel):
     executor: Literal["platform", "codex"]
     delivery_mode: Literal["professional", "text_edit", "tool_action"] | None = None
     artifact_contract_version: str | None = None
-    tool_catalog_version: Literal["R1", "R2", "R3", "R4", "R5", "R6"] = "R1"
+    tool_catalog_version: Literal["R1", "R2", "R3", "R4", "R5", "R6", "R7"] = "R1"
     goal: str
     status: RunStatus
     project_revision: int

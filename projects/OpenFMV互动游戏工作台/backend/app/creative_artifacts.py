@@ -339,6 +339,25 @@ class BoundaryStoryboardArtifact(StoryboardArtifact):
         return self
 
 
+class ReusableBoundaryFrame(ArtifactModel):
+    key: Key = Field(title="共享边界帧代号")
+    title: Title = Field(title="用户可见的画面名称")
+    existing_asset_id: Key | None = Field(title="本轮明确选择并冻结的已有图片标识，新画面填写null")
+    image_prompt: ImagePrompt | None = Field(title="新画面的完整静态提示词，复用已有图片时填写null")
+
+    @model_validator(mode="after")
+    def one_frame_source(self):
+        if (self.existing_asset_id is None) == (self.image_prompt is None):
+            raise ValueError("边界帧必须选择一张已冻结图片，或提供一份新画面提示词")
+        return self
+
+
+class ReusableBoundaryStoryboardArtifact(BoundaryStoryboardArtifact):
+    schema_version: Literal[3] = Field(default=3, title="可复用连续首尾帧结构版本")
+    keyframes: list[ReusableBoundaryFrame] = Field(min_length=2, max_length=101,
+        description="n个视频片段对应n+1个连续边界；已有图片保持真实素材标识，新边界单独生成。")
+
+
 class CapabilityRequirement(ArtifactModel):
     capability: Text = Field(title="所需模型能力与质量要求")
     provider: Key | None = Field(title="实际核实的供应商")
@@ -557,32 +576,36 @@ ARTIFACT_MODELS = {
 }
 
 
-def artifact_model(role: str, boundary_frames: bool = False) -> type[CreativeArtifact]:
+def artifact_model(role: str, boundary_frames: bool = False, reusable_frames: bool = False) -> type[CreativeArtifact]:
+    if role == "storyboarder" and reusable_frames:
+        return ReusableBoundaryStoryboardArtifact
     if role == "storyboarder" and boundary_frames:
         return BoundaryStoryboardArtifact
     return ARTIFACT_MODELS[role]
 
 
 def validate_artifact(role: str, payload: dict) -> dict:
-    artifact = artifact_model(role, payload.get("schemaVersion") == 2).model_validate(payload, strict=True)
+    artifact = artifact_model(role, payload.get("schemaVersion") == 2, payload.get("schemaVersion") == 3).model_validate(payload, strict=True)
     return artifact.model_dump(mode="json", by_alias=True)
 
 
-@lru_cache(maxsize=36)
-def _arguments_model(role: str, boundary_frames: bool = False, explicit_null: bool = False) -> type[BaseModel]:
+@lru_cache(maxsize=54)
+def _arguments_model(role: str, boundary_frames: bool = False, explicit_null: bool = False, reusable_frames: bool = False) -> type[BaseModel]:
     return create_model(
-        f"{artifact_model(role, boundary_frames).__name__}Arguments", __base__=ArtifactModel,
+        f"{artifact_model(role, boundary_frames, reusable_frames).__name__}Arguments", __base__=ArtifactModel,
         target_id=(Key | None, Field(default=None, title="授权目标文字节点，新建产物填写null" if explicit_null else "授权目标文字节点，省略时创建新文字节点")),
         title=(Title | None, Field(default=None, title="画布节点名称，使用产物名称填写null" if explicit_null else "画布节点名称，省略时使用产物名称")),
-        artifact=(artifact_model(role, boundary_frames), Field(title="当前角色的完整专业创作产物")),
+        artifact=(artifact_model(role, boundary_frames, reusable_frames), Field(title="当前角色的完整专业创作产物")),
     )
 
 
-def artifact_arguments_schema(role: str, boundary_frames: bool = False, explicit_null: bool = False) -> dict:
-    return _arguments_model(role, boundary_frames, explicit_null).model_json_schema(by_alias=True)
+def artifact_arguments_schema(role: str, boundary_frames: bool = False, explicit_null: bool = False, reusable_frames: bool = False) -> dict:
+    return _arguments_model(role, boundary_frames, explicit_null, reusable_frames).model_json_schema(by_alias=True)
 
 
 def parse_artifact(payload: dict):
+    if payload.get("role") == "storyboarder" and payload.get("schemaVersion") == 3:
+        return ReusableBoundaryStoryboardArtifact.model_validate(payload, strict=True)
     if payload.get("role") == "storyboarder" and payload.get("schemaVersion") == 2:
         return BoundaryStoryboardArtifact.model_validate(payload, strict=True)
     return ARTIFACT_ADAPTER.validate_python(payload, strict=True)
@@ -602,7 +625,7 @@ def image_prompt_items(payload: dict) -> list[dict]:
     elif isinstance(artifact, SceneArtifact):
         prompts = [(f"场景 {scene.key} · {scene.name} · {index}", prompt) for scene in artifact.scenes for index, prompt in enumerate(scene.image_prompts, 1)]
     elif isinstance(artifact, BoundaryStoryboardArtifact):
-        prompts = [(frame.title, frame.image_prompt) for frame in artifact.keyframes]
+        prompts = [(frame.title, frame.image_prompt) for frame in artifact.keyframes if frame.image_prompt is not None]
     elif isinstance(artifact, StoryboardArtifact):
         prompts = [(f"分镜 {shot.key}", shot.image_prompt) for shot in artifact.shots]
     elif isinstance(artifact, MediaArtifact):

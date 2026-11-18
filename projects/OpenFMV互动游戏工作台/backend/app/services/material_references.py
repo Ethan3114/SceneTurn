@@ -57,6 +57,26 @@ def frozen_reference_assets(session, run, settings):
     return validate_reference_assets(session, project, [item["assetId"] for item in frozen], settings, frozen)
 
 
+def reusable_boundary_frames(session, run, artifact, settings):
+    if artifact.get("role") != "storyboarder" or artifact.get("schemaVersion") != 3:
+        return []
+    from app.services.media_sequences import checked_frame
+    selected = {item["assetId"]: item for item in frozen_reference_assets(session, run, settings)}
+    frames = []
+    for frame in artifact["keyframes"]:
+        identifier = frame["existingAssetId"]
+        if identifier is None:
+            continue
+        if identifier not in selected:
+            raise AppError(422, "STORYBOARD_EXISTING_FRAME_NOT_SELECTED", "复用边界帧必须使用本轮明确选择的项目参考图片")
+        current = checked_frame(session, identifier, run.owner_id, run.project_id, settings or get_settings())
+        if current["sha256"] != selected[identifier]["sha256"]:
+            raise AppError(409, "MATERIAL_REFERENCE_ASSET_CHANGED", "复用边界图片内容已经变化，请重新选择")
+        frames.append({"frameKey": frame["key"], "label": frame["title"], "status": "reused",
+            **{key: current[key] for key in ("assetId", "sha256", "width", "height")}})
+    return frames
+
+
 def current_round_asset_ids(session, run, canvas):
     allowed_nodes = {*run.target_ids_json, *run.created_ids_json}
     nodes = [node for node in canvas.data_json["nodes"] if node["id"] in allowed_nodes]

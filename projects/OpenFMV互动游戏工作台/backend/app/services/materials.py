@@ -15,7 +15,7 @@ from app.services.image_queue import public_job
 from app.services.material_delivery import public_node, public_run
 from app.services.material_review import public_review
 from app.services.material_references import validate_reference_assets
-from app.tools.project_tools import BOUNDARY_TOOL_CATALOG_VERSION
+from app.tools.project_tools import REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION
 
 
 BUSY = {"queued", "running", "stopping", "waiting_connection", "waiting_confirmation", "conflict", "submission_unknown"}
@@ -29,8 +29,9 @@ MATERIAL_INSTRUCTIONS = (
     "角色、场景和分镜的详细生图提示词保存在开发记录，由商汤sensenova-u1.5-fast生成真实图片，用户只看图片成果。"
     "每次write_artifact后执行器会暂停，向用户询问全部confirmationNeeded事项，并等待成果确认；不得自行答复或越过确认。"
     "humanAnswers是用户对准确成果版本的真实答复，必须执行其中修改要求，重新保存成果后等待再次确认。"
-    "分镜使用schemaVersion=2：n段视频对应按时间排序的n+1个keyframes；每段firstFrameKey和lastFrameKey依次引用相邻边界帧。"
-    "每张边界帧提供独立完整静态画面提示词；共享中间帧，保持人物、场景、动作连续。视频必须固定绑定同一组已保存首尾帧。"
+    "分镜使用schemaVersion=3：n段视频对应按时间排序的n+1个keyframes；每段firstFrameKey和lastFrameKey依次引用相邻边界帧。"
+    "需要复用前段尾帧或共同分支入口时，existingAssetId只能填写referenceAssets中的实际图片标识，imagePrompt填写null；该帧不会重新生成。"
+    "需要新画面时existingAssetId填写null，并提供独立完整imagePrompt；共享中间帧，保持人物、场景、动作连续。视频必须固定绑定同一组已保存首尾帧。"
     "视频生成仅在用户明确要求后准备真实任务，提交前由用户核对并确认；不向用户展示供应商报价或费用。"
     "排布、剧情编排、时间线剪辑与互动按钮由用户本人的Codex处理。这里只产出素材，不修改这些对象。"
     "执行记录只描述已发生的工具操作与结果。不要输出内部推理。"
@@ -155,7 +156,7 @@ def send(session, project_id, scene_id, conversation_id, user, body, settings):
     run = create_run(session, project_id, user, RunCreate(operation_id=f"material-{body.operation_id}", expected_revision=body.expected_revision,
         scene_id=scene_id, workspace="materials", role="director", executor="platform", delivery_mode="professional", goal=body.content,
         target_ids=[item["nodeId"] for item in references], limits={"maxSteps": 24, "maxTokens": 32768, "maxCostMicros": 10000000}), settings, commit=False)
-    run.limits_json = {**run.limits_json, "toolCatalogVersion": BOUNDARY_TOOL_CATALOG_VERSION, "materialConversationId": conversation_id, "materialContext": {"instructions": MATERIAL_INSTRUCTIONS,
+    run.limits_json = {**run.limits_json, "toolCatalogVersion": REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION, "materialConversationId": conversation_id, "materialContext": {"instructions": MATERIAL_INSTRUCTIONS,
         "requireHumanReview": True,
         "referenceAssets": reference_assets, "referenceAssetsRevision": project.revision,
         "references": references, "scope": "current_round", "readableNodeIds": [item["nodeId"] for item in references],

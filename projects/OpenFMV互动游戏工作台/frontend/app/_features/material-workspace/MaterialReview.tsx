@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { answerMaterialReview, type MaterialConversation } from '@/app/_utils/materialApi';
-import { operationId } from '@/app/_utils/cloudApi';
+import { assetContentUrl, operationId } from '@/app/_utils/cloudApi';
 import { useMaterialWorkspace } from './store';
 import MaterialReferenceImages, { requireProjectReferenceImages } from './MaterialReferenceImages';
 
@@ -43,7 +43,11 @@ export default function MaterialReview({ value }: { value: MaterialConversation 
     <strong>总监 · 等待你的确认</strong><p>{review.message}</p>
     <MaterialReferenceImages projectId={value.projectId} selectedIds={addedReferenceAssetIds} onChange={setReferenceAssetIds} frozenAssets={value.selectedReferenceAssets} disabled={busy || !review.canConfirm} actionLabel="补充参考图片" />
     {review.questions.map((item) => <label key={item.id}><span>{item.question}</span><textarea aria-label={item.question} value={answers[item.id] || ''} onChange={(event) => setAnswers({ ...answers, [item.id]: event.target.value })} required maxLength={4000} rows={3} disabled={busy} /></label>)}
-    {review.status === 'pending' && review.imageCount > 0 && <div><p>确认后生成 {review.imageCount} 张图片：</p><ul>{review.images.map((image, index) => <li key={index}>{image.label} · {image.width} × {image.height}</li>)}</ul></div>}
+    {review.status === 'pending' && (review.imageCount > 0 || review.reusedImages.length > 0) && <div><p>确认后新生成 {review.imageCount} 张图片：</p>{review.imageCount > 0 && <ul>{review.images.map((image, index) => <li key={index}>{image.label} · {image.width} × {image.height}</li>)}</ul>}</div>}
+    {review.reusedImages.length > 0 && <div><p>复用 {review.reusedImages.length} 张原图：</p><div className="material-video-boundaries">{review.reusedImages.map((image) => <figure key={image.frameKey}>
+      <img src={assetContentUrl(image.assetId)} alt={image.label} width={image.width} height={image.height} loading="lazy" />
+      <figcaption>{image.label} · 复用原图 · {image.width} × {image.height}</figcaption>
+    </figure>)}</div></div>}
     {review.canConfirm && <><label><span>{addedReferenceAssetIds.length ? '需要调整的内容（新增参考图片后必填）' : '需要调整的内容（选填）'}</span><textarea aria-label="成果修改要求" value={changes} onChange={(event) => setChanges(event.target.value)} required={addedReferenceAssetIds.length > 0} maxLength={12000} rows={2} disabled={busy} /></label>
       {needsReferenceChanges && <p className="material-subtle" role="status">请说明如何根据新增参考图片调整成果，再提交修改要求。</p>}
       <button className="material-primary" disabled={busy || needsReferenceChanges || review.questions.some((item) => !answers[item.id]?.trim())} type="submit">{addedReferenceAssetIds.length || changes.trim() || review.questions.some((item) => answers[item.id]?.trim() !== item.suggestedAnswer.trim()) ? '提交修改要求' : review.remainingQuestions > review.questions.length ? '确认并继续核对' : review.status === 'pending' && review.imageCount ? '确认内容并生成图片' : '确认成果，继续制作'}</button></>}

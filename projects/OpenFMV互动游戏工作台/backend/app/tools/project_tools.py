@@ -77,7 +77,9 @@ WORKSPACE_TOOL_CATALOG_VERSION = "R3"
 CONVERSATION_TOOL_CATALOG_VERSION = "R4"
 MATERIAL_TOOL_CATALOG_VERSION = "R5"
 BOUNDARY_TOOL_CATALOG_VERSION = "R6"
-MATERIAL_CATALOG_VERSIONS = frozenset({MATERIAL_TOOL_CATALOG_VERSION, BOUNDARY_TOOL_CATALOG_VERSION})
+REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION = "R7"
+BOUNDARY_CATALOG_VERSIONS = frozenset({BOUNDARY_TOOL_CATALOG_VERSION, REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION})
+MATERIAL_CATALOG_VERSIONS = frozenset({MATERIAL_TOOL_CATALOG_VERSION, *BOUNDARY_CATALOG_VERSIONS})
 LEGACY_TOOL_CATALOG_VERSION = "R1"
 SUPPORTED_TOOL_CATALOG_VERSIONS = frozenset({LEGACY_TOOL_CATALOG_VERSION, TOOL_CATALOG_VERSION, WORKSPACE_TOOL_CATALOG_VERSION, CONVERSATION_TOOL_CATALOG_VERSION, *MATERIAL_CATALOG_VERSIONS})
 
@@ -217,11 +219,12 @@ def allowed_tools(role: str, catalog_version: str = TOOL_CATALOG_VERSION) -> set
 def tool_catalog(role: str, catalog_version: str = TOOL_CATALOG_VERSION) -> list[dict]:
     explicit_null = catalog_version in MATERIAL_CATALOG_VERSIONS
     return [{"name": name, "description": "严格保存当前角色完整专业结构、完整中文正文及可直接使用的生图提示词；创建文字节点时targetId填写null，保留来源、哈希及历史，不调用媒体模型。" if name == "write_artifact" and explicit_null else DESCRIPTIONS[name],
-        "inputSchema": artifact_arguments_schema(role, catalog_version == BOUNDARY_TOOL_CATALOG_VERSION, explicit_null) if name == "write_artifact" else tool_schema(name, catalog_version).model_json_schema(by_alias=True)} for name in sorted(allowed_tools(role, catalog_version))]
+        "inputSchema": artifact_arguments_schema(role, catalog_version == BOUNDARY_TOOL_CATALOG_VERSION, explicit_null,
+            catalog_version == REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION) if name == "write_artifact" else tool_schema(name, catalog_version).model_json_schema(by_alias=True)} for name in sorted(allowed_tools(role, catalog_version))]
 
 
 def tool_schema(name, catalog_version):
-    return BoundaryGenerationArguments if name == "submit_generation" and catalog_version == BOUNDARY_TOOL_CATALOG_VERSION else SCHEMAS[name]
+    return BoundaryGenerationArguments if name == "submit_generation" and catalog_version in BOUNDARY_CATALOG_VERSIONS else SCHEMAS[name]
 
 
 def role_catalog(workspace: str | None = None) -> list[dict]:
@@ -421,7 +424,7 @@ def _artifact_body_matches(node: dict, artifact: dict) -> bool:
 
 
 def _patchable_paths(artifact: dict) -> list[dict]:
-    schema = artifact_model(artifact["role"], artifact.get("schemaVersion") == 2).model_json_schema(by_alias=True)
+    schema = artifact_model(artifact["role"], artifact.get("schemaVersion") == 2, artifact.get("schemaVersion") == 3).model_json_schema(by_alias=True)
     resolver = Registry().with_resource("urn:openfmv:artifact", DRAFT202012.create_resource(schema)).resolver("urn:openfmv:artifact")
 
     def expanded(item: dict) -> dict:
@@ -864,6 +867,7 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
         patch_proof = None
         if tool_name in {"write_artifact", "patch_artifact"}:
             actual_role = step.role if step is not None else run.role
+            reused_frames = []
             if tool_name == "write_artifact" and body.target_id and run.limits_json.get("toolCatalogVersion") in MATERIAL_CATALOG_VERSIONS:
                 authorized(run, body.target_id)
                 if find_node(data, body.target_id).get("metadata", {}).get("creativeArtifact"):
@@ -877,6 +881,13 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
                     raise AppError(422, "AGENT_ARTIFACT_INVALID", "专业产物没有通过当前角色的严格结构校验") from error
             if run.limits_json.get("toolCatalogVersion") == BOUNDARY_TOOL_CATALOG_VERSION and actual_role == "storyboarder" and artifact.get("schemaVersion") != 2:
                 raise AppError(422, "STORYBOARD_BOUNDARIES_REQUIRED", "分镜必须按n个视频片段保存n+1张连续首尾帧")
+            if run.limits_json.get("toolCatalogVersion") == REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION and actual_role == "storyboarder" and tool_name == "write_artifact" and artifact.get("schemaVersion") != 3:
+                raise AppError(422, "STORYBOARD_REUSABLE_BOUNDARIES_REQUIRED", "当前分镜须使用版本3，明确每张边界复用已有图片或生成新图片")
+            if artifact.get("role") == "storyboarder" and artifact.get("schemaVersion") == 3:
+                if run.limits_json.get("toolCatalogVersion") != REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION:
+                    raise AppError(422, "STORYBOARD_REUSABLE_CATALOG_REQUIRED", "已有图片复用需要当前版本的分镜任务")
+                from app.services.material_references import reusable_boundary_frames
+                reused_frames = reusable_boundary_frames(session, run, artifact, settings)
             source_bindings = _validate_artifact_sources(session, run, project, canvas, artifact, settings)
             for binding in source_bindings:
                 if binding["kind"] == "canvas_node" and binding["id"] == body.target_id and binding.get("sceneId") == run.scene_id:
@@ -889,6 +900,8 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
                 "artifactContractVersion": ARTIFACT_CONTRACT_VERSION, "generationPrompts": prompts,
                 "artifactSources": source_bindings,
                 "artifactContentSha256": hashlib.sha256(content.encode()).hexdigest()}
+            if artifact.get("role") == "storyboarder" and artifact.get("schemaVersion") == 3:
+                written["metadata"]["reusedBoundaryFrames"] = reused_frames
         elif tool_name == "write_script":
             operations = _write_text(run, data, body.target_id, body.text, body.title)
         else:

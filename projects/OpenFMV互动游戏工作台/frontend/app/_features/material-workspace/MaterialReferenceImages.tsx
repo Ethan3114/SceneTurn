@@ -2,7 +2,7 @@
 
 import { useId, useState } from 'react';
 
-import { ImagePlus, X } from 'lucide-react';
+import { Check, ImagePlus, X } from 'lucide-react';
 
 import { useProjectSessionStore } from '@/app/_features/project-session/store';
 import { assetContentUrl } from '@/app/_utils/cloudApi';
@@ -58,7 +58,7 @@ export default function MaterialReferenceImages({ projectId, selectedIds, onChan
       {images.length === 0 ? <p className="material-subtle">项目中还没有图片，请在“项目素材”中导入图片。</p> : <fieldset disabled={disabled}><legend className="material-subtle">选择项目图片，最多五张</legend>{images.map((image) => {
         const isFrozen = frozenIds.has(image.id);
         const checked = isFrozen || pendingIds.includes(image.id);
-        return <label key={image.id} className="!my-1 !flex items-center gap-2 rounded p-2 hover:bg-white/5"><input type="checkbox" checked={checked} disabled={isFrozen || (!checked && count >= 5)} onChange={() => toggle(image.id)} /><ReferenceImageThumbnail assetId={image.id} name={image.name} /><span className="min-w-0 break-all">{image.name}</span>{isFrozen && <span className="material-subtle shrink-0">已引用</span>}</label>;
+        return <div key={image.id} className={`my-1 flex items-center gap-2 rounded p-2 hover:bg-white/5 ${checked ? 'bg-white/5' : ''}`}><ReferenceImageThumbnail assetId={image.id} name={image.name} /><button type="button" aria-pressed={checked} disabled={disabled || isFrozen || (!checked && count >= 5)} className="min-w-0 flex-1 !justify-start !border-0 !bg-transparent !p-0 !text-left" onClick={() => toggle(image.id)}><span aria-hidden="true" className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? 'border-orange-400 bg-orange-500 text-white' : 'border-[#71717a]'}`}>{checked && <Check size={12} />}</span><span className="min-w-0 break-all">{image.name}</span></button>{isFrozen && <span className="material-subtle shrink-0">已引用</span>}</div>;
       })}</fieldset>}
       {count >= 5 && <p className="material-subtle" role="status">已选择五张参考图片。</p>}
     </div>}

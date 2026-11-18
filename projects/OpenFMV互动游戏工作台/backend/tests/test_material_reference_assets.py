@@ -67,11 +67,13 @@ def reference_workspace(tmp_path, reference_image):
             session.commit()
             return asset
 
-        def create_run(role="writer", selected=()):
+        def create_run(role="writer", selected=(), catalog_version=None):
             selection = validate_reference_assets(session, project, [asset.id for asset in selected], settings)
             body = RunCreate(operation_id=new_id(), expected_revision=project.revision, scene_id=scene, workspace="materials",
                 role=role, executor="platform", delivery_mode="professional", goal="依据明确选择的图片制作一段素材")
             limits = _new_run_limits(body)
+            if role == "storyboarder":
+                limits["toolCatalogVersion"] = catalog_version or "R6"
             limits["materialContext"] = {**limits["materialContext"], "referenceAssets": selection, "referenceAssetsRevision": project.revision}
             plan = [{"role": role, "title": "制作当前段素材", "instruction": "只使用当前段输入", "kind": "produce", "dependsOn": []}]
             run = AgentRun(id=new_id(), owner_id=user.id, project_id=project.id, scene_id=scene, operation_id=body.operation_id,

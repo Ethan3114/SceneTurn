@@ -10,7 +10,7 @@ from app.image_models import ImageAccount, ImageJob
 from app.material_schemas import material_request_payload
 from app.models import Generation, new_id
 from app.services.projects import payload_digest, require_project, require_revision
-from app.services.material_references import frozen_reference_assets, validate_reference_assets
+from app.services.material_references import frozen_reference_assets, reusable_boundary_frames, validate_reference_assets
 
 
 VISUAL_ROLES = {"character_designer", "scene_designer", "storyboarder"}
@@ -53,14 +53,12 @@ def pause_for_review(session, run, step, node, artifact, settings=None):
         for item in artifact["assumptions"] if item["confirmationNeeded"]]
     if artifact["role"] == "director":
         questions.extend({"id": new_id(), "question": text, "suggestedAnswer": "确认"} for text in artifact["approvalGates"])
-    jobs = []
+    jobs, reused_frames = [], []
     if artifact["role"] in VISUAL_ROLES:
         selected_references = frozen_reference_assets(session, run, settings)
-        if artifact["role"] == "storyboarder" and artifact.get("schemaVersion") != 2:
+        if artifact["role"] == "storyboarder" and artifact.get("schemaVersion") not in {2, 3}:
             raise AppError(422, "STORYBOARD_BOUNDARIES_REQUIRED", "请按连续首尾帧结构保存分镜")
-        accounts = session.scalars(select(ImageAccount).where(ImageAccount.owner_id == run.owner_id)).all()
-        if len(accounts) != 3:
-            raise AppError(409, "IMAGE_ACCOUNTS_REQUIRED", "请配置三个商汤图片账号")
+        reused_frames = reusable_boundary_frames(session, run, artifact, settings)
         prior = session.scalars(select(ImageJob).where(ImageJob.run_id == run.id, ImageJob.status == "ready").order_by(ImageJob.created_at)).all()
         reviews = [*(run.result_json or {}).get("materialReviewHistory", []), previous or {}]
         approved = {(item.get("nodeId"), item.get("artifactHash")) for item in reviews if item.get("status") == "approved"}
@@ -70,33 +68,46 @@ def pause_for_review(session, run, step, node, artifact, settings=None):
         selected_ids = [item["assetId"] for item in selected_references]
         prior_anchors = list(dict.fromkeys(item.asset_id for item in [*representatives, *prior] if item.asset_id))[:4]
         specifications = []
+        frame_indexes = [index for index, frame in enumerate(artifact.get("keyframes", [])) if frame.get("existingAssetId") is None]
         for index, item in enumerate(image_prompt_items(artifact)):
+            if artifact["role"] == "storyboarder":
+                index = frame_indexes[index]
             spec = item["outputSpec"]
             width, height = supported_dimensions(spec)
             if artifact["role"] == "storyboarder" and spec["imageCount"] != 1:
                 raise AppError(422, "STORYBOARD_SINGLE_FRAME_REQUIRED", "每个边界帧必须生成一张独立图片")
             for variant in range(spec["imageCount"]):
                 specifications.append((index, item, spec, width, height, variant))
-        previous_frame_slots = 1 if artifact["role"] == "storyboarder" and len(specifications) > 1 else 0
+        if specifications:
+            accounts = session.scalars(select(ImageAccount).where(ImageAccount.owner_id == run.owner_id)).all()
+            if len(accounts) != 3:
+                raise AppError(409, "IMAGE_ACCOUNTS_REQUIRED", "请配置三个商汤图片账号")
+        generated_indexes = {item[0] for item in specifications}
+        previous_frame_slots = int(artifact["role"] == "storyboarder" and any(index - 1 in generated_indexes for index in generated_indexes))
         if len(selected_ids) + previous_frame_slots > 5:
             raise AppError(422, "MATERIAL_REFERENCE_CAPACITY_EXCEEDED",
                 f"已选择{len(selected_ids)}张参考图片，连续分镜还需要{previous_frame_slots}张上一画面作为参考，共{len(selected_ids) + previous_frame_slots}张，超过单次5张上限；请在新素材对话中选择至多{5 - previous_frame_slots}张参考图片后继续")
         anchor_limit = max(len(selected_ids), min(4, 5 - previous_frame_slots))
         anchors = list(dict.fromkeys([*selected_ids, *prior_anchors]))[:anchor_limit]
+        by_frame_index = {}
         for index, item, spec, width, height, variant in specifications:
+            dependency = by_frame_index.get(index - 1) if artifact["role"] == "storyboarder" else None
             job = ImageJob(id=new_id(), owner_id=run.owner_id, project_id=run.project_id, scene_id=run.scene_id,
                 run_id=run.id, node_id=node["id"], artifact_hash=artifact_hash,
                 operation_id=f"{run.id}:{artifact_hash}:{index}:{variant}", label=item["label"] + (f" · {variant + 1}" if spec["imageCount"] > 1 else ""),
                 frame_key=artifact["keyframes"][index]["key"] if artifact["role"] == "storyboarder" else None,
                 status="awaiting_confirmation", request_json={"prompt": item["prompt"], "width": width, "height": height,
                     "referenceAssets": selected_references},
-                reference_asset_ids=anchors, dependency_ids=[jobs[-1].id] if artifact["role"] == "storyboarder" and jobs else [])
+                reference_asset_ids=anchors, dependency_ids=[dependency.id] if dependency else [])
             session.add(job)
             jobs.append(job)
+            by_frame_index[index] = job
         session.flush()
     review = {"id": new_id(), "stepId": step.id, "nodeId": node["id"], "artifactHash": artifact_hash,
         "status": "pending", "questions": questions, "imageJobIds": [job.id for job in jobs],
         "createdAt": time.time(), "answers": {}, "role": artifact["role"]}
+    if artifact.get("schemaVersion") == 3 and artifact["role"] == "storyboarder":
+        review["reusedFrames"] = reused_frames
     if artifact["role"] == "media_producer" and not questions:
         review["status"] = "not_required"
     history = [*(run.result_json or {}).get("materialReviewHistory", [])]
@@ -135,6 +146,7 @@ def public_review(session, run):
     return {"id": review["id"], "nodeId": review["nodeId"], "status": status,
         "questions": unanswered[:5], "remainingQuestions": len(unanswered),
         "imageCount": len(jobs), "images": [{"label": job.label, "width": job.request_json["width"], "height": job.request_json["height"]} for job in jobs],
+        "reusedImages": review.get("reusedFrames", []),
         "canConfirm": status in {"pending", "review_images"},
         "message": message}
 
@@ -165,6 +177,8 @@ def answer_review(session, conversation, body, settings=None):
     node = next((item for item in canvas_nodes(session, run.project_id, run.scene_id, run.owner_id) if item["id"] == review["nodeId"]), None)
     if node is None or payload_digest(node.get("metadata", {}).get("creativeArtifact")) != review["artifactHash"]:
         raise AppError(409, "MATERIAL_REVIEW_STALE", "成果内容已经变化，请重新生成确认事项")
+    if reusable_boundary_frames(session, run, node["metadata"]["creativeArtifact"], settings) != review.get("reusedFrames", []):
+        raise AppError(409, "STORYBOARD_EXISTING_FRAME_CHANGED", "复用边界图片与待确认版本不一致，请重新核对")
     public = public_review(session, run)
     if not public["canConfirm"]:
         raise AppError(409, "MATERIAL_IMAGES_PENDING", "请等待图片真实生成完成")

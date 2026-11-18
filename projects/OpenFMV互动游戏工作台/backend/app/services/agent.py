@@ -24,7 +24,7 @@ from app.services.text_generation import _reserve, require_text_admin
 from app.services.text_provider import MODEL, TextProviderFailure, complete_text, cost_micros, current_price, model_aliases, peak_price
 from app.services.agent_provider import native_batch_ids
 from app.tools.project_tools import LEGACY_TOOL_CATALOG_VERSION, TOOL_CATALOG_VERSION, WORKSPACE_TOOL_CATALOG_VERSION, MATERIAL_TOOL_CATALOG_VERSION, MATERIAL_ROLES, PROJECT_ROLE_TOOLS, SCENE_ROLES, READ_TOOLS, ROLE_TOOLS, _read_artifact, check_codex_connection, execute_tool, require_canvas, role_catalog, tool_catalog, validate_artifacts
-from app.tools.project_tools import BOUNDARY_TOOL_CATALOG_VERSION, MATERIAL_CATALOG_VERSIONS
+from app.tools.project_tools import REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION, MATERIAL_CATALOG_VERSIONS
 
 
 TERMINAL = {"completed", "failed", "stopped", "submission_unknown"}
@@ -204,7 +204,7 @@ def _new_run_limits(body: RunCreate) -> dict:
         limits["toolCatalogVersion"] = WORKSPACE_TOOL_CATALOG_VERSION
     if body.workspace == "materials":
         from app.services.materials import MATERIAL_INSTRUCTIONS
-        limits["toolCatalogVersion"] = BOUNDARY_TOOL_CATALOG_VERSION
+        limits["toolCatalogVersion"] = REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION
         limits["materialContext"] = {"requireHumanReview": True, "scope": "current_round", "instructions": MATERIAL_INSTRUCTIONS}
     if body.executor == "platform":
         limits.update(providerProtocol=MATERIAL_NATIVE_AGENT_PROTOCOL if body.workspace == "materials" else DEFAULT_AGENT_PROTOCOL, model=MODEL)
