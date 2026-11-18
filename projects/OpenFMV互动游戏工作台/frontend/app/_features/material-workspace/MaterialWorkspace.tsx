@@ -30,7 +30,7 @@ function Artifact({ node }: { node: MaterialNode }) {
     {node.type === 'video' && src && <video src={src} controls preload="metadata" playsInline />}
     {node.type === 'audio' && src && <audio src={src} controls preload="metadata" />}
     {node.delivery?.images.map((image) => <figure className="material-image-result" key={image.id} data-image-job={image.id}>
-      {image.assetId && image.status === 'ready' ? <img src={assetContentUrl(image.assetId)} alt={image.label} loading="lazy" /> : <div className="material-role-empty" role="status">{imageStatuses[image.status] || '等待图片成果'}</div>}
+      {image.assetId && image.status === 'ready' ? <img src={assetContentUrl(image.assetId)} alt={image.label} loading="lazy" /> : <div className="material-role-empty" role="status">{image.status === 'response_saved' && image.errorCode === 'IMAGE_REGISTRATION_FAILED' ? '图片已生成，登记失败，等待恢复' : imageStatuses[image.status] || '等待图片成果'}</div>}
       <figcaption>{image.label} · {image.width} × {image.height}</figcaption>
     </figure>)}
     {!!node.delivery?.segments.length && <ol className="material-plan-list">{node.delivery.segments.map((segment) => <li key={segment.key}>{segment.key} · {segment.durationSeconds} 秒：{segment.firstFrameKey} → {segment.lastFrameKey}</li>)}</ol>}

@@ -219,7 +219,7 @@ def test_actual_sensetime_responses_match_saved_images_and_dimensions():
             raw = decode_image(response, job.request_json["width"], job.request_json["height"])
             asset = session.get(Asset, job.asset_id)
             assert raw == (ROOT / "data" / asset.relpath).read_bytes()
-            assert asset.width == 2048 and asset.height == 1152
+            assert (asset.width, asset.height) == (job.request_json["width"], job.request_json["height"])
     engine.dispose()
 
 

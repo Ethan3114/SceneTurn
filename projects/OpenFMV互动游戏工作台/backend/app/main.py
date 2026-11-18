@@ -22,7 +22,7 @@ from app.models import Budget
 from app.services.generation import worker_loop
 from app.services.text_generation import text_worker_loop
 from app.services.agent import agent_worker_loop
-from app.services.image_queue import image_worker_loop
+from app.services.image_queue import image_worker_done, image_worker_loop, require_image_worker, wait_image_worker
 from app.services.transfer_worker import transfer_worker_loop
 
 
@@ -45,6 +45,9 @@ async def lifespan(_app: FastAPI):
     text_worker = asyncio.create_task(text_worker_loop(settings, SessionLocal, stop_event)) if settings.worker_enabled else None
     agent_worker = asyncio.create_task(agent_worker_loop(settings, SessionLocal, stop_event)) if settings.worker_enabled else None
     image_worker = asyncio.create_task(image_worker_loop(settings, SessionLocal, stop_event)) if settings.worker_enabled else None
+    _app.state.image_worker = image_worker
+    if image_worker is not None:
+        image_worker.add_done_callback(image_worker_done)
     transfer_worker = asyncio.create_task(transfer_worker_loop(settings, SessionLocal, stop_event)) if settings.worker_enabled else None
     yield
     stop_event.set()
@@ -55,7 +58,7 @@ async def lifespan(_app: FastAPI):
     if agent_worker is not None:
         await agent_worker
     if image_worker is not None:
-        await image_worker
+        await wait_image_worker(image_worker)
     if transfer_worker is not None:
         await transfer_worker
 
@@ -105,7 +108,8 @@ async def unexpected_error(_request: Request, error: Exception):
 
 
 @app.get("/api/v1/health")
-def health():
+def health(request: Request):
+    require_image_worker(getattr(request.app.state, "image_worker", None))
     return {"status": "ok", "version": "0.1.0"}
 
 
