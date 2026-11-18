@@ -9,7 +9,7 @@ import zipfile
 import zlib
 
 from pydantic import ValidationError
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select
 
 from app.core.errors import AppError
 from app.services.project_transfers import apply_import, build_archive, file_sha256, transfer_root
@@ -35,29 +35,48 @@ def claim(factory, worker_id):
         return value.id
 
 
+def renew_lease(factory, identifier, worker_id):
+    with factory() as session:
+        lock_write(session)
+        value = session.get(TransferJob, identifier)
+        if value is None or value.lease_owner != worker_id or value.status != "processing":
+            session.commit()
+            return False
+        value.lease_expires_at = time.time() + LEASE_SECONDS
+        session.commit()
+        return True
+
+
 def process_transfer(factory, settings, identifier, worker_id):
     try:
         with factory() as session:
+            lock_write(session)
             value = session.get(TransferJob, identifier)
-            if value.lease_owner != worker_id:
-                raise AppError(409, "TRANSFER_LEASE_LOST", "导入或导出执行权限已过期")
+            if value is None or value.lease_owner != worker_id or value.status != "processing":
+                session.commit()
+                return
+            value.lease_expires_at = time.time() + LEASE_SECONDS
             phase, kind = value.request_json["phase"], value.kind
-            if kind == "import" and phase == "preview":
-                source = transfer_root(settings, identifier) / "source.zip"
-                if payload_digest({"sha256": value.request_json["archiveSha256"]}) != value.identity_sha256:
-                    raise AppError(409, "IMPORT_SOURCE_CHANGED", "导入源摘要与保存记录不一致")
-                if file_sha256(source) != value.request_json["archiveSha256"]:
-                    raise AppError(409, "IMPORT_SOURCE_CHANGED", "导入源文件发生变化")
-                result = import_preview(identifier, source, settings)
-            elif kind == "import":
-                result = None
-            else:
-                result = build_archive(value, settings, str(uuid.uuid4()))
+            session.flush()
+            session.expunge(value)
+            session.commit()
+        if kind == "import" and phase == "preview":
+            source = transfer_root(settings, identifier) / "source.zip"
+            if payload_digest({"sha256": value.request_json["archiveSha256"]}) != value.identity_sha256:
+                raise AppError(409, "IMPORT_SOURCE_CHANGED", "导入源摘要与保存记录不一致")
+            if file_sha256(source) != value.request_json["archiveSha256"]:
+                raise AppError(409, "IMPORT_SOURCE_CHANGED", "导入源文件发生变化")
+            result = import_preview(identifier, source, settings)
+        elif kind == "import":
+            result = None
+        else:
+            result = build_archive(value, settings, str(uuid.uuid4()))
         with factory() as session:
             lock_write(session)
             value = session.get(TransferJob, identifier)
-            if value.lease_owner != worker_id or value.status != "processing" or value.lease_expires_at <= time.time():
-                raise AppError(409, "TRANSFER_LEASE_LOST", "导入或导出执行权限已过期")
+            if value is None or value.lease_owner != worker_id or value.status != "processing":
+                session.commit()
+                return
             if kind == "import" and phase == "preview":
                 value.private_json, value.result_json, value.source_digest = result, result["view"], result["sourceDigest"]
                 value.confirmation_hash = payload_digest({"id": value.id, "source": value.source_digest, "preview": value.result_json})
@@ -74,7 +93,7 @@ def process_transfer(factory, settings, identifier, worker_id):
         with factory() as session:
             lock_write(session)
             value = session.get(TransferJob, identifier)
-            if value.lease_owner == worker_id:
+            if value is not None and value.lease_owner == worker_id and value.status == "processing":
                 value.status = "failed"
                 if isinstance(failure, AppError):
                     value.error_code, value.error_message = failure.code, failure.message
@@ -97,21 +116,17 @@ def process_transfer(factory, settings, identifier, worker_id):
 
 
 async def transfer_worker_loop(settings, factory, stop_event):
-    worker_id = str(uuid.uuid4())
     while not stop_event.is_set():
-        identifier = claim(factory, worker_id)
+        worker_id = str(uuid.uuid4())
+        identifier = await asyncio.to_thread(claim, factory, worker_id)
         if identifier:
             task = asyncio.create_task(asyncio.to_thread(process_transfer, factory, settings, identifier, worker_id))
             while not task.done():
                 done, _ = await asyncio.wait({task}, timeout=5)
                 if done:
                     break
-                with factory() as session:
-                    result = session.execute(update(TransferJob).where(TransferJob.id == identifier, TransferJob.lease_owner == worker_id,
-                        TransferJob.status == "processing", TransferJob.lease_expires_at > time.time()).values(lease_expires_at=time.time() + LEASE_SECONDS))
-                    session.commit()
-                    if result.rowcount != 1:
-                        raise AppError(409, "TRANSFER_LEASE_LOST", "导入或导出任务租约已失效")
+                if not await asyncio.to_thread(renew_lease, factory, identifier, worker_id):
+                    break
             await task
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=0.5)

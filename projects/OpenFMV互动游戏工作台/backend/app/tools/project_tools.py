@@ -522,7 +522,7 @@ def _patch_artifact(session: Session, run: AgentRun, step: AgentStep | None, pro
         except jsonpatch.JsonPatchTestFailed as error:
             raise AppError(409, "AGENT_ARTIFACT_PATCH_TEST_FAILED", "字段原值检查失败，请重新读取后修订") from error
         except (jsonpatch.JsonPatchException, JsonPointerException) as error:
-            raise AppError(422, "AGENT_ARTIFACT_PATCH_INVALID", "字段修订路径或操作无效") from error
+            raise AppError(422, "AGENT_ARTIFACT_PATCH_INVALID", f"修订路径{operation['path']}不存在或操作无效。仅可使用read_artifact返回的patchablePaths；扩展标量数组时，请replace已允许的完整数组路径并提供完整数组。") from error
     try:
         patched = validate_artifact(role, current)
     except ValidationError as error:

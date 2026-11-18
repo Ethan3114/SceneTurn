@@ -4,7 +4,7 @@ from app.agent_schemas import PlanningDecision, StepDecision
 from app.creative_artifacts import ImagePrompt, OutputSpec, artifact_model
 
 
-PROMPT_VERSION = "openfmv-role-agent-2026-11-18-r18"
+PROMPT_VERSION = "openfmv-role-agent-2026-11-18-r19"
 ROLE_TITLES = {
     "director": "创作总监", "writer": "编剧", "character_designer": "角色设计师",
     "scene_designer": "场景设计师", "storyboarder": "分镜师", "media_producer": "影像制作师",

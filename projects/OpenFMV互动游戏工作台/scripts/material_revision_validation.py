@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from jsonpointer import JsonPointer
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -19,7 +20,7 @@ from app.material_models import MaterialConversation, MaterialMessage
 from app.material_schemas import MaterialAnswer
 from app.media_models import MediaSequence
 from app.models import Asset, BudgetReservation, Generation, Project
-from app.services.agent import _apply_native_call, _material_revision_request, _native_correction_info, _native_messages, _recoverable_material_revision, _safe_native_rejection, require_step_delivery, resume_run, run_view
+from app.services.agent import _apply_native_call, _material_revision_error, _material_revision_request, _native_correction_info, _native_messages, _parameter_correction_count, _recoverable_material_revision, _reject_native_call, _safe_native_rejection, require_step_delivery, resume_run, run_view
 from app.services.agent_provider import MATERIAL_NATIVE_AGENT_PROTOCOL, agent_tools, decode_platform_message
 from app.services.material_review import answer_review, public_review
 from app.services.generation import quote_generation
@@ -30,16 +31,19 @@ from app.tools.project_tools import execute_tool, require_canvas
 ROOT = Path(__file__).resolve().parents[1]
 RUN_ID = "0847961a-7349-4df2-9420-6fb9abac76a8"
 COMPLETE_ID = "2cded3b6-a7a4-45cd-8690-c952397f3d72"
+READ_ID = "a22b0a4a-1880-4438-9197-ef26d6092569"
+PATCH_ID = "f2aaa3b1-a008-4c66-adaf-b27a42211c30"
 
 
 @pytest.fixture
-def revision_database(tmp_path):
-    snapshot_path = os.environ.get("OPENFMV_REVISION_SNAPSHOT")
+def revision_database(tmp_path, request):
+    variable = "OPENFMV_REVISION_PATCH_SNAPSHOT" if getattr(request, "param", None) == "patch_limit" else "OPENFMV_REVISION_SNAPSHOT"
+    snapshot_path = os.environ.get(variable)
     if not snapshot_path:
-        pytest.fail("请设置OPENFMV_REVISION_SNAPSHOT，指向本次已授权的真实失败任务SQLite一致性副本；该验证不会读取生产数据库。")
+        pytest.fail(f"请设置{variable}，指向本次已授权的真实失败任务SQLite一致性副本；该验证不会读取生产数据库。")
     snapshot = Path(snapshot_path).resolve()
     if not snapshot.is_file():
-        pytest.fail("OPENFMV_REVISION_SNAPSHOT指定的SQLite一致性副本不存在。")
+        pytest.fail(f"{variable}指定的SQLite一致性副本不存在。")
     database = tmp_path / "openfmv.sqlite3"
     with sqlite3.connect(f"{snapshot.as_uri()}?immutable=1", uri=True) as source, sqlite3.connect(database) as destination:
         source.backup(destination)
@@ -116,7 +120,10 @@ def test_actual_native_complete_rejection_is_correctable_and_context_excludes_ol
         assert call.status == "tool_rejected" and run.status == "queued"
         calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
         assert sum(bool(item.input_json.get("correctionOf")) for item in calls) == 2
-        assert _native_correction_info(session, run, step.id, calls) == {"correctionOf": call.id, "correctionAttempt": 1}
+        assert _native_correction_info(session, run, step.id, calls) == {}
+        assert "nativeCorrection" not in run.result_json
+        assert run.result_json["materialWorkflowCorrection"]["rejections"] == 1
+        assert run.result_json["materialWorkflowCorrection"]["maxRejections"] == 2
         context = json.loads(call.input_json["messages"][1]["content"])["context"]
         messages = _native_messages(run, step, step.role, context, calls, [])
         instruction = json.loads(messages[1]["content"])
@@ -332,3 +339,174 @@ def test_unfinished_real_generation_quote_blocks_both_material_bindings(revision
         with pytest.raises(AppError):
             resume_run(session, run.project_id, run.id, run.owner_id, str(uuid.uuid4()), project.revision, settings)
         assert (generation.status, generation.reserved_cents, generation.remote_task_id) == original
+
+
+@pytest.mark.parametrize("revision_database", ["patch_limit"], indirect=True)
+def test_actual_ten_call_patch_limit_resumes_without_rewriting_any_provider_record(revision_database):
+    engine, settings = revision_database
+    with Session(engine) as session:
+        run, step, semantic, project = actual_revision(session)
+        patch = session.get(AgentCall, PATCH_ID)
+        calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
+        assert len(calls) == 10 and sum(call.cost_micros for call in calls) == 505257
+        assert session.get(AgentCall, READ_ID).input_json["correctionOf"] == semantic.id
+        assert patch.input_json["correctionOf"] == semantic.id
+        before = payload_digest([{key: getattr(call, key) for key in ("id", "input_json", "response_json", "raw_output", "usage_json", "cost_micros", "total_tokens")} for call in calls])
+        assert _parameter_correction_count(run, step.id, calls) == 0
+        assert _native_correction_info(session, run, step.id, calls) == {"correctionOf": patch.id, "correctionAttempt": 1}
+        assert run_view(session, run, settings)["canResume"]
+        operation = str(uuid.uuid4())
+        resume_run(session, run.project_id, run.id, run.owner_id, operation, project.revision, settings)
+        resume_run(session, run.project_id, run.id, run.owner_id, operation, project.revision, settings)
+        session.expire_all()
+        run, step, _, project = actual_revision(session)
+        calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
+        assert payload_digest([{key: getattr(call, key) for key in ("id", "input_json", "response_json", "raw_output", "usage_json", "cost_micros", "total_tokens")} for call in calls]) == before
+        assert run.status == step.status == "queued"
+        assert run.result_json["nativeCorrection"]["callId"] == patch.id
+        assert run.result_json["materialRevisionRecovery"]["businessReplayed"] is False
+        assert project.revision == 21 and run.limits_json["maxSteps"] == 24 and run.limits_json["maxCostMicros"] == 10000000
+        instruction = json.loads(_native_messages(run, step, step.role, {}, calls, [])[1]["content"])
+        feedback = instruction["materialPatchCorrection"]
+        assert feedback["invalidPaths"] == ["/acceptanceChecklist/13", "/acceptanceChecklist/14"]
+        assert feedback["replaceWholeListPaths"] == ["/acceptanceChecklist"]
+        assert all(job.status == "cancelled" and job.submitted_at is None for job in session.scalars(select(ImageJob).where(ImageJob.run_id == run.id)))
+
+
+@pytest.mark.parametrize("revision_database", ["patch_limit"], indirect=True)
+def test_actual_invalid_replace_stays_rejected_with_specific_path_and_no_parameter_retry_spent(revision_database):
+    engine, settings = revision_database
+    with Session(engine) as session:
+        run, _, _, project = actual_revision(session)
+        resume_run(session, run.project_id, run.id, run.owner_id, str(uuid.uuid4()), project.revision, settings)
+        patch = session.get(AgentCall, PATCH_ID)
+        patch.status = "ready"
+        session.commit()
+    _apply_native_call(settings, sessionmaker(engine), RUN_ID, PATCH_ID)
+    with Session(engine) as session:
+        run, step, _, project = actual_revision(session)
+        patch = session.get(AgentCall, PATCH_ID)
+        assert run.status == "queued" and patch.status == "tool_rejected"
+        assert patch.usage_json["toolError"]["code"] == "AGENT_ARTIFACT_PATCH_INVALID"
+        assert "/acceptanceChecklist/13" in patch.usage_json["toolError"]["message"]
+        assert patch.usage_json["toolError"]["businessExecuted"] is False
+        calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
+        assert _native_correction_info(session, run, step.id, calls) == {"correctionOf": patch.id, "correctionAttempt": 1}
+        assert project.revision == 21 and sum(call.cost_micros for call in calls) == 505257
+
+
+@pytest.mark.parametrize("revision_database", ["patch_limit"], indirect=True)
+def test_real_pending_parameter_error_survives_semantic_rejection_replay(revision_database):
+    engine, _ = revision_database
+    with Session(engine) as session:
+        run, step, semantic, _ = actual_revision(session)
+        assert run.result_json["nativeCorrection"]["callId"] == PATCH_ID
+        _reject_native_call(session, run, semantic, _material_revision_error())
+        assert run.result_json["nativeCorrection"]["callId"] == PATCH_ID
+        calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
+        assert _native_correction_info(session, run, step.id, calls) == {"correctionOf": PATCH_ID, "correctionAttempt": 1}
+        assert run.result_json["materialWorkflowCorrection"]["rejections"] == 1
+
+
+@pytest.mark.parametrize("revision_database", ["patch_limit"], indirect=True)
+@pytest.mark.parametrize("state", ["legacy_pending", "workflow_notice"])
+def test_real_successful_read_clears_only_legacy_semantic_pending_without_changing_receipt(revision_database, state):
+    engine, settings = revision_database
+    with Session(engine) as session:
+        run, step, semantic, project = actual_revision(session)
+        resume_run(session, run.project_id, run.id, run.owner_id, str(uuid.uuid4()), project.revision, settings)
+        read = session.get(AgentCall, READ_ID)
+        original_input = payload_digest(read.input_json)
+        original_receipt = payload_digest(next(item for item in step.tool_results_json if item["operationId"] == f"agent-{READ_ID}"))
+        original_usage = payload_digest(read.usage_json)
+        run.result_json = {**run.result_json, "nativeCorrection": {"callId": semantic.id, "tool": "complete_step"}}
+        if state == "workflow_notice":
+            _reject_native_call(session, run, semantic, _material_revision_error())
+        calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
+        assert _native_correction_info(session, run, step.id, calls) == {}
+        read.usage_json = {**read.usage_json, "toolExecutionDone": False}
+        session.commit()
+    _apply_native_call(settings, sessionmaker(engine), RUN_ID, READ_ID)
+    with Session(engine) as session:
+        run, step, _, project = actual_revision(session)
+        read = session.get(AgentCall, READ_ID)
+        assert "nativeCorrection" not in run.result_json
+        assert run.error_code is None and run.error_message is None
+        assert read.status == "ready" and payload_digest(read.usage_json) == original_usage
+        assert payload_digest(read.input_json) == original_input
+        assert payload_digest(next(item for item in step.tool_results_json if item["operationId"] == f"agent-{READ_ID}")) == original_receipt
+        calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
+        assert _native_correction_info(session, run, step.id, calls) == {}
+        assert project.revision == 21 and sum(call.cost_micros for call in calls) == 505257
+
+
+@pytest.mark.parametrize("revision_database", ["patch_limit"], indirect=True)
+def test_real_full_patch_with_allowed_list_replacement_creates_six_unsubmitted_images(revision_database):
+    engine, settings = revision_database
+    with Session(engine) as session:
+        run, step, _, project = actual_revision(session)
+        resume_run(session, run.project_id, run.id, run.owner_id, str(uuid.uuid4()), project.revision, settings)
+        patch = session.get(AgentCall, PATCH_ID)
+        read = next(item["result"] for item in step.tool_results_json if item["operationId"] == f"agent-{READ_ID}")
+        arguments = copy.deepcopy(patch.response_json["arguments"])
+        checklist = copy.deepcopy(read["artifact"]["acceptanceChecklist"])
+        operations = []
+        for operation in arguments["patches"]:
+            pointer = operation["path"]
+            if pointer in {f"/acceptanceChecklist/{index}" for index in range(15)}:
+                index = int(JsonPointer(pointer).parts[-1])
+                if index < len(checklist):
+                    checklist[index] = operation["value"]
+                else:
+                    assert index == len(checklist)
+                    checklist.append(operation["value"])
+            else:
+                operations.append(operation)
+        arguments["patches"] = [*operations, {"op": "replace", "path": "/acceptanceChecklist", "value": checklist}]
+        original_hash = payload_digest(patch.response_json)
+        result = execute_tool(session, run, step.role, "patch_artifact", arguments, str(uuid.uuid4()), project.revision, settings, step)
+        assert result["result"]["persisted"] and payload_digest(patch.response_json) == original_hash
+        assert run.status == step.status == "waiting_confirmation"
+        review = run.result_json["materialReview"]
+        assert review["status"] == "pending" and len(review["imageJobIds"]) == 6
+        assert all(session.get(ImageJob, identifier).status == "awaiting_confirmation"
+            and session.get(ImageJob, identifier).submitted_at is None for identifier in review["imageJobIds"])
+        assert sum(session.scalars(select(AgentCall.cost_micros).where(AgentCall.run_id == run.id))) == 505257
+
+
+@pytest.mark.parametrize("boundary", ["no_successful_read", "semantic_parent_unsettled", "parameter_parent", "parent_other_step", "parent_other_revision", "wrong_pending", "wrong_hash", "unknown", "unsettled", "executed", "changed_revision"])
+@pytest.mark.parametrize("revision_database", ["patch_limit"], indirect=True)
+def test_actual_patch_limit_recovery_requires_exact_safe_evidence(revision_database, boundary):
+    engine, settings = revision_database
+    with Session(engine) as session:
+        run, step, semantic, project = actual_revision(session)
+        patch = session.get(AgentCall, PATCH_ID)
+        if boundary == "no_successful_read":
+            read = session.get(AgentCall, READ_ID)
+            read.usage_json = {**read.usage_json, "toolExecutionDone": False}
+        elif boundary == "semantic_parent_unsettled":
+            semantic.usage_json = {**semantic.usage_json, "settled": False}
+        elif boundary == "parameter_parent":
+            semantic.usage_json = {**semantic.usage_json, "toolError": {**semantic.usage_json["toolError"], "code": "AGENT_NATIVE_ARGUMENTS_INVALID"}}
+        elif boundary == "parent_other_step":
+            semantic.step_id = session.scalar(select(AgentStep.id).where(AgentStep.run_id == run.id, AgentStep.id != step.id))
+        elif boundary == "parent_other_revision":
+            semantic.input_json = {**semantic.input_json, "materialRevisionOperationId": str(uuid.uuid4())}
+        elif boundary == "wrong_pending":
+            run.result_json = {**run.result_json, "nativeCorrection": {"callId": semantic.id, "tool": "complete_step"}}
+        elif boundary == "wrong_hash":
+            context = copy.deepcopy(run.limits_json["materialContext"])
+            context["revisionRequest"]["artifactHash"] = "0" * 64
+            run.limits_json = {**run.limits_json, "materialContext": context}
+        elif boundary == "unknown":
+            session.get(AgentCall, READ_ID).status = "submission_unknown"
+        elif boundary == "unsettled":
+            session.get(BudgetReservation, patch.id).reserved_micros = 1
+        elif boundary == "executed":
+            patch.usage_json = {**patch.usage_json, "toolExecutionDone": True}
+        elif boundary == "changed_revision":
+            project.revision += 1
+        session.commit()
+        assert not run_view(session, run, settings)["canResume"]
+        with pytest.raises(AppError):
+            resume_run(session, run.project_id, run.id, run.owner_id, str(uuid.uuid4()), project.revision, settings)

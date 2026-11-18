@@ -290,10 +290,11 @@ backend/.venv/bin/python scripts/smoke_record_text.py --task-id <同一文本任
 
 确认卡中的修改要求会重新启动当前岗位修订，保存完整答案和参考图片；旧图片任务取消，新成果需要再次确认。当前修订范围内的旧写入及验证回执保留为历史，角色需要读取当前成果并保存实际修改。因修订尚未写入而中断的任务，通过版本、成果摘要、参考文件及费用结算检查后，可点击“继续当前任务”恢复；任务原请求次数和费用上限保持。未确认的成果、活动媒体和状态未知的请求继续阻止交接。
 
-`scripts/material_revision_validation.py`提供31项真实任务副本回放，独立于默认后端测试。它需要本次失败状态的授权SQLite一致性副本；副本保留在本机，不进入仓库。缺少指定副本时明确失败。验证只在隔离数据库中执行生产工具和恢复流程，供应商请求保持关闭。在产品目录执行：
+`scripts/material_revision_validation.py`提供48项真实任务副本回放，独立于默认后端测试。它需要本次两种失败状态的授权SQLite一致性副本；副本保留在本机，不进入仓库。缺少指定副本时明确失败。验证只在隔离数据库中执行生产工具和恢复流程，供应商请求保持关闭。在产品目录执行：
 
 ```bash
 export OPENFMV_REVISION_SNAPSHOT="$PWD/.intermediate/material-revision-recovery-20261118/failed-run.sqlite3"
+export OPENFMV_REVISION_PATCH_SNAPSHOT="$PWD/.intermediate/material-revision-recovery-20261118/patch-limit-run.sqlite3"
 export PYTHONPATH="$PWD/backend"
 export TMPDIR="$PWD/.intermediate/tmp"
 backend/.venv/bin/python -m pytest -q scripts/material_revision_validation.py --basetemp="$PWD/.intermediate/pytest-material-revision"

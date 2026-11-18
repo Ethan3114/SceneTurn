@@ -5,6 +5,7 @@ import time
 import uuid
 
 from pydantic import ValidationError
+from jsonpointer import JsonPointer, JsonPointerException
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -339,7 +340,12 @@ def resume_run(session: Session, project_id: str, run_id: str, owner_id: str, op
         run.limits_json = {**run.limits_json, "materialContext": {**context, "revisionRequest": {
             key: revision[key] for key in ("reviewId", "stepId", "nodeId", "artifactHash", "operationId", "requestedAt", "answers", "requestedChanges")}}}
         session.get(AgentStep, material_recovery.step_id).result_json = None
-        _reject_native_call(session, run, material_recovery, _material_revision_error())
+        if material_recovery.usage_json.get("toolError", {}).get("code") == "AGENT_ARTIFACT_PATCH_INVALID":
+            run.result_json = {**run.result_json, "nativeCorrection": {"callId": material_recovery.id, "tool": "patch_artifact"},
+                "materialRevisionRecovery": {"callId": material_recovery.id, "operationId": operation_id,
+                    "reason": "semantic_correction_labels", "businessReplayed": False}}
+        else:
+            _reject_native_call(session, run, material_recovery, _material_revision_error())
     elif run.status == "conflict" and run.error_code == "AGENT_ARTIFACT_SOURCE_CHANGED" and run.limits_json.get("toolCatalogVersion") in MATERIAL_CATALOG_VERSIONS:
         last_call = session.scalar(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at.desc()).limit(1))
         if last_call is not None and last_call.status == "failed" and last_call.input_json["projectRevision"] == project.revision and (last_call.response_json or {}).get("tool") == "read_artifact" and last_call.usage_json.get("settled") and not last_call.usage_json.get("toolExecutionDone"):
@@ -618,8 +624,66 @@ def _call_in_material_revision(call: AgentCall, revision: dict | None) -> bool:
     return operation == revision["operationId"] if operation else call.created_at >= revision["requestedAt"]
 
 
+def _material_workflow_rejection(run: AgentRun, call: AgentCall, revision: dict | None) -> bool:
+    eligible = (revision is not None and run.limits_json.get("providerProtocol") == MATERIAL_NATIVE_AGENT_PROTOCOL
+        and call.run_id == run.id and call.step_id == revision["stepId"]
+        and call.role == (run.result_json or {}).get("materialReview", {}).get("role")
+        and call.input_json.get("protocol") == MATERIAL_NATIVE_AGENT_PROTOCOL and _call_in_material_revision(call, revision)
+        and call.status == "tool_rejected" and call.response_json is not None and call.response_json.get("action") == "complete"
+        and call.usage_json.get("toolError", {}).get("code") == "MATERIAL_REVISION_REQUIRED"
+        and call.usage_json["toolError"].get("businessExecuted") is False and not call.usage_json.get("toolExecutionDone")
+        and call.usage_json.get("settled") and call.cost_micros is not None and call.total_tokens is not None
+        and call.remote_request_id and call.raw_output and call.usage_json.get("toolCallId")
+        and call.input_json.get("toolCatalogVersion") == run.limits_json.get("toolCatalogVersion"))
+    if not eligible:
+        return False
+    try:
+        decoded, identifier = decode_platform_message(json.loads(call.raw_output), False, call.role,
+            MATERIAL_NATIVE_AGENT_PROTOCOL, run.limits_json["toolCatalogVersion"])
+    except (AppError, ValidationError, json.JSONDecodeError):
+        return False
+    return decoded == call.response_json and identifier == call.usage_json["toolCallId"]
+
+
+def _parameter_correction_count(run: AgentRun, step_id: str | None, calls: list[AgentCall]) -> int:
+    revision = _material_revision_request(run, step_id)
+    by_id = {call.id: call for call in calls if call.step_id == step_id}
+    return sum(1 for call in by_id.values() if call.input_json.get("correctionOf") and _call_in_material_revision(call, revision)
+        and not (call.input_json["correctionOf"] in by_id and _material_workflow_rejection(run, by_id[call.input_json["correctionOf"]], revision)))
+
+
+def _material_patch_feedback(run: AgentRun, step: AgentStep | None, calls: list[AgentCall]) -> dict | None:
+    pending = (run.result_json or {}).get("nativeCorrection", {})
+    revision = _material_revision_request(run, step.id if step else None)
+    call = next((item for item in calls if item.id == pending.get("callId")), None)
+    if (step is None or revision is None or call is None or call.step_id != step.id
+            or call.usage_json.get("toolError", {}).get("code") != "AGENT_ARTIFACT_PATCH_INVALID"
+            or (call.response_json or {}).get("tool") != "patch_artifact" or not _call_in_material_revision(call, revision)):
+        return None
+    arguments = call.response_json["arguments"]
+    baseline = next((receipt["result"] for receipt in reversed(step.tool_results_json) if receipt["tool"] == "read_artifact"
+        and receipt["result"].get("targetId") == arguments["targetId"]
+        and receipt["result"].get("revision") == arguments["expectedRevision"]
+        and receipt["result"].get("baseArtifactSha256") == arguments["baseArtifactSha256"]), None)
+    if baseline is None:
+        return None
+    allowed = {item["path"]: item for item in baseline["patchablePaths"]}
+    invalid, arrays = [], set()
+    for patch in arguments["patches"]:
+        if patch["op"] == "replace" and patch["path"] not in allowed:
+            invalid.append(patch["path"])
+            try:
+                parent = JsonPointer.from_parts(JsonPointer(patch["path"]).parts[:-1]).path
+            except JsonPointerException:
+                continue
+            if parent in allowed and isinstance(allowed[parent]["value"], list):
+                arrays.add(parent)
+    return {"callId": call.id, "invalidPaths": invalid, "replaceWholeListPaths": sorted(arrays),
+        "instruction": "不存在的路径不能replace。只使用实际read_artifact返回的patchablePaths；扩展标量数组时，replace已允许的完整数组路径并提供保留原值及新增项的完整数组。"}
+
+
 def _recoverable_material_revision(session: Session, run: AgentRun, revision: int, settings: Settings | None = None) -> AgentCall | None:
-    if (run.status != "failed" or run.error_code != "MATERIAL_CONFIRMATION_REQUIRED" or run.stop_requested
+    if (run.status != "failed" or run.error_code not in {"MATERIAL_CONFIRMATION_REQUIRED", "AGENT_NATIVE_CORRECTION_LIMIT"} or run.stop_requested
             or run.project_revision != revision or run.executor != "platform"
             or run.limits_json.get("providerProtocol") != MATERIAL_NATIVE_AGENT_PROTOCOL
             or run.limits_json.get("toolCatalogVersion") not in MATERIAL_CATALOG_VERSIONS):
@@ -633,8 +697,7 @@ def _recoverable_material_revision(session: Session, run: AgentRun, revision: in
             or request["requestedAt"] != review.get("answeredAt")):
         return None
     calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
-    if not calls or len(calls) >= run.limits_json["maxSteps"] or sum(1 for item in calls
-            if item.step_id == step.id and item.input_json.get("correctionOf") and _call_in_material_revision(item, request)) >= 2:
+    if not calls or len(calls) >= run.limits_json["maxSteps"] or _parameter_correction_count(run, step.id, calls) >= 2:
         return None
     reservations = {item.id: item for item in session.scalars(select(BudgetReservation).where(BudgetReservation.id.in_([call.id for call in calls])))}
     for item in calls:
@@ -647,15 +710,38 @@ def _recoverable_material_revision(session: Session, run: AgentRun, revision: in
     if sum(item.cost_micros for item in calls) >= run.limits_json["maxCostMicros"]:
         return None
     call = calls[-1]
-    if (call.step_id != step.id or call.role != step.role or call.status != "failed" or not call.raw_output
+    workflow_recovery = run.error_code == "MATERIAL_CONFIRMATION_REQUIRED"
+    if (call.step_id != step.id or call.role != step.role or call.status != ("failed" if workflow_recovery else "tool_rejected") or not call.raw_output
             or not call.remote_request_id or not call.usage_json.get("toolCallId") or call.usage_json.get("toolExecutionDone")
             or call.usage_json.get("controlResult") is not None
-            or call.usage_json.get("toolFailure", {}).get("code") != "MATERIAL_CONFIRMATION_REQUIRED"
             or call.input_json.get("planning") is not False or call.input_json.get("protocol") != MATERIAL_NATIVE_AGENT_PROTOCOL
             or call.input_json.get("toolCatalogVersion") != run.limits_json["toolCatalogVersion"]
             or call.input_json.get("projectRevision") != revision or not _call_in_material_revision(call, request)
             or any(item["operationId"] == f"agent-{call.id}" for item in step.tool_results_json)):
         return None
+    if workflow_recovery:
+        if (call.usage_json.get("toolFailure", {}).get("code") != "MATERIAL_CONFIRMATION_REQUIRED"
+                or any(_material_workflow_rejection(run, item, request) for item in calls)):
+            return None
+    else:
+        parent = next((item for item in calls if item.id == call.input_json.get("correctionOf")), None)
+        if (call.usage_json.get("toolError", {}).get("code") != "AGENT_ARTIFACT_PATCH_INVALID"
+                or call.usage_json["toolError"].get("businessExecuted") is not False
+                or parent is None or not _material_workflow_rejection(run, parent, request)
+                or _parameter_correction_count(run, step.id, calls) != 0
+                or sum(1 for item in calls if item.step_id == step.id and item.input_json.get("correctionOf") and _call_in_material_revision(item, request)) < 2
+                or sum(1 for item in calls if _material_workflow_rejection(run, item, request)) >= 2
+                or (run.result_json or {}).get("nativeCorrection", {}).get("callId") != call.id):
+            return None
+        successful_read = next((item for item in reversed(calls[:-1]) if item.step_id == step.id
+            and item.input_json.get("correctionOf") == parent.id and item.status == "ready" and item.usage_json.get("toolExecutionDone")
+            and _call_in_material_revision(item, request) and item.input_json.get("projectRevision") == revision
+            and item.finished_at is not None and item.finished_at <= call.created_at
+            and (item.response_json or {}).get("tool") == "read_artifact" and item.response_json["arguments"]["targetId"] == request["nodeId"]
+            and any(receipt["operationId"] == f"agent-{item.id}" and receipt["tool"] == "read_artifact"
+                and receipt["result"].get("baseArtifactSha256") == request["artifactHash"] for receipt in step.tool_results_json)), None)
+        if successful_read is None:
+            return None
     from app.image_models import ImageJob
     from app.media_models import MediaSequence
     from app.services.generation import ACTIVE_STATUSES
@@ -677,12 +763,18 @@ def _recoverable_material_revision(session: Session, run: AgentRun, revision: in
         _validate_frozen_model(run, call)
         decision, identifier = decode_platform_message(json.loads(call.raw_output), False, step.role,
             MATERIAL_NATIVE_AGENT_PROTOCOL, run.limits_json["toolCatalogVersion"])
-        if decision.get("action") != "complete" or decision != call.response_json or identifier != call.usage_json["toolCallId"]:
+        if (decision != call.response_json or identifier != call.usage_json["toolCallId"]
+                or workflow_recovery and decision.get("action") != "complete"
+                or not workflow_recovery and decision.get("tool") != "patch_artifact"):
             return None
         project = require_project(session, run.project_id, run.owner_id)
         actual_settings = settings or get_settings()
         baseline = _read_artifact(session, run, project, require_canvas(session, run, project), request["nodeId"], actual_settings)
         if baseline.get("artifactSha256") != request["artifactHash"] or baseline["artifact"]["role"] != step.role:
+            return None
+        if not workflow_recovery and (decision["arguments"]["targetId"] != request["nodeId"]
+                or decision["arguments"]["expectedRevision"] != revision
+                or decision["arguments"]["baseArtifactSha256"] != baseline["artifactSha256"]):
             return None
         frozen_reference_assets(session, run, actual_settings)
     except (AppError, ValidationError, json.JSONDecodeError, OSError):
@@ -702,6 +794,7 @@ def _protocol_instruction(run: AgentRun, step: AgentStep | None, context: dict, 
     return {"goal": run.goal, "deliveryMode": run.limits_json.get("deliveryMode", "legacy"),
         "materialConversation": run.limits_json.get("materialContext"),
         "materialRevision": revision,
+        "materialPatchCorrection": _material_patch_feedback(run, step, calls),
         "artifactContractVersion": run.limits_json.get("artifactContractVersion"), "projectRevision": run.project_revision,
         "authorizedTargetIds": run.target_ids_json, "createdNodeIds": run.created_ids_json, "context": context,
         "step": {"role": step.role, "title": step.title, "instruction": step.instruction,
@@ -737,6 +830,7 @@ def _native_messages(run: AgentRun, step: AgentStep | None, role: str, context: 
         system += "普通文字节点通过read_project或retrieve_context读取正文；只有materialNodes中professionalRole有值的节点才可用read_artifact读取专业结构。每次只调用一个函数并等待真实结果。"
         if not verification and step is not None:
             system += "修订专业产物时，先read_artifact读取完整当前结构、revision、baseArtifactSha256及patchablePaths，再以patch_artifact逐字段replace并保留未涉及字段。读取上游产物不授予修改它的权限。"
+            system += "patch只能使用实际返回的patchablePaths。新增标量数组元素时，replace已允许的完整数组路径并提供完整数组；不存在的数组下标不能replace。"
             write_schema = next(item["function"]["parameters"] for item in agent_tools(role, False,
                 protocol=run.limits_json.get("providerProtocol", MATERIAL_NATIVE_AGENT_PROTOCOL),
                 catalog_version=run.limits_json["toolCatalogVersion"]) if item["function"]["name"] == "write_artifact")
@@ -869,8 +963,9 @@ def _native_correction_info(session: Session, run: AgentRun, step_id: str | None
     if original is None or original.run_id != run.id or original.step_id != step_id or original.status != "tool_rejected" or not original.usage_json.get("settled") or not original.remote_request_id:
         raise AppError(409, "AGENT_NATIVE_CORRECTION_INVALID", "工具修正缺少已结算的真实拒绝记录")
     revision = _material_revision_request(run, step_id)
-    attempts = sum(1 for call in calls if call.step_id == step_id and call.input_json.get("correctionOf")
-        and _call_in_material_revision(call, revision))
+    if _material_workflow_rejection(run, original, revision):
+        return {}
+    attempts = _parameter_correction_count(run, step_id, calls)
     if attempts >= 2:
         raise AppError(422, "AGENT_NATIVE_CORRECTION_LIMIT", "本步骤已达到两次模型参数修正上限，原始回复和费用继续保留")
     return {"correctionOf": original.id, "correctionAttempt": attempts + 1}
@@ -939,13 +1034,22 @@ def _reject_native_call(session: Session, run: AgentRun, call: AgentCall, error:
     call.status, call.usage_json = "tool_rejected", {**call.usage_json, "toolError": errors}
     attempts = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step_id == call.step_id)).all()
     revision = _material_revision_request(run, call.step_id)
-    count = sum(1 for item in attempts if item.input_json.get("correctionOf") and _call_in_material_revision(item, revision))
-    run.result_json = {**(run.result_json or {}), "candidate": call.response_json, "toolError": errors,
-                       "nativeCorrection": {"callId": call.id, "tool": (call.response_json or {}).get("tool") or call.usage_json.get("nativeFunction")}}
+    workflow = _material_workflow_rejection(run, call, revision)
+    count = sum(1 for item in attempts if _material_workflow_rejection(run, item, revision)) if workflow else _parameter_correction_count(run, call.step_id, attempts)
+    result = {**(run.result_json or {}), "candidate": call.response_json, "toolError": errors}
+    if workflow:
+        pending = result.get("nativeCorrection")
+        previous = session.get(AgentCall, pending["callId"]) if pending else None
+        if previous is not None and _material_workflow_rejection(run, previous, revision):
+            result.pop("nativeCorrection")
+        result["materialWorkflowCorrection"] = {"reviewId": revision["reviewId"], "callId": call.id, "rejections": count, "maxRejections": 2}
+    else:
+        result["nativeCorrection"] = {"callId": call.id, "tool": (call.response_json or {}).get("tool") or call.usage_json.get("nativeFunction")}
+    run.result_json = result
     if run.stop_requested:
         run.status, run.error_code, run.error_message = "stopped", "RUN_STOPPED", "任务已停止，拒绝记录与实际费用继续保留"
     elif count >= 2:
-        run.status, run.error_code, run.error_message = "failed", "AGENT_NATIVE_CORRECTION_LIMIT", "本步骤已达到两次模型参数修正上限"
+        run.status, run.error_code, run.error_message = "failed", ("MATERIAL_REVISION_CORRECTION_LIMIT" if workflow else "AGENT_NATIVE_CORRECTION_LIMIT"), ("本次修订已达到两次提前提交完成的纠正上限" if workflow else "本步骤已达到两次模型参数修正上限")
     else:
         run.status, run.error_code, run.error_message = "queued", "AGENT_NATIVE_TOOL_REJECTED", "参数已拒绝且没有执行业务操作，保留真实回复与费用并允许有界修正"
     run.updated_at, run.lease_expires_at = time.time(), None
@@ -1064,8 +1168,16 @@ def _apply_native_call(settings: Settings, factory: sessionmaker, run_id: str, c
             else:
                 _finish_native_action(session, run, call, decision, project, settings)
             pending = (run.result_json or {}).get("nativeCorrection")
-            if pending and (pending.get("tool") == decision.tool or tool_name in {"submit_plan", "complete_step"} or project.revision != call.input_json["projectRevision"]):
+            previous = session.get(AgentCall, pending["callId"]) if pending else None
+            if pending and (previous is not None and _material_workflow_rejection(run, previous, _material_revision_request(run, call.step_id))
+                    or pending.get("tool") == decision.tool or tool_name in {"submit_plan", "complete_step"} or project.revision != call.input_json["projectRevision"]):
                 run.result_json = {key: value for key, value in run.result_json.items() if key not in {"nativeCorrection", "toolError"}}
+                run.error_code, run.error_message = None, None
+            workflow = (run.result_json or {}).get("materialWorkflowCorrection")
+            revision = _material_revision_request(run, call.step_id)
+            if (workflow and revision and workflow["reviewId"] == revision["reviewId"]
+                    and (run.result_json or {}).get("toolError", {}).get("code") == "MATERIAL_REVISION_REQUIRED"):
+                run.result_json = {key: value for key, value in run.result_json.items() if key != "toolError"}
                 run.error_code, run.error_message = None, None
             call.status, call.usage_json = "ready", {**call.usage_json, "toolExecutionDone": True}
             run.updated_at, run.lease_expires_at = time.time(), None
