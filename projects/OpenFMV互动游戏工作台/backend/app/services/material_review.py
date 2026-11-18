@@ -116,11 +116,27 @@ def public_review(session, run):
     if status == "generating" and jobs and all(job.status == "ready" for job in jobs):
         status = "review_images"
     unanswered = [item for item in review["questions"] if item["id"] not in review.get("answers", {})] if status == "pending" else []
+    if status == "pending":
+        message = "请回答视频制作前的问题；提交视频时还会核对首尾画面和参数。" if review.get("role") == "media_producer" else "请核对以下事项，并确认当前成果。"
+    elif status == "generating":
+        message = "图片生成中，完成后请确认图片成果。"
+    else:
+        message = "图片已生成，请查看画布并确认后继续。"
+    if status == "generating":
+        counts = {state: sum(job.status == state for job in jobs) for state in ("ready", "submission_unknown", "failed", "cancelled")}
+        problems = [f"{counts[state]}张{label}" for state, label in (("submission_unknown", "请求结果待核实"), ("failed", "生成失败"), ("cancelled", "已取消")) if counts[state]]
+        if problems:
+            active = sum(job.status in {"queued", "claimed", "submitting", "response_saved"} for job in jobs)
+            message = f"图片已完成{counts['ready']}/{len(jobs)}张，" + "，".join(problems) + "。"
+            if active:
+                message += f"另有{active}张仍在排队或处理中。"
+            else:
+                message += "请先核对未完成的图片。"
     return {"id": review["id"], "nodeId": review["nodeId"], "status": status,
         "questions": unanswered[:5], "remainingQuestions": len(unanswered),
         "imageCount": len(jobs), "images": [{"label": job.label, "width": job.request_json["width"], "height": job.request_json["height"]} for job in jobs],
         "canConfirm": status in {"pending", "review_images"},
-        "message": "请回答视频制作前的问题；提交视频时还会核对首尾画面和参数。" if status == "pending" and review.get("role") == "media_producer" else "请核对以下事项，并确认当前成果。" if status == "pending" else "图片生成中，完成后请确认图片成果。" if status == "generating" else "图片已生成，请查看画布并确认后继续。"}
+        "message": message}
 
 
 def answer_review(session, conversation, body, settings=None):

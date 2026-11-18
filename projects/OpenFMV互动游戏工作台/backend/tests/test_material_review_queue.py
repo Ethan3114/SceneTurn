@@ -23,7 +23,7 @@ from app.core.config import Settings
 from app.services.image_queue import claim_job, recover_jobs
 from app.services.material_review import answer_review, pause_for_review, public_review
 from app.services.materials import view
-from app.tools.project_tools import require_canvas
+from app.tools.project_tools import execute_tool, require_canvas
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -221,6 +221,55 @@ def test_actual_sensetime_responses_match_saved_images_and_dimensions():
             assert raw == (ROOT / "data" / asset.relpath).read_bytes()
             assert (asset.width, asset.height) == (job.request_json["width"], job.request_json["height"])
     engine.dispose()
+
+
+@pytest.mark.parametrize("statuses,expected", [
+    (["ready"] * 5 + ["submission_unknown"], "图片已完成5/6张，1张请求结果待核实。请先核对未完成的图片。"),
+    (["ready", "ready", "submission_unknown", "failed", "cancelled", "queued"], "图片已完成2/6张，1张请求结果待核实，1张生成失败，1张已取消。另有1张仍在排队或处理中。"),
+    (["ready"] * 4 + ["failed", "cancelled"], "图片已完成4/6张，1张生成失败，1张已取消。请先核对未完成的图片。"),
+    (["ready"] * 5 + ["submitting"], "图片生成中，完成后请确认图片成果。"),
+    (["ready"] * 6, "图片已生成，请查看画布并确认后继续。"),
+])
+def test_image_review_message_uses_isolated_confirmed_workflow(actual_database, statuses, expected):
+    with Session(actual_database) as session:
+        run, step, node, conversation = actual_role(session, "character_designer")
+        run.status, run.stop_requested, step.status = "running", 0, "running"
+        artifact = copy.deepcopy(node["metadata"]["creativeArtifact"])
+        character = artifact["characters"][0]
+        prompt = character["imagePrompts"][0]
+        prompt["outputSpec"]["imageCount"] = 6
+        character["imagePrompts"] = [prompt]
+        artifact["characters"] = [character]
+        settings = Settings(_env_file=None, data_dir=ROOT / "data", worker_enabled=False)
+        session.commit()
+        execute_tool(session, run, step.role, "write_artifact", {"artifact": artifact}, str(uuid.uuid4()), run.project_revision, settings, step)
+        while run.result_json["materialReview"]["status"] == "pending":
+            pending = public_review(session, run)
+            answer_review(session, conversation, MaterialAnswer(operation_id=str(uuid.uuid4()), expected_revision=run.project_revision,
+                review_id=pending["id"], answers={item["id"]: item["suggestedAnswer"] for item in pending["questions"]}), settings)
+            session.commit()
+        review = copy.deepcopy(run.result_json["materialReview"])
+        assert review["status"] == "generating"
+        jobs = [session.get(ImageJob, identifier) for identifier in review["imageJobIds"]]
+        assert len(jobs) == 6 and all(job.run_id == run.id and job.status == "queued" for job in jobs)
+        for job, status in zip(jobs, statuses, strict=True):
+            job.status = status
+        review["status"] = "generating"
+        run.result_json = {**run.result_json, "materialReview": review}
+        session.flush()
+        before_review = copy.deepcopy(run.result_json)
+        before_limits = copy.deepcopy(run.limits_json)
+        before_jobs = [(job.id, job.status, job.account_id, job.submitted_at, job.finished_at, job.attempt_count) for job in jobs]
+        before_accounts = [(account.id, account.status, account.active_job_id) for account in session.scalars(select(ImageAccount).where(ImageAccount.owner_id == run.owner_id))]
+        result = public_review(session, run)
+        assert result["message"] == expected
+        assert result["canConfirm"] is all(status == "ready" for status in statuses)
+        assert result["status"] == ("review_images" if result["canConfirm"] else "generating")
+        session.flush()
+        session.expire_all()
+        assert run.result_json == before_review and run.limits_json == before_limits
+        assert [(job.id, job.status, job.account_id, job.submitted_at, job.finished_at, job.attempt_count) for job in jobs] == before_jobs
+        assert [(account.id, account.status, account.active_job_id) for account in session.scalars(select(ImageAccount).where(ImageAccount.owner_id == run.owner_id))] == before_accounts
 
 
 def test_internal_video_plan_does_not_satisfy_final_video_delivery(actual_database):

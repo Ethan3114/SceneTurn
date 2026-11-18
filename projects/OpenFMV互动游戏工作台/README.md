@@ -306,7 +306,7 @@ backend/.venv/bin/python -m pytest -q scripts/material_revision_validation.py --
 backend/.venv/bin/python scripts/import_sensetime_accounts.py --source '../端侧AI-Studio/backend/.env' --email '1090444703@qq.com'
 ```
 
-同步提交状态不明时保留原账号占用。未知请求不自动重发，不自动购买额度。商汤真实队列验证由`scripts/smoke_sensetime_queue.py`保存私有证明和自动图片冒烟记录；每次实际重试需要独立确认。`scripts/verify_image_restart.py`核对重启前后任务、文件摘要和账号占用。`scripts/smoke_material_review.py`使用真实DeepSeek Flash验证保存、暂停、通用继续接口拒绝及重启恢复，单次验证保留10元预算上限。
+每个商汤账号同时处理一项生成。工作台在事务内占用账号，收到成功响应并完成图片登记后才领取下一单。结果待核实时保留原账号占用，未知请求不自动重发，不自动购买额度。工作台通过凭据摘要识别相同凭据。各配置项需对应不同商汤账号，且账号的其他调用方也需遵守同一并发限制。商汤真实队列验证由`scripts/smoke_sensetime_queue.py`保存私有证明和自动图片冒烟记录。每次实际重试需要独立确认。`scripts/verify_image_restart.py`核对重启前后任务、文件摘要和账号占用。`scripts/smoke_material_review.py`使用真实DeepSeek Flash验证保存、暂停、通用继续接口拒绝及重启恢复，单次验证保留10元预算上限。
 
 图片响应和PNG保存后，资产登记在新事务中重新读取项目、任务及账号状态，保留期间的人工编辑；同一图片重复登记保持幂等。服务启动会补登记`response_saved`的原始结果，再继续已确认的队列。登记失败保留响应、PNG和账号占用，页面显示明确状态；图片worker异常时健康检查返回503及`IMAGE_WORKER_FAILED`，日志只记录异常类型。
 
