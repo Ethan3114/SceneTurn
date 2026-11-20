@@ -30,8 +30,14 @@
 .material-review label { display: grid; gap: 8px; margin: 14px 0; }
 .material-review textarea { width: 100%; resize: vertical; background: #171717; border: 1px solid #49453d; border-radius: 8px; padding: 10px; color: inherit; }
 .material-review .material-primary { width: 100%; padding: 12px; }
+.material-review-suggestion { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .material-image-result { margin: 12px 0; }
 .material-image-result figcaption { padding: 8px 0; color: #aaa69c; font-size: 13px; }
+.material-automation-message { padding: 10px 12px; border: 1px solid #36363b; border-radius: 8px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.material-brief-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
+.material-confirmed-requirements ul { margin: 3px 0 8px; padding-left: 18px; list-style: disc; overflow-wrap: anywhere; }
+.material-director-steps li { flex-wrap: wrap; }
+.material-director-steps li > .material-subtle { margin-left: auto; color: #a1a1aa; }
 .material-video-boundaries { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .material-video-boundaries figure { margin: 0; }
 .material-video-boundaries img { width: 100%; border-radius: 8px; }

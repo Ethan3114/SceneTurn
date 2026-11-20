@@ -16,7 +16,7 @@ from app.connection_models import CodexConnection
 from app.context_schemas import ContextSource
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.creative_artifacts import ARTIFACT_CONTRACT_VERSION, artifact_arguments_schema, artifact_model, image_prompt_items, render_artifact, validate_artifact
+from app.creative_artifacts import ARTIFACT_CONTRACT_VERSION, VideoMotionPrompt, artifact_arguments_schema, artifact_model, image_prompt_items, render_artifact, validate_artifact
 from app.models import Asset, Canvas, Generation, Project, ProjectVersion, new_id
 from app.schemas import CanvasSnapshot, WireModel
 from app.services.context import SourceResolver, retrieve_context, source_scope, write_memory
@@ -72,13 +72,25 @@ class PatchArtifactArguments(ReadArtifactArguments):
     patches: list[ArtifactPatch] = Field(min_length=1, max_length=200)
 
 
+class RemoveImagePromptPatch(WireModel):
+    op: Literal["remove"]
+    path: str = Field(max_length=1000, pattern=r"^/(characters|scenes)/(0|[1-9][0-9]*)/imagePrompts/(0|[1-9][0-9]*)$",
+        description="修订确认指定的成果时，使用read_artifact返回的可移除图片路径。至少保留一张；同一列表按序号从大到小移除。")
+
+
+class MaterialSopPatchArtifactArguments(PatchArtifactArguments):
+    patches: list[ArtifactPatch | RemoveImagePromptPatch] = Field(min_length=1, max_length=200)
+
+
 TOOL_CATALOG_VERSION = "R2"
 WORKSPACE_TOOL_CATALOG_VERSION = "R3"
 CONVERSATION_TOOL_CATALOG_VERSION = "R4"
 MATERIAL_TOOL_CATALOG_VERSION = "R5"
 BOUNDARY_TOOL_CATALOG_VERSION = "R6"
 REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION = "R7"
-BOUNDARY_CATALOG_VERSIONS = frozenset({BOUNDARY_TOOL_CATALOG_VERSION, REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION})
+MATERIAL_SOP_TOOL_CATALOG_VERSION = "R8"
+REUSABLE_BOUNDARY_CATALOG_VERSIONS = frozenset({REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION, MATERIAL_SOP_TOOL_CATALOG_VERSION})
+BOUNDARY_CATALOG_VERSIONS = frozenset({BOUNDARY_TOOL_CATALOG_VERSION, *REUSABLE_BOUNDARY_CATALOG_VERSIONS})
 MATERIAL_CATALOG_VERSIONS = frozenset({MATERIAL_TOOL_CATALOG_VERSION, *BOUNDARY_CATALOG_VERSIONS})
 LEGACY_TOOL_CATALOG_VERSION = "R1"
 SUPPORTED_TOOL_CATALOG_VERSIONS = frozenset({LEGACY_TOOL_CATALOG_VERSION, TOOL_CATALOG_VERSION, WORKSPACE_TOOL_CATALOG_VERSION, CONVERSATION_TOOL_CATALOG_VERSION, *MATERIAL_CATALOG_VERSIONS})
@@ -122,6 +134,11 @@ class GenerationId(WireModel):
 class BoundaryGenerationArguments(GenerationArguments):
     storyboard_node_id: str = Field(min_length=1, max_length=100)
     shot_key: str = Field(min_length=1, max_length=100)
+
+
+class MaterialVideoGenerationArguments(WireModel):
+    video_artifact_node_id: str = Field(min_length=1, max_length=100, description="当前视频师保存的专业产物节点。")
+    shot_key: str = Field(min_length=1, max_length=100, description="该产物中已绑定实际首尾帧的镜头代号。")
 
 
 class SplitArguments(WireModel):
@@ -195,6 +212,12 @@ PROJECT_ROLE_TOOLS = {
 }
 SCENE_ROLES = {"writer", "character_designer", "scene_designer", "storyboarder", "media_producer", "sound_designer"}
 MATERIAL_ROLES = SCENE_ROLES | {"director"}
+MATERIAL_SOP_READ_TOOLS = frozenset({"read_project", "retrieve_context", "read_artifact", "validate_artifacts"})
+MATERIAL_ARTIFACT_TOOLS = MATERIAL_SOP_READ_TOOLS | {"write_artifact", "patch_artifact"}
+MATERIAL_SOP_ROLE_TOOLS = {
+    **{role: MATERIAL_ARTIFACT_TOOLS for role in MATERIAL_ROLES},
+    "media_producer": MATERIAL_ARTIFACT_TOOLS | {"submit_generation", "inspect_generation"},
+}
 SCHEMAS.update(STORY_SCHEMAS)
 DESCRIPTIONS.update(STORY_DESCRIPTIONS)
 SCHEMAS.update(EDITING_SCHEMAS)
@@ -207,6 +230,8 @@ def allowed_tools(role: str, catalog_version: str = TOOL_CATALOG_VERSION) -> set
         raise AppError(422, "AGENT_TOOL_CATALOG_INVALID", "工具目录版本不可用")
     if catalog_version == CONVERSATION_TOOL_CATALOG_VERSION:
         return set(STORY_SCHEMAS) | set(EDITING_SCHEMAS) if role == "director" else set()
+    if catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+        return set(MATERIAL_SOP_ROLE_TOOLS.get(role, ()))
     if catalog_version in MATERIAL_CATALOG_VERSIONS:
         if role not in MATERIAL_ROLES:
             return set()
@@ -218,13 +243,30 @@ def allowed_tools(role: str, catalog_version: str = TOOL_CATALOG_VERSION) -> set
 
 def tool_catalog(role: str, catalog_version: str = TOOL_CATALOG_VERSION) -> list[dict]:
     explicit_null = catalog_version in MATERIAL_CATALOG_VERSIONS
-    return [{"name": name, "description": "严格保存当前角色完整专业结构、完整中文正文及可直接使用的生图提示词；创建文字节点时targetId填写null，保留来源、哈希及历史，不调用媒体模型。" if name == "write_artifact" and explicit_null else DESCRIPTIONS[name],
+    descriptions = DESCRIPTIONS
+    if catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+        descriptions = {**DESCRIPTIONS,
+            "write_artifact": "保存当前岗位的完整成果，标明上游已采用版本。新建成果时targetId与title填null，服务端保存来源和历史。",
+            "submit_generation": "根据当前视频成品方案的节点和镜头代号，固定使用已采用的分镜首尾图与保存的运动要求，准备待本人确认的视频任务。",
+        }
+    elif explicit_null:
+        descriptions = {**DESCRIPTIONS,
+            "write_artifact": "严格保存当前角色完整专业结构、完整中文正文及可直接使用的生图提示词；创建文字节点时targetId填写null，保留来源、哈希及历史，不调用媒体模型。",
+        }
+    return [{"name": name, "description": descriptions[name],
         "inputSchema": artifact_arguments_schema(role, catalog_version == BOUNDARY_TOOL_CATALOG_VERSION, explicit_null,
-            catalog_version == REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION) if name == "write_artifact" else tool_schema(name, catalog_version).model_json_schema(by_alias=True)} for name in sorted(allowed_tools(role, catalog_version))]
+            catalog_version in REUSABLE_BOUNDARY_CATALOG_VERSIONS, catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION) if name == "write_artifact" else tool_schema(name, catalog_version).model_json_schema(by_alias=True)} for name in sorted(allowed_tools(role, catalog_version))]
 
 
 def tool_schema(name, catalog_version):
-    return BoundaryGenerationArguments if name == "submit_generation" and catalog_version in BOUNDARY_CATALOG_VERSIONS else SCHEMAS[name]
+    if name == "patch_artifact" and catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+        return MaterialSopPatchArtifactArguments
+    if name == "submit_generation":
+        if catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+            return MaterialVideoGenerationArguments
+        if catalog_version in BOUNDARY_CATALOG_VERSIONS:
+            return BoundaryGenerationArguments
+    return SCHEMAS[name]
 
 
 def role_catalog(workspace: str | None = None) -> list[dict]:
@@ -234,9 +276,11 @@ def role_catalog(workspace: str | None = None) -> list[dict]:
                "editor": "真实图片切片与本地视频拼接可用，保留原始素材及历史",
                "interaction_designer": "互动文字方案可用；完整按钮、QTE与分支编辑在阶段2-4验收",
                "sound_designer": "声音文字方案及当前场景资料读取可用，音频模型依据真实配置开放"}
-    return [{"id": role, "title": title, "description": ROLE_DUTIES[role], "tools": sorted(PROJECT_ROLE_TOOLS[role] if workspace == "project" else ROLE_TOOLS[role]), "available": True,
+    tools = PROJECT_ROLE_TOOLS if workspace == "project" else MATERIAL_SOP_ROLE_TOOLS if workspace == "materials" else ROLE_TOOLS
+    roles = SCENE_ROLES if workspace == "scene" else tools.keys()
+    return [{"id": role, "title": title, "description": ROLE_DUTIES[role], "tools": sorted(tools[role]), "available": True,
              "reason": ("直接编辑故事总画布中的场景、时间线和互动对象" if workspace == "project" else reasons.get(role))} for role, title in ROLE_TITLES.items()
-            if workspace is None or role in (PROJECT_ROLE_TOOLS if workspace == "project" else SCENE_ROLES)]
+            if role in roles]
 
 
 def require_canvas(session: Session, run: AgentRun, project: Project) -> Canvas:
@@ -423,8 +467,9 @@ def _artifact_body_matches(node: dict, artifact: dict) -> bool:
     return (selected.get("content") or metadata.get("content")) == text
 
 
-def _patchable_paths(artifact: dict) -> list[dict]:
-    schema = artifact_model(artifact["role"], artifact.get("schemaVersion") == 2, artifact.get("schemaVersion") == 3).model_json_schema(by_alias=True)
+def _patchable_paths(artifact: dict, allow_image_prompt_removal: bool = False) -> list[dict]:
+    version = artifact.get("schemaVersion")
+    schema = artifact_model(artifact["role"], version == 2, version == 3, version == 2).model_json_schema(by_alias=True)
     resolver = Registry().with_resource("urn:openfmv:artifact", DRAFT202012.create_resource(schema)).resolver("urn:openfmv:artifact")
 
     def expanded(item: dict) -> dict:
@@ -442,18 +487,25 @@ def _patchable_paths(artifact: dict) -> list[dict]:
                     continue
                 yield from visit(child, definition.get("properties", {}).get(key, {}), [*parts, key])
         elif isinstance(value, list):
-            source_list = expanded(definition.get("items", {})).get("title") == "ArtifactSource"
+            item_title = expanded(definition.get("items", {})).get("title")
+            source_list = item_title == "ArtifactSource"
             if source_list or scalar(definition.get("items", {})):
                 yield {"path": JsonPointer.from_parts(parts).path, "value": copy.deepcopy(value), "sourceList": source_list}
+            removable_images = (allow_image_prompt_removal and len(value) > 1 and item_title == "ImagePrompt"
+                and len(parts) == 3 and parts[0] in {"characters", "scenes"} and parts[2] == "imagePrompts")
             for index, child in enumerate(value):
-                yield from visit(child, definition.get("items", {}), [*parts, str(index)])
+                child_path = [*parts, str(index)]
+                if removable_images:
+                    yield {"path": JsonPointer.from_parts(child_path).path, "removeImagePrompt": True}
+                yield from visit(child, definition.get("items", {}), child_path)
         elif parts:
             yield {"path": JsonPointer.from_parts(parts).path, "value": value}
 
     return list(visit(artifact, schema, []))
 
 
-def _read_artifact(session: Session, run: AgentRun, project: Project, canvas: Canvas, target_id: str, settings: Settings) -> dict:
+def _read_artifact(session: Session, run: AgentRun, project: Project, canvas: Canvas, target_id: str, settings: Settings,
+                   step: AgentStep | None = None) -> dict:
     readable = run.limits_json.get("materialContext", {}).get("readableNodeIds", []) if run.limits_json.get("toolCatalogVersion") in MATERIAL_CATALOG_VERSIONS else []
     if target_id not in readable:
         authorized(run, target_id)
@@ -482,17 +534,39 @@ def _read_artifact(session: Session, run: AgentRun, project: Project, canvas: Ca
     if scope == "current":
         _validate_saved_artifact(session, run, project, canvas, node, settings, frozenset({target_id}))
     digest = payload_digest(artifact)
-    return {"artifact": copy.deepcopy(artifact), "artifactSha256": digest, "baseArtifactSha256": digest,
+    prompt_removal_review_id = None
+    if scope == "current" and step is not None and step.role == artifact["role"] and step.role in {"character_designer", "scene_designer"}:
+        from app.services.agent_provider import MATERIAL_JSON_AGENT_PROTOCOL
+        limits = run.limits_json
+        context = limits.get("materialContext", {})
+        review = (run.result_json or {}).get("materialReview", {})
+        request = context.get("revisionRequest", {})
+        if (limits.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION and limits.get("workspace") == "materials"
+                and limits.get("providerProtocol") == MATERIAL_JSON_AGENT_PROTOCOL and context.get("requireHumanReview")
+                and review.get("role") == step.role and review.get("status") == "revision_requested"
+                and review.get("id") == request.get("reviewId") and review.get("operationId") == request.get("operationId")
+                and review.get("stepId") == request.get("stepId") == step.id
+                and review.get("nodeId") == request.get("nodeId") == target_id
+                and review.get("artifactHash") == request.get("artifactHash") == digest):
+            prompt_removal_review_id = review["id"]
+    result = {"artifact": copy.deepcopy(artifact), "artifactSha256": digest, "baseArtifactSha256": digest,
             "revision": project.revision, "targetId": target_id, "referenceScope": scope,
             "sourcesValidated": scope == "current", "artifactContractVersion": ARTIFACT_CONTRACT_VERSION,
             "contentSha256": hashlib.sha256(metadata["content"].encode()).hexdigest(),
-            "patchablePaths": _patchable_paths(artifact)}
+            "patchablePaths": _patchable_paths(artifact, prompt_removal_review_id is not None)}
+    if prompt_removal_review_id is not None:
+        result["imagePromptRemovalReviewId"] = prompt_removal_review_id
+    if (scope == "current" and run.limits_json.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION
+            and artifact["role"] == "storyboarder" and artifact["schemaVersion"] in {2, 3}):
+        from app.services.video_boundaries import approved_video_segments
+        result["approvedVideoSegments"] = approved_video_segments(session, run, target_id, artifact)
+    return result
 
 
 def _patch_artifact(session: Session, run: AgentRun, step: AgentStep | None, project: Project, canvas: Canvas, body: PatchArtifactArguments, role: str, settings: Settings) -> tuple[dict, dict]:
     authorized(run, body.target_id)
     require_revision(project, body.expected_revision)
-    baseline = _read_artifact(session, run, project, canvas, body.target_id, settings)
+    baseline = _read_artifact(session, run, project, canvas, body.target_id, settings, step)
     artifact = baseline["artifact"]
     if artifact is None:
         raise AppError(422, "AGENT_ARTIFACT_TARGET_REQUIRED", "普通文字没有专业字段，请保留原文并创建独立专业产物")
@@ -510,6 +584,34 @@ def _patch_artifact(session: Session, run: AgentRun, step: AgentStep | None, pro
         raise AppError(409, "AGENT_ARTIFACT_READ_REQUIRED", "字段修订需要先读取当前版本的完整专业结构")
     allowed = {item["path"]: item for item in baseline["patchablePaths"]}
     operations = [item.model_dump(by_alias=True) for item in body.patches]
+    removal_paths = [item["path"] for item in operations if item["op"] == "remove"]
+    if removal_paths:
+        review_id = baseline.get("imagePromptRemovalReviewId")
+        if review_id is None:
+            raise AppError(422, "AGENT_ARTIFACT_PATCH_FORBIDDEN", "仅可在当前成果的修订确认中移除图片。")
+        removals = {}
+        for path in removal_paths:
+            if not allowed.get(path, {}).get("removeImagePrompt"):
+                raise AppError(422, "AGENT_IMAGE_PROMPT_SELECTION_INVALID", "请选择当前读取结果中可以移除的图片序号。")
+            parts = JsonPointer(path).parts
+            parent, index = JsonPointer.from_parts(parts[:-1]).path, parts[-1]
+            removals.setdefault(parent, []).append(int(index))
+        confirmed_reads = (receipt["result"] for receipt in step.tool_results_json
+            if receipt["tool"] == "read_artifact" and receipt["revision"] == project.revision
+            and receipt["result"].get("targetId") == body.target_id
+            and receipt["result"].get("baseArtifactSha256") == body.base_artifact_sha256)
+        if not any(result.get("imagePromptRemovalReviewId") == review_id
+                or result.get("imagePromptSubsetReviewId") == review_id and removals.keys() <= {
+                    item["path"] for item in result["patchablePaths"] if item.get("imagePromptSubset")}
+                for result in confirmed_reads):
+            raise AppError(409, "AGENT_ARTIFACT_READ_REQUIRED", "减少图片前，请读取当前确认所对应的专业结构。")
+        if any(indexes != sorted(set(indexes), reverse=True) or len(indexes) >= len(JsonPointer(parent).resolve(artifact))
+                for parent, indexes in removals.items()):
+            raise AppError(422, "AGENT_IMAGE_PROMPT_SELECTION_INVALID", "同一列表按序号从大到小移除，不可重复，并且至少保留一张。")
+        unchanged = (*removals, "/sources")
+        if any(item["op"] == "replace" and any(item["path"] == path or item["path"].startswith(path + "/") for path in unchanged)
+                for item in operations):
+            raise AppError(422, "AGENT_IMAGE_PROMPT_SELECTION_INVALID", "移除图片时请保持保留图片的完整要求和原有来源。")
     current = copy.deepcopy(artifact)
     changed = []
     for operation in operations:
@@ -517,10 +619,14 @@ def _patch_artifact(session: Session, run: AgentRun, step: AgentStep | None, pro
             pointer = JsonPointer(operation["path"])
             old = pointer.resolve(current)
             if operation["op"] == "replace":
-                if pointer.path not in allowed or isinstance(operation["value"], dict) or isinstance(operation["value"], list) and any(isinstance(value, (dict, list)) for value in operation["value"]) and not allowed[pointer.path].get("sourceList"):
+                value = operation["value"]
+                if (pointer.path not in allowed or allowed[pointer.path].get("removeImagePrompt") or isinstance(value, dict)
+                        or isinstance(value, list) and any(isinstance(item, (dict, list)) for item in value) and not allowed[pointer.path].get("sourceList")):
                     raise AppError(422, "AGENT_ARTIFACT_PATCH_FORBIDDEN", "字段修订仅允许具体标量、标量列表及完整来源列表，实体与身份保持原值")
-                if payload_digest(old) != payload_digest(operation["value"]):
+                if payload_digest(old) != payload_digest(value):
                     changed.append(pointer.path)
+            elif operation["op"] == "remove":
+                changed.append(JsonPointer.from_parts(pointer.parts[:-1]).path)
             current = jsonpatch.JsonPatch([operation]).apply(current, in_place=False)
         except jsonpatch.JsonPatchTestFailed as error:
             raise AppError(409, "AGENT_ARTIFACT_PATCH_TEST_FAILED", "字段原值检查失败，请重新读取后修订") from error
@@ -558,7 +664,8 @@ def _validate_artifact_sources(session: Session, run: AgentRun, project: Project
     bindings = {}
 
     def require_asset(identifier: str) -> Asset:
-        if run.limits_json.get("materialContext", {}).get("scope") == "current_round":
+        source_validation = seen and run.limits_json.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION
+        if run.limits_json.get("materialContext", {}).get("scope") == "current_round" and not source_validation:
             from app.services.material_references import current_round_asset_ids, frozen_reference_assets
             frozen_reference_assets(session, run, settings)
             if identifier not in current_round_asset_ids(session, run, canvas):
@@ -766,6 +873,66 @@ def tool_arguments(body: WireModel, original: dict | None = None) -> dict:
     return values
 
 
+def _material_video_boundary(session: Session, run: AgentRun, step: AgentStep, shot: dict, settings: Settings) -> dict:
+    from app.services.video_boundaries import freeze_adopted_boundaries
+
+    inputs = run.limits_json["materialContext"]["handoffs"][step.id]["inputs"]
+    source = next((item for item in inputs if item["role"] == "storyboarder" and item["nodeId"] == shot["storyboardNodeId"]), None)
+    if source is None:
+        raise AppError(422, "VIDEO_STORYBOARD_NOT_HANDED_OFF", "视频只能使用交接给当前岗位的已采用分镜")
+    authorized(run, shot["storyboardNodeId"])
+    boundary = freeze_adopted_boundaries(session, run, shot["storyboardNodeId"], shot["shotKey"], settings)
+    if boundary["artifactHash"] != source["artifactHash"] or boundary["runId"] != source["runId"]:
+        raise AppError(409, "AGENT_ARTIFACT_SOURCE_CHANGED", "视频所引用的已采用分镜已经变化")
+    if [frame["assetId"] for frame in boundary["frames"]] != [shot["firstFrameAssetId"], shot["lastFrameAssetId"]]:
+        raise AppError(422, "VIDEO_FRAMES_MISMATCH", "视频方案必须逐一使用已采用的真实首尾图片")
+    if shot["videoPrompt"]["durationSeconds"] != boundary["duration"]:
+        raise AppError(422, "VIDEO_DURATION_MISMATCH", "视频时长必须与已确认分镜片段一致")
+    return boundary
+
+
+def _quote_material_video(session: Session, run: AgentRun, step: AgentStep, project: Project, canvas: Canvas,
+                          body: MaterialVideoGenerationArguments, operation_id: str, settings: Settings) -> Generation:
+    authorized(run, body.video_artifact_node_id)
+    node = find_node(canvas.data_json, body.video_artifact_node_id)
+    artifact = node.get("metadata", {}).get("creativeArtifact")
+    if not artifact or artifact.get("role") != "media_producer" or artifact.get("schemaVersion") != 2:
+        raise AppError(422, "VIDEO_ARTIFACT_REQUIRED", "请先保存绑定实际首尾图的视频制作方案")
+    digest = payload_digest(artifact)
+    review = (run.result_json or {}).get("materialReview", {})
+    if (review.get("stepId") != step.id or review.get("nodeId") != node["id"] or review.get("artifactHash") != digest
+            or review.get("status") not in {"approved", "not_required"}):
+        raise AppError(409, "VIDEO_ARTIFACT_UNCONFIRMED", "请先完成当前视频方案的核对事项")
+    shot = next((item for item in artifact["shots"] if item["shotKey"] == body.shot_key), None)
+    if shot is None:
+        raise AppError(422, "VIDEO_SEGMENT_INVALID", "视频片段不属于当前制作方案")
+    _validate_saved_artifact(session, run, project, canvas, node, settings, frozenset({node["id"]}))
+    boundary = _material_video_boundary(session, run, step, shot, settings)
+    previous = session.scalar(select(Generation).where(
+        Generation.owner_id == run.owner_id, Generation.project_id == run.project_id, Generation.scene_id == run.scene_id,
+        Generation.input_json["request"]["videoArtifactNodeId"].as_string() == node["id"],
+        Generation.input_json["request"]["videoArtifactHash"].as_string() == digest,
+        Generation.input_json["boundaryFrames"]["shotKey"].as_string() == body.shot_key,
+    ).order_by(Generation.created_at.desc(), Generation.id.desc()).limit(1))
+    if (previous is not None and previous.status not in {"failed", "cancelled"}
+            and (previous.status != "awaiting_confirmation" or previous.project_revision == project.revision)):
+        return previous
+    prompt = VideoMotionPrompt.model_validate(shot["videoPrompt"], strict=True)
+    prompt_text = prompt.generation_text()
+    title = f"{artifact['title']} · {body.shot_key}"[:200]
+    data = copy.deepcopy(canvas.data_json)
+    source, output = _apply_canvas(run, data, [
+        CanvasOperation(action="add_config", generation_mode="video", drama_task="clip", title=title, text=prompt_text),
+        CanvasOperation(action="add_media", media_type="video", title=title),
+    ])
+    find_node(data, source["nodeId"])["metadata"]["materialVideoInput"] = True
+    _write_canvas(session, run, project, canvas, data)
+    payload = {"sourceNodeId": source["nodeId"], "outputNodeId": output["nodeId"], "prompt": prompt_text,
+        "duration": prompt.duration_seconds, "resolution": prompt.resolution, "sceneId": run.scene_id, "operationId": operation_id,
+        "boundaryFrames": boundary, "videoArtifactNodeId": node["id"], "videoArtifactHash": digest}
+    return quote_generation(session, run.project_id, run.owner_id, payload, settings, manage_transaction=False)
+
+
 def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arguments: dict, operation_id: str, expected_revision: int, settings: Settings, step: AgentStep | None = None, *, connection_id: str | None = None, manage_transaction: bool = True, execution_origin: Literal["model", "runtime"] = "model") -> dict:
     if tool_name not in allowed_tools(role, run.limits_json.get("toolCatalogVersion", LEGACY_TOOL_CATALOG_VERSION)):
         raise AppError(403, "TOOL_NOT_ALLOWED", "当前角色没有调用该工具的权限")
@@ -798,6 +965,8 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
             raise AppError(403, "AGENT_ROLE_MISMATCH", "工具角色与当前执行步骤不一致")
         if len(step.tool_results_json) >= run.limits_json["maxSteps"]:
             raise AppError(409, "AGENT_STEP_LIMIT", "任务达到允许的工具步骤上限")
+    if step is None and run.limits_json.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION and tool_name not in MATERIAL_SOP_READ_TOOLS:
+        raise AppError(422, "MATERIAL_STEP_REQUIRED", "素材制作操作必须属于当前岗位步骤")
     project = require_run_action(session, run, expected_revision)
     canvas = require_canvas(session, run, project)
     if step is not None and run.plan_json[step.index].get("kind", "produce") == "verify" and tool_name not in READ_TOOLS:
@@ -861,7 +1030,7 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
                 authorized(run, target)
         result = retrieve_context(session, run.project_id, run.owner_id, run.scene_id, run.branch_id, targets, body.max_chars, material_only=current_round)
     elif tool_name == "read_artifact":
-        result = _read_artifact(session, run, project, canvas, body.target_id, settings)
+        result = _read_artifact(session, run, project, canvas, body.target_id, settings, step)
     elif tool_name in {"write_script", "write_artifact", "patch_artifact", "apply_canvas_ops"}:
         data = copy.deepcopy(canvas.data_json)
         patch_proof = None
@@ -870,7 +1039,8 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
             reused_frames = []
             if tool_name == "write_artifact" and body.target_id and run.limits_json.get("toolCatalogVersion") in MATERIAL_CATALOG_VERSIONS:
                 authorized(run, body.target_id)
-                if find_node(data, body.target_id).get("metadata", {}).get("creativeArtifact"):
+                if (run.limits_json.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION
+                        or find_node(data, body.target_id).get("metadata", {}).get("creativeArtifact")):
                     raise AppError(422, "MATERIAL_PATCH_REQUIRED", "修改已有专业产物须先read_artifact，再用patch_artifact修改具体字段；新完整候选的targetId填写null创建")
             if tool_name == "patch_artifact":
                 artifact, patch_proof = _patch_artifact(session, run, step, project, canvas, body, actual_role, settings)
@@ -881,13 +1051,23 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
                     raise AppError(422, "AGENT_ARTIFACT_INVALID", "专业产物没有通过当前角色的严格结构校验") from error
             if run.limits_json.get("toolCatalogVersion") == BOUNDARY_TOOL_CATALOG_VERSION and actual_role == "storyboarder" and artifact.get("schemaVersion") != 2:
                 raise AppError(422, "STORYBOARD_BOUNDARIES_REQUIRED", "分镜必须按n个视频片段保存n+1张连续首尾帧")
-            if run.limits_json.get("toolCatalogVersion") == REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION and actual_role == "storyboarder" and tool_name == "write_artifact" and artifact.get("schemaVersion") != 3:
+            if run.limits_json.get("toolCatalogVersion") in REUSABLE_BOUNDARY_CATALOG_VERSIONS and actual_role == "storyboarder" and tool_name == "write_artifact" and artifact.get("schemaVersion") != 3:
                 raise AppError(422, "STORYBOARD_REUSABLE_BOUNDARIES_REQUIRED", "当前分镜须使用版本3，明确每张边界复用已有图片或生成新图片")
             if artifact.get("role") == "storyboarder" and artifact.get("schemaVersion") == 3:
-                if run.limits_json.get("toolCatalogVersion") != REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION:
+                if run.limits_json.get("toolCatalogVersion") not in REUSABLE_BOUNDARY_CATALOG_VERSIONS:
                     raise AppError(422, "STORYBOARD_REUSABLE_CATALOG_REQUIRED", "已有图片复用需要当前版本的分镜任务")
                 from app.services.material_references import reusable_boundary_frames
                 reused_frames = reusable_boundary_frames(session, run, artifact, settings)
+            if run.limits_json.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+                from app.services.material_handoffs import validate_material_handoff
+                validate_material_handoff(session, run, step, canvas, artifact)
+                if actual_role == "media_producer":
+                    if artifact.get("schemaVersion") != 2:
+                        raise AppError(422, "MATERIAL_VIDEO_SCHEMA_REQUIRED", "请新建实际首尾帧与视频动作要求的视频方案")
+                    for shot in artifact["shots"]:
+                        _material_video_boundary(session, run, step, shot, settings)
+            elif actual_role == "media_producer" and artifact.get("schemaVersion") == 2:
+                raise AppError(422, "MATERIAL_VIDEO_SCHEMA_REQUIRED", "采用首尾帧的视频方案需要当前素材工作流程")
             source_bindings = _validate_artifact_sources(session, run, project, canvas, artifact, settings)
             for binding in source_bindings:
                 if binding["kind"] == "canvas_node" and binding["id"] == body.target_id and binding.get("sceneId") == run.scene_id:
@@ -900,6 +1080,8 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
                 "artifactContractVersion": ARTIFACT_CONTRACT_VERSION, "generationPrompts": prompts,
                 "artifactSources": source_bindings,
                 "artifactContentSha256": hashlib.sha256(content.encode()).hexdigest()}
+            if run.limits_json.get("workspace") == "materials":
+                written["metadata"]["materialArtifact"] = True
             if artifact.get("role") == "storyboarder" and artifact.get("schemaVersion") == 3:
                 written["metadata"]["reusedBoundaryFrames"] = reused_frames
         elif tool_name == "write_script":
@@ -947,6 +1129,11 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
         find_node(canvas.data_json, body.output_node_id)
         generation = create_join_generation(session, run.project_id, run.owner_id, {**body.model_dump(by_alias=True), "sceneId": run.scene_id, "expectedRevision": expected_revision, "operationId": service_operation}, settings, manage_transaction=False)
         result = {"generation": generation_view(generation), "localProcessing": True}
+    elif tool_name == "submit_generation" and isinstance(body, MaterialVideoGenerationArguments):
+        generation = _quote_material_video(session, run, step, project, canvas, body, service_operation, settings)
+        result = {"generation": generation_view(generation), "confirmationRequired": generation.status == "awaiting_confirmation"}
+        if result["confirmationRequired"]:
+            run.status = "waiting_confirmation"
     elif tool_name == "submit_generation":
         authorized(run, body.source_node_id)
         authorized(run, body.output_node_id)

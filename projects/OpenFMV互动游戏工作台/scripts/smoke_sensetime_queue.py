@@ -21,6 +21,7 @@ from app.image_models import ImageAccount, ImageJob
 from app.material_models import MaterialConversation, MaterialMessage
 from app.models import Asset, Canvas, User, new_id
 from app.services.agent import create_run
+from app.services.image_queue import IMAGE_REQUEST_GAP_SECONDS, image_queue_awaits_result
 from app.services.projects import create_project_record, lock_write, payload_digest, record_project_version
 from agent_smoke_evidence import write_private_json
 
@@ -35,8 +36,10 @@ def prepare(email, directory):
         if user is None:
             raise ValueError("目标用户不存在")
         accounts = session.scalars(select(ImageAccount).where(ImageAccount.owner_id == user.id)).all()
-        if len(accounts) != 3 or any(account.active_job_id or account.status != "available" for account in accounts):
+        if len(accounts) != 3 or any(account.status != "available" for account in accounts):
             raise ValueError("三个商汤账号必须全部可用且没有在途请求")
+        if session.scalar(select(ImageAccount.id).where(ImageAccount.active_job_id.is_not(None)).limit(1)) is not None:
+            raise ValueError("图片队列还有未结束的请求")
         project = create_project_record(session, user.id, "商汤队列真实验证")
         canvas = session.scalar(select(Canvas).where(Canvas.project_id == project.id))
         run = create_run(session, project.id, user, RunCreate(operation_id=str(uuid.uuid4()), expected_revision=project.revision,
@@ -78,19 +81,29 @@ def record(directory):
         if len(originals) != 4 or set(ready) != set(LABELS):
             print(json.dumps({"statuses": [job.status for job in jobs]}), flush=True)
             return False
-        first = originals[:3]
-        if len({job.account_id for job in first}) != 3 or max(job.submitted_at for job in first) >= min(job.finished_at for job in first if job.finished_at):
-            raise ValueError("前三张图片没有使用三个账号同时生成")
-        previous = next(job for job in first if job.account_id == originals[3].account_id)
-        if originals[3].submitted_at < previous.finished_at:
-            raise ValueError("第四张图片没有等待账号空闲")
+        submissions = []
+        for job in jobs:
+            expired = job.request_json.get("expiredAttempts", [])
+            submissions.extend((attempt["submittedAt"], attempt["releasedAt"]) for attempt in expired)
+            if not expired or expired[-1]["attempt"] != job.attempt_count:
+                submissions.append((job.submitted_at, job.finished_at))
+        if any(started is None or released is None for started, released in submissions):
+            raise ValueError("图片请求缺少实际提交或释放时间")
+        submissions.sort()
+        gaps = []
+        for previous, current in zip(submissions, submissions[1:]):
+            gap = current[0] - previous[1]
+            if gap < IMAGE_REQUEST_GAP_SECONDS:
+                raise ValueError("相邻商汤生成请求的间隔不足5秒")
+            gaps.append(gap)
+        queue_proof = {"serial": True, "minimumObservedGapSeconds": min(gaps)}
         records = []
         for job in jobs:
             if not job.asset_id:
-                if job.status != "submission_unknown":
+                if job.status != "failed" or job.finished_at is None:
                     raise ValueError("仍有未完成的已确认请求")
                 records.append({"jobId": job.id, "accountSlot": session.get(ImageAccount, job.account_id).slot,
-                    "status": job.status, "assetId": None, "submittedAt": job.submitted_at, "finishedAt": None, "attempts": job.attempt_count})
+                    "status": job.status, "assetId": None, "submittedAt": job.submitted_at, "finishedAt": job.finished_at, "attempts": job.attempt_count})
                 continue
             asset = session.get(Asset, job.asset_id)
             image = ROOT / "data" / asset.relpath
@@ -99,13 +112,13 @@ def record(directory):
             records.append({"jobId": job.id, "accountSlot": session.get(ImageAccount, job.account_id).slot,
                 "status": job.status, "assetId": asset.id, "sha256": asset.sha256, "bytes": asset.bytes, "width": asset.width, "height": asset.height,
                 "submittedAt": job.submitted_at, "finishedAt": job.finished_at, "attempts": job.attempt_count})
-        proof = {**request, "model": "sensenova-u1.5-fast", "threeConcurrent": True, "fourthQueued": True,
-            "freePlanConfirmedByUser": True, "records": records, "totalRequests": len(jobs), "readyImages": 4,
-            "unknownRequestsRetained": sum(job.status == "submission_unknown" for job in jobs)}
+        proof = {**request, "model": "sensenova-u1.5-fast", **queue_proof,
+            "freePlanConfirmedByUser": True, "records": records, "totalRequests": len(submissions), "readyImages": 4,
+            "unknownRequestsRetained": sum(len(job.request_json.get("expiredAttempts", [])) for job in jobs)}
         write_private_json(directory / "proof.json", proof)
         run = session.get(AgentRun, request["runId"])
         run.status, run.finished_at = "completed", time.time()
-        run.result_json = {"imageValidation": {"completedImages": 4, "threeConcurrent": True, "fourthQueued": True}}
+        run.result_json = {"imageValidation": {"completedImages": 4, **queue_proof}}
         session.commit()
     evidence = ROOT / "docs/evidence/阶段2-2/图片冒烟记录.md"
     if not evidence.exists():
@@ -116,7 +129,7 @@ def record(directory):
                 continue
             stamp = datetime.fromtimestamp(item["submittedAt"], ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
             stream.write(f"| {stamp} | sensenova-u1.5-fast | {item['accountSlot']} | {item['jobId']} | {item['width']}×{item['height']} | {item['finishedAt'] - item['submittedAt']:.2f} | 通过 | {item['attempts']} |\n")
-    print(json.dumps({"threeConcurrent": True, "fourthQueued": True, "images": 4, "proof": str(directory / 'proof.json')}), flush=True)
+    print(json.dumps({**queue_proof, "images": 4, "proof": str(directory / 'proof.json')}), flush=True)
     return True
 
 
@@ -124,9 +137,13 @@ def retry_confirmed(directory):
     request = json.loads((directory / "request.json").read_bytes())
     with SessionLocal() as session:
         lock_write(session)
-        original = session.scalar(select(ImageJob).where(ImageJob.run_id == request["runId"], ImageJob.label == LABELS[2], ImageJob.status == "submission_unknown"))
-        if original is None or session.get(ImageAccount, original.account_id).active_job_id != original.id:
-            raise ValueError("原请求及账号占用状态不符合本次确认")
+        if image_queue_awaits_result(session):
+            raise ValueError("上一单回执待返回，超时后队列会自动继续。")
+        original = next((job for job in session.scalars(select(ImageJob).where(ImageJob.run_id == request["runId"],
+            ImageJob.label == LABELS[2], ImageJob.status == "failed", ImageJob.finished_at.is_not(None), ImageJob.submitted_at.is_not(None)))
+            if not job.request_json.get("retryOf") and job.error_code not in {"IMAGE_RESPONSE_TIMEOUT", "IMAGE_ALTERNATE_ACCOUNT_UNAVAILABLE"}), None)
+        if original is None:
+            raise ValueError("仅限已明确结束且失败的原请求重试")
         operation = f"{original.id}:user-confirmed-retry"
         if session.scalar(select(ImageJob).where(ImageJob.owner_id == original.owner_id, ImageJob.operation_id == operation)):
             raise ValueError("本次确认的重试已提交，不得重复执行")

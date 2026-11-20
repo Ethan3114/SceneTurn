@@ -409,6 +409,55 @@ class MediaArtifact(CreativeArtifact):
         return self
 
 
+class VideoMotionPrompt(ArtifactModel):
+    action_timeline: Text = Field(title="随时间发生的动作与互动")
+    camera_movement: Text = Field(title="镜头运动、速度和起止构图")
+    continuity_constraints: Texts = Field(title="沿用两张定稿的身份与空间要求")
+    negative_prompt: Texts = Field(title="需要避免的运动和连续性缺陷")
+    duration_seconds: int = Field(ge=2, le=30, title="采用分镜的完整秒数")
+    resolution: Literal["480P", "720P", "1080P"] = Field(title="视频清晰度")
+    audio_requirement: Text = Field(title="镜头期间的声音要求")
+
+    def generation_text(self) -> str:
+        return "\n\n".join((
+            f"【动作与互动】\n{self.action_timeline}",
+            f"【运镜】\n{self.camera_movement}",
+            "【连续性】\n" + "\n".join(self.continuity_constraints),
+            "【避免出现】\n" + "\n".join(self.negative_prompt),
+            f"【声音】\n{self.audio_requirement}",
+        ))
+
+    @model_validator(mode="after")
+    def check_prompt_length(self):
+        if len(self.generation_text()) > 20000:
+            raise ValueError("完整视频运动要求不能超过20000字符")
+        return self
+
+
+class MaterialVideoShot(ArtifactModel):
+    storyboard_node_id: Key = Field(title="已采用分镜的真实节点标识")
+    shot_key: Key = Field(title="采用分镜中的镜头代号")
+    first_frame_asset_id: Key = Field(title="采用分镜的实际首帧素材标识")
+    last_frame_asset_id: Key = Field(title="采用分镜的实际尾帧素材标识")
+    video_prompt: VideoMotionPrompt = Field(title="基于固定首尾帧的视频动作与运镜")
+    acceptance: Texts = Field(title="镜头验收条件")
+
+
+class MaterialVideoArtifact(CreativeArtifact):
+    schema_version: Literal[2] = Field(default=2, title="采用分镜的视频结构版本")
+    role: Literal["media_producer"] = Field(title="创作角色")
+    production_strategy: Text = Field(title="固定首尾帧的视频制作顺序")
+    shots: list[MaterialVideoShot] = Field(min_length=1, max_length=100, title="已采用首尾图及视频运动要求")
+    confirmation_points: Texts = Field(title="视频提交前由本人核对的内容")
+    delivery_checks: Texts = Field(title="视频成果的规格与连续性检查")
+
+    @model_validator(mode="after")
+    def unique_shot_keys(self):
+        if len({shot.shot_key for shot in self.shots}) != len(self.shots):
+            raise ValueError("影像制作镜头代号必须唯一")
+        return self
+
+
 class EditCut(ArtifactModel):
     key: Key = Field(title="剪辑片段代号")
     source: AssetRequirement = Field(title="素材来源与准备状态")
@@ -576,31 +625,35 @@ ARTIFACT_MODELS = {
 }
 
 
-def artifact_model(role: str, boundary_frames: bool = False, reusable_frames: bool = False) -> type[CreativeArtifact]:
+def artifact_model(role: str, boundary_frames: bool = False, reusable_frames: bool = False, material_video_plan: bool = False) -> type[CreativeArtifact]:
     if role == "storyboarder" and reusable_frames:
         return ReusableBoundaryStoryboardArtifact
     if role == "storyboarder" and boundary_frames:
         return BoundaryStoryboardArtifact
+    if role == "media_producer" and material_video_plan:
+        return MaterialVideoArtifact
     return ARTIFACT_MODELS[role]
 
 
 def validate_artifact(role: str, payload: dict) -> dict:
-    artifact = artifact_model(role, payload.get("schemaVersion") == 2, payload.get("schemaVersion") == 3).model_validate(payload, strict=True)
+    version = payload.get("schemaVersion")
+    artifact = artifact_model(role, version == 2, version == 3, version == 2).model_validate(payload, strict=True)
     return artifact.model_dump(mode="json", by_alias=True)
 
 
-@lru_cache(maxsize=54)
-def _arguments_model(role: str, boundary_frames: bool = False, explicit_null: bool = False, reusable_frames: bool = False) -> type[BaseModel]:
+@lru_cache(maxsize=72)
+def _arguments_model(role: str, boundary_frames: bool = False, explicit_null: bool = False, reusable_frames: bool = False, material_video_plan: bool = False) -> type[BaseModel]:
+    model = artifact_model(role, boundary_frames, reusable_frames, material_video_plan)
     return create_model(
-        f"{artifact_model(role, boundary_frames, reusable_frames).__name__}Arguments", __base__=ArtifactModel,
+        f"{model.__name__}Arguments", __base__=ArtifactModel,
         target_id=(Key | None, Field(default=None, title="授权目标文字节点，新建产物填写null" if explicit_null else "授权目标文字节点，省略时创建新文字节点")),
         title=(Title | None, Field(default=None, title="画布节点名称，使用产物名称填写null" if explicit_null else "画布节点名称，省略时使用产物名称")),
-        artifact=(artifact_model(role, boundary_frames, reusable_frames), Field(title="当前角色的完整专业创作产物")),
+        artifact=(model, Field(title="当前角色的完整专业创作产物")),
     )
 
 
-def artifact_arguments_schema(role: str, boundary_frames: bool = False, explicit_null: bool = False, reusable_frames: bool = False) -> dict:
-    return _arguments_model(role, boundary_frames, explicit_null, reusable_frames).model_json_schema(by_alias=True)
+def artifact_arguments_schema(role: str, boundary_frames: bool = False, explicit_null: bool = False, reusable_frames: bool = False, material_video_plan: bool = False) -> dict:
+    return _arguments_model(role, boundary_frames, explicit_null, reusable_frames, material_video_plan).model_json_schema(by_alias=True)
 
 
 def parse_artifact(payload: dict):
@@ -608,6 +661,8 @@ def parse_artifact(payload: dict):
         return ReusableBoundaryStoryboardArtifact.model_validate(payload, strict=True)
     if payload.get("role") == "storyboarder" and payload.get("schemaVersion") == 2:
         return BoundaryStoryboardArtifact.model_validate(payload, strict=True)
+    if payload.get("role") == "media_producer" and payload.get("schemaVersion") == 2:
+        return MaterialVideoArtifact.model_validate(payload, strict=True)
     return ARTIFACT_ADAPTER.validate_python(payload, strict=True)
 
 

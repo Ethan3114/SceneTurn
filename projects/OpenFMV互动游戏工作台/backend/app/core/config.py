@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     generation_region: str = "cn-beijing"
     poll_interval: float = Field(default=10, ge=1, le=60)
     request_timeout: float = Field(default=30, ge=1, le=120)
+    wan_submit_timeout: float = Field(default=90, ge=30, le=180)
     download_timeout: float = Field(default=180, ge=1, le=600)
     max_generation_cents: int = Field(default=1000, ge=1, le=1000)
     budget_cents: int = Field(default=30000, ge=1, le=30000)

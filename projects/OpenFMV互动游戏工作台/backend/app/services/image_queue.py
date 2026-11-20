@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from pydantic import ValidationError
 
@@ -21,10 +21,11 @@ from app.models import Asset, new_id
 from app.services.media import resolve_asset_path
 from app.services.material_references import validate_reference_assets
 from app.services.projects import iso_timestamp, lock_write, payload_digest, record_project_version, require_project, require_scene
-from app.services.sensetime import MAX_IMAGE_BYTES, MODEL, decode_image, submit_image
+from app.services.sensetime import IMAGE_RECEIPT_TIMEOUT_SECONDS, MAX_IMAGE_BYTES, MODEL, decode_image, submit_image
 
 
 logger = logging.getLogger("openfmv")
+IMAGE_REQUEST_GAP_SECONDS = 5
 
 
 def require_image_worker(task):
@@ -53,9 +54,49 @@ def public_job(job):
         "errorCode": job.error_code}
 
 
+def image_queue_awaits_result(session):
+    return session.scalar(select(ImageAccount.id).where(
+        ImageAccount.status == "quarantined", ImageAccount.active_job_id.is_not(None)).limit(1)) is not None
+
+
+def _release_expired_requests(session, now):
+    expired = session.execute(select(ImageAccount, ImageJob).join(ImageJob, ImageAccount.active_job_id == ImageJob.id).where(
+        ImageJob.status == "submission_unknown",
+        func.coalesce(ImageJob.submitted_at, ImageJob.updated_at) <= now - IMAGE_RECEIPT_TIMEOUT_SECONDS)).all()
+    for account, job in expired:
+        if (job.account_id, job.owner_id) != (account.id, account.owner_id):
+            raise ValueError("图片账号占用记录损坏")
+        attempts = job.request_json.get("expiredAttempts", [])
+        job.request_json = {**job.request_json, "expiredAttempts": [*attempts, {
+            "accountId": account.id, "attempt": job.attempt_count, "submittedAt": job.submitted_at,
+            "releasedAt": now, "errorCode": job.error_code}]}
+        account.active_job_id, account.status = None, "available"
+        run = session.get(AgentRun, job.run_id)
+        job.status = "queued"
+        if run.stop_requested or run.status == "stopped":
+            job.status = "cancelled"
+        elif run.status in {"completed", "failed"}:
+            job.status = "failed"
+        job.error_code, job.updated_at = "IMAGE_RESPONSE_TIMEOUT", now
+        job.finished_at = now if job.status != "queued" else None
+    if expired:
+        session.flush()
+
+
 def claim_job(session):
     lock_write(session)
+    _release_expired_requests(session, time.time())
+    if session.scalar(select(ImageAccount.id).where(ImageAccount.active_job_id.is_not(None)).limit(1)) is not None:
+        session.commit()
+        return None
     queued = session.scalars(select(ImageJob).where(ImageJob.status == "queued").order_by(ImageJob.created_at, ImageJob.id)).all()
+    if queued:
+        last_result = session.scalar(select(func.max(func.coalesce(ImageJob.finished_at, ImageJob.updated_at))).where(
+            ImageJob.submitted_at.is_not(None),
+            or_(ImageJob.finished_at.is_not(None), ImageJob.status.in_(("queued", "cancelled")))))
+        if last_result is not None and time.time() < last_result + IMAGE_REQUEST_GAP_SECONDS:
+            session.commit()
+            return None
     for job in queued:
         if session.get(AgentRun, job.run_id).stop_requested:
             job.status = "cancelled"
@@ -65,9 +106,19 @@ def claim_job(session):
             raise ValueError("图片依赖不属于当前任务")
         if any(item.status != "ready" for item in dependencies):
             continue
-        account = session.scalar(select(ImageAccount).where(ImageAccount.owner_id == job.owner_id,
-            ImageAccount.status == "available", ImageAccount.active_job_id.is_(None)).order_by(ImageAccount.last_assigned_at, ImageAccount.slot).limit(1))
+        timed_out_accounts = {attempt["accountId"] for attempt in job.request_json.get("expiredAttempts", [])}
+        candidates = select(ImageAccount).where(ImageAccount.owner_id == job.owner_id,
+            ImageAccount.status == "available", ImageAccount.active_job_id.is_(None))
+        if timed_out_accounts:
+            candidates = candidates.where(ImageAccount.id.not_in(timed_out_accounts))
+        account = session.scalar(candidates.order_by(ImageAccount.last_assigned_at, ImageAccount.slot).limit(1))
         if account is None:
+            if timed_out_accounts:
+                job.status, job.finished_at = "failed", job.updated_at
+                untried = session.scalar(select(ImageAccount.id).where(ImageAccount.owner_id == job.owner_id,
+                    ImageAccount.id.not_in(timed_out_accounts)).limit(1))
+                if untried is not None:
+                    job.error_code = "IMAGE_ALTERNATE_ACCOUNT_UNAVAILABLE"
             continue
         account.active_job_id, account.last_assigned_at = job.id, time.time()
         job.account_id, job.status, job.updated_at = account.id, "claimed", time.time()
@@ -85,11 +136,12 @@ def recover_jobs(session, settings=None):
             raise ValueError("图片账号占用记录损坏")
         if job.status == "claimed":
             job.status, job.account_id, account.active_job_id = "queued", None, None
-        elif job.status == "submitting":
+        elif job.status in {"submitting", "submission_unknown"}:
             saved_path = settings.data_dir.resolve() / "image-responses" / f"{job.id}.json" if settings else None
             if saved_path and saved_path.is_file():
                 job.status, job.response_relpath = "response_saved", f"image-responses/{job.id}.json"
-            else:
+                account.status = "available"
+            elif job.status == "submitting":
                 job.status, job.error_code = "submission_unknown", "IMAGE_SUBMISSION_UNKNOWN"
                 account.status = "quarantined"
     session.commit()
@@ -181,10 +233,10 @@ def finalize_response(session, job, settings):
         run.project_revision += 1
     project.data_json, project.revision, project.updated_at = snapshot, project.revision + 1, time.time()
     job.asset_id, job.status, job.updated_at, job.error_code = asset_id, "ready", time.time(), None
-    job.finished_at = time.time()
     account.active_job_id = None
     session.flush()
     record_project_version(session, project)
+    job.finished_at = time.time()
     session.commit()
 
 
@@ -253,28 +305,32 @@ async def _execute_job(job_id, settings, session_factory):
             raise ValueError("参考图片超过5张")
         request, key = copy.deepcopy(job.request_json), decode_secret(account.api_key_encrypted, settings)
         job.status, job.updated_at, job.attempt_count = "submitting", time.time(), job.attempt_count + 1
+        job.error_code = None
         job.submitted_at = time.time()
         submission = {"accountId": account.id, "attemptCount": job.attempt_count, "submittedAt": job.submitted_at,
             "inputSha256": _submission_digest(job)}
         session.commit()
     try:
-        response = await submit_image(key, request, references)
+        async with asyncio.timeout(IMAGE_RECEIPT_TIMEOUT_SECONDS):
+            response = await submit_image(key, request, references)
     except (httpx.ConnectError, httpx.ConnectTimeout):
         with session_factory() as session:
             lock_write(session)
             job, account = _submitted_job(session, job_id, submission)
             if job.attempt_count < 2:
                 job.status, job.account_id = "queued", None
+                job.updated_at = time.time()
                 account.active_job_id = None
                 session.commit()
             else:
                 _finish_failure(session, job, "IMAGE_CONNECTION_FAILED")
         return
-    except httpx.TransportError:
+    except (TimeoutError, httpx.TransportError) as error:
+        code = "IMAGE_RESPONSE_TIMEOUT" if isinstance(error, (TimeoutError, httpx.ReadTimeout)) else "IMAGE_SUBMISSION_UNKNOWN"
         with session_factory() as session:
             lock_write(session)
             job, _account = _submitted_job(session, job_id, submission)
-            _finish_failure(session, job, "IMAGE_SUBMISSION_UNKNOWN", unknown=True)
+            _finish_failure(session, job, code, unknown=True)
         return
     if response.status_code >= 400:
         with session_factory() as session:
@@ -327,19 +383,10 @@ async def image_worker_loop(settings, session_factory, stop_event):
         saved = session.scalars(select(ImageJob.id).where(ImageJob.status == "response_saved")).all()
     for identifier in saved:
         await execute_job(identifier, settings, session_factory)
-    active = set()
     while not stop_event.is_set():
-        for task in list(active):
-            if task.done():
-                active.remove(task)
-                task.result()
         with session_factory() as session:
             identifier = claim_job(session)
-        if identifier:
-            task = asyncio.create_task(execute_job(identifier, settings, session_factory))
-            task.add_done_callback(image_worker_done)
-            active.add(task)
-        else:
+        if identifier is None:
             await asyncio.sleep(0.5)
-    if active:
-        await asyncio.gather(*active)
+        else:
+            await execute_job(identifier, settings, session_factory)

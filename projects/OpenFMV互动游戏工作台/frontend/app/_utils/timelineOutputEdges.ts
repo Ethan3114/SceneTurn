@@ -101,8 +101,10 @@ export const removeTimelineOutputEdge = (edges: AppEdge[], source: string, sourc
 export const upsertTimelineOutputEdge = (connection: Connection, edges: AppEdge[], nodes: AppNode[]) => {
   if (!connection.source || !connection.sourceHandle || !connection.target) return edges;
   if (!isValidNodeOutputHandle(nodes.find((node) => node.id === connection.source), connection.sourceHandle)) return edges;
+  const existing = edges.find((edge) => edge.source === connection.source && edge.sourceHandle === connection.sourceHandle);
   const withoutExisting = removeTimelineOutputEdge(edges, connection.source, connection.sourceHandle);
-  return addGraphEdge(connection, withoutExisting, nodes);
+  const nextEdges = addGraphEdge(existing ? { ...existing, ...connection } : connection, withoutExisting, nodes);
+  return nextEdges === withoutExisting ? edges : nextEdges;
 };
 
 export const syncTimelineOutputEdges = pruneEdgesForNodeOutputs;

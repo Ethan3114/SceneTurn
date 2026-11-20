@@ -120,8 +120,8 @@ def empty_generation_state(service):
 
 def test_revoked_admin_keeps_real_login_and_loses_text_spending_after_restart(tmp_path):
     service = TextTestService(tmp_path)
-    service.start()
     try:
+        service.start()
         with service.client() as client:
             registered = client.post("/auth/register", json={"email": service.admin_email, "password": secrets.token_urlsafe(18)})
             assert registered.status_code == 201

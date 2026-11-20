@@ -42,7 +42,7 @@ def main():
             session.add(ImageAccount(owner_id=user.id, slot=slot, credential_hash=fingerprint,
                 api_key_encrypted=encode_secret(key, settings), status="available", last_assigned_at=0))
         session.commit()
-    print("已安全导入3个商汤免费账号；每账号并发1，总并发3。")
+    print("已安全导入3个商汤免费账号。全队列逐张生成，每张结束后至少间隔5秒。")
 
 
 if __name__ == "__main__":

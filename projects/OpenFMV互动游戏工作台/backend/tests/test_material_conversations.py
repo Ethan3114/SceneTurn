@@ -12,6 +12,7 @@ from app.services.agent_provider import MATERIAL_NATIVE_AGENT_PROTOCOL, agent_re
 from app.agent_models import AgentCall, AgentRun, AgentStep
 from app.models import Project
 from app.material_models import MaterialConversation, MaterialMessage
+from app.material_schemas import MaterialSend, MaterialView
 from app.services.materials import view
 from app.tools.project_tools import PatchArtifactArguments, _patch_artifact, require_canvas
 from test_api import create_project, error_code, registered_client, scene_id
@@ -49,6 +50,12 @@ def test_material_conversation_is_isolated_by_owner_and_scene(materials, live_se
     outsider.close()
     missing = path.replace(scene_id(project), "missing-scene")
     assert error_code(client.get(missing), 404) == "SCENE_NOT_FOUND"
+
+
+def test_user_material_message_preserves_verbatim_json():
+    written = '\n  {"角色": "药老", "数量": 1}\n'
+    request = MaterialSend(operation_id=str(uuid.uuid4()), expected_revision=1, content=written)
+    assert request.content == written
 
 
 def test_stale_reference_rejected_before_any_model_request(materials):
@@ -122,7 +129,11 @@ def test_actual_two_turn_conversation_displays_latest_output_and_keeps_prior_art
         latest = session.get(AgentRun, messages[-1].run_id)
         assert latest.status == "completed"
         result = view(session, conversation)
+        MaterialView.model_validate(result)
         assert len(result["messages"]) == 2 and len(result["nodes"]) == 1
+        assert [item["content"] for item in result["messages"]] == [item.content for item in messages]
+        assert all(item["source"] == "user" and item["run"]["goal"] == "素材制作" for item in result["messages"])
+        assert all("calls" not in item["run"] and "result" not in item["run"] for item in result["messages"])
         assert result["nodes"][0]["producerRole"] == "scene_designer"
         canvas = require_canvas(session, latest, session.get(Project, latest.project_id))
         assert len([node for node in canvas.data_json["nodes"] if node["type"] != "agent"]) == 2

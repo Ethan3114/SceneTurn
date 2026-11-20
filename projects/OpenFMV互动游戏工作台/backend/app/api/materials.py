@@ -13,7 +13,6 @@ from app.services.projects import get_operation, lock_write, save_operation
 from app.services.material_review import answer_review
 from app.services.text_generation import require_text_admin
 from app.image_models import ImageJob
-from app.agent_models import AgentRun
 
 
 router = APIRouter(prefix="/projects/{project_id}/scenes/{scene_id}/material-conversations", tags=["material-conversations"])
@@ -59,9 +58,12 @@ def developer(project_id: str, scene_id: str, conversation_id: str, user: User =
     require_text_admin(user, get_settings())
     conversation = materials.require_material(session, project_id, scene_id, conversation_id, user.id)
     from app.services.agent import run_view
-    run = session.get(AgentRun, conversation.active_run_id) if conversation.active_run_id else None
+    records = materials.message_records(session, conversation)
+    run, _ = materials.active_production(session, conversation, records)
     jobs = session.scalars(select(ImageJob).where(ImageJob.run_id == run.id)).all() if run else []
     return {"run": run_view(session, run) if run else None,
+        "messages": [{"id": item.id, "runId": item.run_id, "source": materials.message_source(message_run),
+            "content": item.content, "kind": (receipt or {}).get("kind", "production")} for item, message_run, receipt in records],
         "nodes": materials.canvas_nodes(session, project_id, scene_id, user.id),
         "imageJobs": [{"id": job.id, "accountId": job.account_id, "status": job.status,
             "request": job.request_json, "referenceAssetIds": job.reference_asset_ids,

@@ -10,6 +10,7 @@ from app.context_models import ProjectMemory
 from app.context_schemas import ContextSource, MemoryView, MemoryWrite
 from app.core.errors import AppError
 from app.models import Asset, Canvas, Project, ProjectVersion, new_id
+from app.services.canvas_delivery import material_canvas_ids, public_canvas_node
 from app.services.projects import get_operation, iso_timestamp, lock_write, payload_digest, record_project_version, require_project, require_revision, require_scene, save_operation
 
 
@@ -305,7 +306,7 @@ def get_memory(session: Session, project_id: str, owner_id: str, memory_id: str)
     return {"memory": memory_view(resolver, memory), "revision": project.revision}
 
 
-def get_source(session: Session, project_id: str, owner_id: str, payload: dict) -> dict:
+def get_source(session: Session, project_id: str, owner_id: str, payload: dict, *, public_artifacts: bool = False) -> dict:
     project = require_project(session, project_id, owner_id)
     reference = ContextSource.model_validate(payload).model_dump(by_alias=True, exclude_none=True)
     resolver = SourceResolver(session, project)
@@ -313,6 +314,11 @@ def get_source(session: Session, project_id: str, owner_id: str, payload: dict) 
     if content is None:
         raise AppError(404, "SOURCE_NOT_FOUND", "来源对象不存在或无权访问")
     saved = {**reference, "digest": payload_digest(content)}
+    if public_artifacts and reference["kind"] == "canvas_node":
+        if content.get("metadata", {}).get("materialVideoInput"):
+            raise AppError(404, "SOURCE_NOT_FOUND", "来源对象不存在或无权访问")
+        protected = material_canvas_ids(session, project_id, owner_id, reference["sceneId"])[reference["sceneId"]]
+        content = public_canvas_node(content, protected)
     return {"source": _source_view(resolver, saved), "content": content}
 
 
@@ -331,7 +337,7 @@ def source_scope(session: Session, project_id: str, owner_id: str, scene_id: str
     return {"allowedSceneIds": sorted(visible), "memoryIds": sorted(memory_ids), "branchAnalysis": scope, "revision": project.revision}
 
 
-def retrieve_context(session: Session, project_id: str, owner_id: str, scene_id: str, branch_id: str | None = None, target_ids: list[str] | None = None, max_chars: int = 16000, *, material_only: bool = False) -> dict:
+def retrieve_context(session: Session, project_id: str, owner_id: str, scene_id: str, branch_id: str | None = None, target_ids: list[str] | None = None, max_chars: int = 16000, *, material_only: bool = False, public_artifacts: bool = False) -> dict:
     if not 1024 <= max_chars <= 64000:
         raise AppError(422, "CONTEXT_CAPACITY_INVALID", "上下文容量必须在1024至64000字符之间")
     project = require_project(session, project_id, owner_id)
@@ -382,10 +388,15 @@ def retrieve_context(session: Session, project_id: str, owner_id: str, scene_id:
     selected = targets if material_only else targets or [identifier for identifier, (owner_scene, node) in available.items() if owner_scene in certain and node["type"] == "text"]
     selected.sort(key=lambda identifier: available[identifier][0] != scene_id)
     texts = []
+    protected = material_canvas_ids(session, project_id, owner_id) if public_artifacts else {}
     for identifier in selected:
         owner_scene, node = available[identifier]
         if node["type"] not in {"text", "config"}:
             continue
+        if public_artifacts:
+            if node.get("metadata", {}).get("materialVideoInput"):
+                continue
+            node = public_canvas_node(node, protected[owner_scene])
         content = node.get("metadata", {}).get("content")
         if not isinstance(content, str) or not content:
             content = node.get("metadata", {}).get("composerContent")

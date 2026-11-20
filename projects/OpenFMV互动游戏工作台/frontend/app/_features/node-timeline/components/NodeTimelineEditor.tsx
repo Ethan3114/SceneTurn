@@ -6184,6 +6184,33 @@ function InteractionClipInspector({
 
       {!isQte && (
         <>
+          <div className="grid grid-cols-2 gap-2 py-1.5">
+            <NumberField
+              label={t('fields.start')}
+              value={clip.startTime}
+              step={0.01}
+              onChange={(startTime) => onUpdate((item) => ({ ...item, startTime: Math.max(0, startTime) }))}
+            />
+            <NumberField
+              label={t('fields.duration')}
+              value={clip.duration}
+              step={0.01}
+              onChange={(duration) => onUpdate((item) => ({ ...item, duration: Math.max(MIN_TIMELINE_CLIP_DURATION, duration) }))}
+            />
+            <NumberField
+              label={t('fields.x')}
+              value={clip.rect.x}
+              step={0.01}
+              onChange={(x) => onUpdate((item) => ({ ...item, rect: clampOverlayRect({ ...item.rect, x }) }))}
+            />
+            <NumberField
+              label={t('fields.y')}
+              value={clip.rect.y}
+              step={0.01}
+              onChange={(y) => onUpdate((item) => ({ ...item, rect: clampOverlayRect({ ...item.rect, y }) }))}
+            />
+          </div>
+
           <InspectorSwitchRow
             label={t('fields.pauseOnShow')}
             icon={Pause}

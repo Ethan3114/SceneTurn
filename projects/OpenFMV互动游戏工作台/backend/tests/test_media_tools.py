@@ -24,10 +24,11 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.models import Budget, Generation
 from app.services.generation import _acquire_lease, _process_one, _worker_generation
 from conftest import FRONTEND_ORIGIN, PRODUCT_ROOT, LiveService, stop_process
 from test_api import create_project, error_code, registered_client, scene_id
-from test_generation_canvas import connection, node, save_canvas, upload_input
+from test_generation_canvas import connection, node, quote, save_canvas, upload_input
 
 
 class RestartableMediaService:
@@ -462,6 +463,49 @@ def test_join_parallel_repeated_requests_and_worker_lease_use_one_result(media_s
         assert repeated.status_code == 201 and repeated.json()["generation"] == ready
         assert sql_rows(media_service, "SELECT COUNT(*) FROM assets WHERE generation_id=?", (generation_id,)) == [(1,)]
         assert budget(media_service) == (0, 0)
+
+
+@pytest.mark.parametrize("status", ["submission_unknown", "query_interrupted", "submitting"])
+def test_paused_video_does_not_block_other_queued_media(media_service, joining_media, status):
+    client, _ = registered_client(media_service)
+    with closing(client):
+        old_project = save_canvas(client, create_project(client), [node("source", "video", "旧视频", prompt="镜头停在房间门口。")])
+        quoted = quote(client, old_project, "source", "镜头停在房间门口。")
+        assert quoted.status_code == 201, quoted.text
+        old_id = quoted.json()["generation"]["id"]
+        new_project, _ = join_setup(client, joining_media)
+        queued = perform_join(client, new_project, join_request(new_project))
+        assert queued.status_code == 201, queued.text
+        queued_id = queued.json()["generation"]["id"]
+        engine = create_engine(f"sqlite:///{media_service.data_dir / 'openfmv.sqlite3'}")
+        with ExitStack() as cleanup:
+            cleanup.callback(engine.dispose)
+            factory = sessionmaker(engine)
+            with factory.begin() as session:
+                older = session.get(Generation, old_id)
+                older.status = status
+                older.started_at = time.time()
+                if status == "query_interrupted":
+                    older.remote_task_id = str(uuid.uuid4())
+                older.reserved_cents = older.quoted_cents
+                session.get(Budget, "global").reserved_cents += older.reserved_cents
+            worker = str(uuid.uuid4())
+            assert _acquire_lease(factory, worker)
+            settings = Settings(data_dir=media_service.data_dir, tmp_dir=media_service.directory / "worker-media", worker_enabled=False)
+            if status == "submitting":
+                asyncio.run(_process_one(settings, factory, worker))
+                assert client.get(f"/generations/{queued_id}").json()["generation"]["status"] == "queued"
+            old_task = client.get(f"/generations/{old_id}").json()["generation"]
+            assert old_task["status"] == ("submission_unknown" if status == "submitting" else status)
+            reserved = budget(media_service)
+            assert reserved == (0, old_task["quotedCents"])
+            asyncio.run(_process_one(settings, factory, worker))
+            assert client.get(f"/generations/{old_id}").json()["generation"] == old_task
+            assert budget(media_service) == reserved
+        ready = client.get(f"/generations/{queued_id}").json()["generation"]
+        assert ready["status"] == "ready"
+        zero_cost(ready)
+        assert asset_content(client, ready["assetId"])
 
 
 def test_join_owner_access_revision_and_idempotency_conflicts(live_service, joining_media):

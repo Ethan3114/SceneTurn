@@ -9,7 +9,9 @@ from app.api.deps import current_user, get_db
 from app.core.config import get_settings
 from app.models import Generation, User
 from app.schemas import ProjectEnvelope, WireModel
-from app.services.generation import adopt_generation, confirm_generation, create_join_generation, generation_view, quote_generation, require_generation, resume_generation
+from app.services.canvas_delivery import public_project_envelope
+from app.services.generation import adopt_generation, confirm_generation, create_join_generation, generation_view, quote_generation, require_generation, resume_generation, retry_generation_quote
+from app.services.material_delivery import is_material_generation, material_generation_ids, public_material_generation
 from app.services.projects import require_project
 
 
@@ -41,6 +43,10 @@ class GenerationResume(WireModel):
     pass
 
 
+class GenerationRetryQuote(WireModel):
+    expected_revision: int = Field(ge=1, strict=True)
+
+
 class GenerationJoin(WireModel):
     scene_id: str = Field(min_length=1, max_length=100)
     source_node_id: str = Field(min_length=1, max_length=100)
@@ -54,7 +60,7 @@ class GenerationError(WireModel):
     message: str
 
 
-class GenerationView(WireModel):
+class GenerationDetail(WireModel):
     id: str
     project_id: str
     scene_id: str
@@ -65,14 +71,9 @@ class GenerationView(WireModel):
     status: Literal["awaiting_confirmation", "queued", "submitting", "submission_unknown", "processing", "downloading", "ready", "failed", "query_interrupted"]
     input: dict[str, Any]
     confirmation_hash: str
-    quoted_cents: int
-    reserved_cents: int
-    actual_cents: int | None
-    remote_task_id: str | None
-    remote_request_id: str | None
+    retry_of: str | None = None
     asset_id: str | None
     error: GenerationError | None
-    usage: dict[str, Any]
     retry_count: int
     created_at: str
     updated_at: str
@@ -80,24 +81,46 @@ class GenerationView(WireModel):
     finished_at: str | None
 
 
+class GenerationView(GenerationDetail):
+    quoted_cents: int
+    reserved_cents: int
+    actual_cents: int | None
+    remote_task_id: str | None
+    remote_request_id: str | None
+    usage: dict[str, Any]
+
+
+class MaterialGenerationView(GenerationDetail):
+    material: Literal[True] = True
+    can_resume: bool
+    can_retry: bool = False
+
+
 class GenerationResult(WireModel):
-    generation: GenerationView
+    generation: GenerationView | MaterialGenerationView
 
 
 class GenerationList(WireModel):
-    generations: list[GenerationView]
+    generations: list[GenerationView | MaterialGenerationView]
+
+
+def visible_generation(session, generation, material_ids=None):
+    value = generation_view(generation)
+    if material_ids is None:
+        material_ids = material_generation_ids(session, generation.project_id, generation.owner_id)
+    return public_material_generation(value) if is_material_generation(value, material_ids) else value
 
 
 @router.post("/projects/{project_id}/generations/quote", response_model=GenerationResult, status_code=201)
 def quote(project_id: str, body: GenerationQuote, user: User = Depends(current_user), session: Session = Depends(get_db)):
     generation = quote_generation(session, project_id, user.id, body.model_dump(by_alias=True), get_settings())
-    return {"generation": generation_view(generation)}
+    return {"generation": visible_generation(session, generation)}
 
 
 @router.post("/generations/{generation_id}/confirm", response_model=GenerationResult)
 def confirm(generation_id: str, body: GenerationConfirm, user: User = Depends(current_user), session: Session = Depends(get_db)):
     generation = confirm_generation(session, generation_id, user.id, body.confirmation_hash, body.expected_revision, get_settings())
-    return {"generation": generation_view(generation)}
+    return {"generation": visible_generation(session, generation)}
 
 
 @router.post("/projects/{project_id}/generations/join", response_model=GenerationResult, status_code=201)
@@ -110,19 +133,26 @@ def join(project_id: str, body: GenerationJoin, user: User = Depends(current_use
 def list_generations(project_id: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
     require_project(session, project_id, user.id)
     generations = session.scalars(select(Generation).where(Generation.project_id == project_id, Generation.owner_id == user.id).order_by(Generation.created_at.desc())).all()
-    return {"generations": [generation_view(generation) for generation in generations]}
+    material_ids = material_generation_ids(session, project_id, user.id)
+    return {"generations": [visible_generation(session, generation, material_ids) for generation in generations]}
 
 
 @router.get("/generations/{generation_id}", response_model=GenerationResult)
 def get_generation(generation_id: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    return {"generation": generation_view(require_generation(session, generation_id, user.id))}
+    return {"generation": visible_generation(session, require_generation(session, generation_id, user.id))}
 
 
 @router.post("/generations/{generation_id}/resume", response_model=GenerationResult)
 def resume(generation_id: str, body: GenerationResume, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    return {"generation": generation_view(resume_generation(session, generation_id, user.id))}
+    return {"generation": visible_generation(session, resume_generation(session, generation_id, user.id))}
+
+
+@router.post("/generations/{generation_id}/retry-quote", response_model=GenerationResult)
+def retry_quote(generation_id: str, body: GenerationRetryQuote, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    return {"generation": visible_generation(session, retry_generation_quote(session, generation_id, user.id,
+        body.expected_revision, get_settings()))}
 
 
 @router.post("/generations/{generation_id}/adopt", response_model=ProjectEnvelope, response_model_exclude_unset=True)
 def adopt(generation_id: str, body: GenerationAdopt, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    return adopt_generation(session, generation_id, user.id, body.expected_revision, body.operation_id, get_settings())
+    return public_project_envelope(session, user.id, adopt_generation(session, generation_id, user.id, body.expected_revision, body.operation_id, get_settings()))

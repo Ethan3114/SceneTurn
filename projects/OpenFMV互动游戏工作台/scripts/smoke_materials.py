@@ -96,7 +96,7 @@ def main():
                 assert {"writer", "scene_designer"} <= roles
                 source = next(node for node in value["nodes"] if (node.get("metadata", {}).get("creativeArtifact") or {}).get("role") == "scene_designer")
                 write_private_json(directory / "first-turn.json", value)
-                value = response_json(client.post(f"{path}/{value['id']}/messages", json={"operationId": str(uuid.uuid4()), "expectedRevision": value["revision"],
+                value = response_json(client.post(f"{path}/{value['id']}/messages", json={"operationId": str(uuid.uuid4()), "expectedRevision": value["revision"], "intent": "start",
                     "content": "请只修改引用的场景设计：把午后侧窗光改为清晨柔和侧窗光，其他人物、道具和构图内容保持一致。由场景设计师修改同一产物并核对保存内容，不调用媒体模型。",
                     "references": [{"nodeId": source["id"], "contentHash": source["contentHash"]}]}))["conversation"]
                 run_ids.append(value["messages"][-1]["run"]["id"])

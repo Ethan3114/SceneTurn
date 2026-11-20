@@ -4,8 +4,11 @@ import hashlib
 import os
 import shutil
 import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 from sqlalchemy import create_engine, event, select
@@ -35,33 +38,38 @@ def saved_images(tmp_path):
     snapshot, source_data = Path(snapshot_value).resolve(), Path(data_value).resolve()
     if not snapshot.is_file() or not source_data.is_dir():
         pytest.fail("指定的SQLite副本或真实图片响应目录不存在。")
-    directory = tmp_path / "data"
-    directory.mkdir()
-    with sqlite3.connect(f"{snapshot.as_uri()}?immutable=1", uri=True) as source, sqlite3.connect(directory / "openfmv.sqlite3") as destination:
-        source.backup(destination)
-    shutil.copytree(source_data / "image-responses", directory / "image-responses")
-    shutil.copytree(source_data / "media/images", directory / "media/images")
-    engine = create_engine(f"sqlite:///{directory / 'openfmv.sqlite3'}", connect_args={"check_same_thread": False, "timeout": 10})
+    with TemporaryDirectory(dir=tmp_path) as temporary:
+        directory = Path(temporary)
+        database = directory / "openfmv.sqlite3"
+        with (
+            closing(sqlite3.connect(f"{snapshot.as_uri()}?immutable=1", uri=True)) as source,
+            closing(sqlite3.connect(database)) as destination,
+        ):
+            source.backup(destination)
+        shutil.copytree(source_data / "image-responses", directory / "image-responses")
+        shutil.copytree(source_data / "media/images", directory / "media/images")
+        engine = create_engine(f"sqlite:///{database}", connect_args={"check_same_thread": False, "timeout": 10})
+        try:
+            @event.listens_for(engine, "connect")
+            def configure_sqlite(connection, _record):
+                connection.execute("PRAGMA foreign_keys=ON")
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("PRAGMA busy_timeout=10000")
 
-    @event.listens_for(engine, "connect")
-    def configure_sqlite(connection, _record):
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA busy_timeout=10000")
-
-    factory = sessionmaker(engine, expire_on_commit=False, autoflush=False)
-    settings = Settings(_env_file=None, data_dir=directory, worker_enabled=False)
-    with factory() as session:
-        run = session.get(AgentRun, RUN_ID)
-        reference = run.limits_json["materialContext"]["referenceAssets"][0]
-        asset = session.get(Asset, reference["assetId"])
-        official = ROOT / "docs/设计参考/斗破苍穹-20261117/origin-poster.png"
-        assert hashlib.sha256(official.read_bytes()).hexdigest() == reference["sha256"] == asset.sha256
-        target = directory / asset.relpath
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(official, target)
-    yield factory, settings
-    engine.dispose()
+            factory = sessionmaker(engine, expire_on_commit=False, autoflush=False)
+            settings = Settings(_env_file=None, data_dir=directory, worker_enabled=False)
+            with factory() as session:
+                run = session.get(AgentRun, RUN_ID)
+                reference = run.limits_json["materialContext"]["referenceAssets"][0]
+                asset = session.get(Asset, reference["assetId"])
+                official = ROOT / "docs/设计参考/斗破苍穹-20261117/origin-poster.png"
+                assert hashlib.sha256(official.read_bytes()).hexdigest() == reference["sha256"] == asset.sha256
+                target = directory / asset.relpath
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(official, target)
+            yield factory, settings
+        finally:
+            engine.dispose()
 
 
 def user_edit(factory, project_id, owner_id):
@@ -117,15 +125,22 @@ def quarantine_state(factory):
         return (account.status, account.active_job_id, job.status, job.error_code, job.attempt_count, job.submitted_at)
 
 
-def test_startup_recovers_real_saved_response_and_claims_only_free_accounts(saved_images):
+@pytest.mark.parametrize("initial_status", ["response_saved", "submission_unknown"])
+def test_startup_registers_saved_response_and_waits_for_unexpired_unknown(saved_images, initial_status):
     factory, settings = saved_images
-    original_quarantine = quarantine_state(factory)
     with factory() as session:
         job = session.get(ImageJob, JOB_ID)
         submitted = (job.attempt_count, job.submitted_at)
         queued = set(session.scalars(select(ImageJob.id).where(ImageJob.run_id == RUN_ID, ImageJob.status == "queued")))
         assert len(queued) == 3
         response_digest = hashlib.sha256((settings.data_dir / job.response_relpath).read_bytes()).hexdigest()
+        waiting_account = session.scalar(select(ImageAccount).where(ImageAccount.owner_id == job.owner_id, ImageAccount.slot == 3))
+        session.get(ImageJob, waiting_account.active_job_id).submitted_at = time.time() - 60
+        if initial_status == "submission_unknown":
+            job.status, job.response_relpath, job.error_code = initial_status, None, "IMAGE_SUBMISSION_UNKNOWN"
+            session.get(ImageAccount, job.account_id).status = "quarantined"
+        session.commit()
+    original_quarantine = quarantine_state(factory)
 
     async def recover_only():
         stop = asyncio.Event()
@@ -139,11 +154,9 @@ def test_startup_recovers_real_saved_response_and_claims_only_free_accounts(save
         assert (job.attempt_count, job.submitted_at) == submitted
         assert hashlib.sha256((settings.data_dir / job.response_relpath).read_bytes()).hexdigest() == response_digest
         assert session.get(ImageAccount, job.account_id).active_job_id is None
-    selected = []
-    for _ in range(3):
-        with factory() as session:
-            selected.append(claim_job(session))
-    assert len(set(selected[:2])) == 2 and set(selected[:2]) <= queued and selected[2] is None
+    with factory() as session:
+        assert claim_job(session) is None
+        assert set(session.scalars(select(ImageJob.id).where(ImageJob.run_id == RUN_ID, ImageJob.status == "queued"))) == queued
     assert quarantine_state(factory) == original_quarantine
 
 

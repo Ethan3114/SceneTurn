@@ -10,15 +10,16 @@ import uuid
 from decimal import ROUND_CEILING, Decimal
 
 from pydantic import ValidationError
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.agent_models import AgentRun, AgentStep
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.security import decode_secret
 from app.models import Asset, Budget, Canvas, Generation, Operation, Project, ProviderSettings
 from app.services.media import download_video, resolve_asset_path
-from app.services.projects import iso_timestamp, lock_write, require_project
+from app.services.projects import iso_timestamp, lock_write, require_project, require_revision
 from app.services.video_join import join_videos
 from app.services.wan import MODEL, PRICES, PRICE_VERSION, REGION, WanClient, WanFailure, endpoint
 
@@ -53,6 +54,7 @@ def generation_view(generation: Generation) -> dict:
         "status": generation.status,
         "input": {key: value for key, value in generation.input_json.items() if key != "localInputs"},
         "confirmationHash": generation.input_hash,
+        "retryOf": generation.input_json.get("request", {}).get("retryOf"),
         "quotedCents": generation.quoted_cents,
         "reservedCents": generation.reserved_cents,
         "actualCents": generation.actual_cents if generation.usage_json.get("settled") else None,
@@ -296,7 +298,7 @@ def _clip(scene: dict, clip_id: str) -> dict | None:
     return next((clip for track in timeline.get("tracks", []) for clip in track.get("clips", []) if clip.get("id") == clip_id), None)
 
 
-def quote_generation(session: Session, project_id: str, owner_id: str, payload: dict, settings: Settings, *, manage_transaction: bool = True) -> Generation:
+def quote_generation(session: Session, project_id: str, owner_id: str, payload: dict, settings: Settings, *, manage_transaction: bool = True, retry_of: Generation | None = None) -> Generation:
     if manage_transaction:
         lock_write(session)
     project = require_project(session, project_id, owner_id)
@@ -353,7 +355,15 @@ def quote_generation(session: Session, project_id: str, owner_id: str, payload: 
         frozen["boundaryFrames"] = payload["boundaryFrames"]
     if payload.get("reservedClipId") and payload.get("boundaryFrames", {}).get("sourceType") != "media_sequence":
         raise AppError(422, "GENERATION_TARGET_INVALID", "固定新片段标识必须来自真实连续视频序列")
-    clip_id = payload.get("clipId") or payload.get("reservedClipId") or str(uuid.uuid4())
+    clip_id = retry_of.clip_id if retry_of else payload.get("clipId") or payload.get("reservedClipId") or str(uuid.uuid4())
+    if retry_of:
+        changed = any(frozen.get(key) != retry_of.input_json.get(key) for key in (
+            "workspaceId", "region", "model", "sourcePrompt", "prompt", "inputs", "outputNodeId",
+            "duration", "resolution", "count", "ratio", "audio", "promptExtend", "watermark",
+            "replaceExisting", "boundaryFrames",
+        ))
+        if changed or not hmac.compare_digest(source_digest, retry_of.source_digest):
+            raise AppError(409, "GENERATION_INPUT_CHANGED", "原镜头输入或业务空间已有变化，请重新核对视频方案")
     confirmation = digest({
         "input": frozen, "projectId": project_id, "sceneId": payload["sceneId"], "sourceNodeId": payload["sourceNodeId"],
         "clipId": clip_id, "projectRevision": project.revision, "sourceDigest": source_digest, "quotedCents": quoted,
@@ -369,6 +379,57 @@ def quote_generation(session: Session, project_id: str, owner_id: str, payload: 
     session.add(Operation(owner_id=owner_id, project_id=project_id, operation_id=payload["operationId"], kind="generation.quote", payload_hash=digest(payload), response_json={"generationId": generation.id}))
     if manage_transaction:
         session.commit()
+    return generation
+
+
+def retry_generation_quote(session: Session, generation_id: str, owner_id: str, expected_revision: int, settings: Settings) -> Generation:
+    lock_write(session)
+    original = require_generation(session, generation_id, owner_id)
+    request = original.input_json.get("request", {})
+    if (original.status != "submission_unknown" or original.remote_task_id or request.get("retryOf")
+            or original.input_json.get("provider") != "aliyun-wan" or not request.get("videoArtifactNodeId")
+            or not original.input_json.get("boundaryFrames")):
+        raise AppError(409, "VIDEO_RETRY_UNAVAILABLE", "仅可重新准备提交结果待核实且没有任务编号的原始镜头")
+    project = require_project(session, original.project_id, owner_id)
+    require_revision(project, expected_revision)
+    original_hash = digest({
+        "input": original.input_json, "projectId": original.project_id, "sceneId": original.scene_id,
+        "sourceNodeId": original.source_node_id, "clipId": original.clip_id,
+        "projectRevision": original.project_revision, "sourceDigest": original.source_digest,
+        "quotedCents": original.quoted_cents,
+    })
+    if not hmac.compare_digest(original.input_hash, original_hash):
+        raise AppError(409, "CONFIRMATION_INPUT_INVALID", "原视频报价输入与确认摘要不一致，请重新核对")
+    operation_id = hashlib.sha256(f"generation-retry:{original.id}".encode()).hexdigest()
+    receipt = func.json_each(AgentStep.tool_results_json).table_valued("value", joins_implicitly=True)
+    step = session.scalars(select(AgentStep).join(AgentRun, AgentRun.id == AgentStep.run_id).where(
+        AgentRun.owner_id == owner_id, AgentRun.project_id == original.project_id, AgentRun.scene_id == original.scene_id,
+        AgentRun.limits_json["workspace"].as_string() == "materials", AgentStep.role == "media_producer",
+        func.json_extract(receipt.c.value, "$.tool") == "submit_generation",
+        func.json_extract(receipt.c.value, "$.result.generation.id") == original.id,
+    )).unique().one_or_none()
+    if step is None:
+        raise AppError(409, "VIDEO_RETRY_UNAVAILABLE", "原镜头缺少可核对的素材制作记录")
+    run = session.get(AgentRun, step.run_id)
+    result = run.result_json or {}
+    reviews = [*result.get("materialReviewHistory", []), result.get("materialReview") or {}]
+    canvas = session.scalar(select(Canvas).where(Canvas.owner_id == owner_id, Canvas.project_id == original.project_id,
+        Canvas.scene_id == original.scene_id))
+    artifact_node = next((node for node in canvas.data_json["nodes"] if node["id"] == request["videoArtifactNodeId"]), None) if canvas else None
+    artifact = (artifact_node or {}).get("metadata", {}).get("creativeArtifact")
+    approved = any(review.get("stepId") == step.id and review.get("nodeId") == request["videoArtifactNodeId"]
+        and review.get("artifactHash") == request.get("videoArtifactHash") and review.get("status") in {"approved", "not_required"}
+        for review in reviews)
+    if not approved or not artifact or digest(artifact) != request.get("videoArtifactHash"):
+        raise AppError(409, "VIDEO_ARTIFACT_UNCONFIRMED", "原镜头方案已变化，请重新核对")
+    generation = quote_generation(session, original.project_id, owner_id,
+        {**request, "operationId": operation_id, "retryOf": original.id}, settings, manage_transaction=False, retry_of=original)
+    if not any(item["operationId"] == operation_id for item in step.tool_results_json):
+        step.tool_results_json = [*step.tool_results_json, {"operationId": operation_id, "tool": "submit_generation",
+            "arguments": {"videoArtifactNodeId": request["videoArtifactNodeId"], "shotKey": original.input_json["boundaryFrames"]["shotKey"]},
+            "result": {"generation": generation_view(generation), "confirmationRequired": True, "executionOrigin": "owner_retry"},
+            "revision": project.revision}]
+    session.commit()
     return generation
 
 
@@ -729,7 +790,11 @@ async def _join_generation(settings: Settings, factory: sessionmaker, generation
 
 async def _process_one(settings: Settings, factory: sessionmaker, worker_id: str) -> None:
     with factory() as session:
-        generation = session.scalar(select(Generation).where(Generation.status.in_(ACTIVE_STATUSES)).order_by(Generation.created_at, Generation.id).limit(1))
+        generation = session.scalar(select(Generation).where(
+            Generation.status.in_(ACTIVE_STATUSES),
+            Generation.status != "query_interrupted",
+            or_(Generation.status != "submission_unknown", Generation.remote_task_id.is_not(None)),
+        ).order_by(Generation.created_at, Generation.id).limit(1))
         if generation is None:
             generation = session.scalar(select(Generation).where(Generation.status == "queued").order_by(Generation.created_at, Generation.id).limit(1))
         if generation is None:
@@ -743,7 +808,7 @@ async def _process_one(settings: Settings, factory: sessionmaker, worker_id: str
                 generation.error_code = "WAN_SUBMISSION_UNKNOWN"
                 generation.error_message = "服务在提交期间中断，原任务结果待核实，费用预留继续保留"
             session.commit()
-        if generation.status == "query_interrupted" or generation.status == "submission_unknown" and not generation.remote_task_id:
+        if generation.status == "submission_unknown" and not generation.remote_task_id:
             session.commit()
             return
         if generation.next_poll_at and generation.next_poll_at > time.time():

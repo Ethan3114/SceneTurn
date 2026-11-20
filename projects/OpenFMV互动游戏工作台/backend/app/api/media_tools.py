@@ -6,6 +6,7 @@ from app.api.deps import current_user, get_db
 from app.core.config import get_settings
 from app.models import User
 from app.schemas import ProjectEnvelope, WireModel
+from app.services.canvas_delivery import public_project_envelope
 from app.services.image_split import split_image
 
 
@@ -36,4 +37,4 @@ class ImageSplitResult(ProjectEnvelope):
 
 @router.post("/projects/{project_id}/media-tools/split", response_model=ImageSplitResult, response_model_exclude_unset=True, status_code=201)
 def split(project_id: str, body: ImageSplitRequest, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    return split_image(session, project_id, user.id, body.model_dump(by_alias=True), get_settings())
+    return public_project_envelope(session, user.id, split_image(session, project_id, user.id, body.model_dump(by_alias=True), get_settings()))

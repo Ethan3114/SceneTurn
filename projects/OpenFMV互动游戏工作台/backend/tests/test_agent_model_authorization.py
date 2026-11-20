@@ -17,17 +17,14 @@ from app.services.text_provider import PRO_MODEL
 from conftest import PRODUCT_ROOT
 
 
-def archived_pro_recovery(tmp_path, pending_status=None):
+def archived_pro_recovery(writable_snapshot, request, pending_status=None):
     source = PRODUCT_ROOT / ".intermediate/agent-smoke/438bb5cc-7709-40f9-a295-187a39fbfd6f/data/openfmv.sqlite3"
     assert source.is_file(), "需要已发生的真实Pro任务记录"
     original_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    destination = data_dir / "openfmv.sqlite3"
-    with sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True) as archived:
-        with sqlite3.connect(destination) as isolated:
-            archived.backup(isolated)
+    destination = writable_snapshot(source)
+    data_dir = destination.parent
     engine = create_engine(f"sqlite:///{destination}")
+    request.addfinalizer(engine.dispose)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as session:
         run = session.scalar(select(AgentRun).where(AgentRun.role == "editor"))
@@ -63,8 +60,8 @@ def immutable_records(database):
         }
 
 
-def test_resumed_real_pro_task_is_denied_before_new_reservation_or_supplier_request(tmp_path):
-    source, source_hash, database, engine, factory, settings, run_id, frozen = archived_pro_recovery(tmp_path)
+def test_resumed_real_pro_task_is_denied_before_new_reservation_or_supplier_request(writable_snapshot, request):
+    source, source_hash, database, engine, factory, settings, run_id, frozen = archived_pro_recovery(writable_snapshot, request)
     before = immutable_records(database)
     with pytest.raises(AppError) as failure:
         asyncio.run(_execute_platform(settings, factory, run_id, "authorization-check"))
@@ -72,13 +69,12 @@ def test_resumed_real_pro_task_is_denied_before_new_reservation_or_supplier_requ
     assert immutable_records(database) == before
     with factory() as session:
         assert session.get(AgentRun, run_id).limits_json == frozen
-    engine.dispose()
     assert hashlib.sha256(source.read_bytes()).hexdigest() == source_hash
 
 
 @pytest.mark.parametrize("pending_status", ["response_received", "ready"])
-def test_saved_real_pro_reply_can_finish_recovery_without_new_paid_request(tmp_path, pending_status):
-    source, source_hash, database, engine, factory, settings, run_id, frozen = archived_pro_recovery(tmp_path, pending_status)
+def test_saved_real_pro_reply_can_finish_recovery_without_new_paid_request(writable_snapshot, request, pending_status):
+    source, source_hash, database, engine, factory, settings, run_id, frozen = archived_pro_recovery(writable_snapshot, request, pending_status)
     before = immutable_records(database)
     asyncio.run(_execute_platform(settings, factory, run_id, "saved-reply-check"))
     assert immutable_records(database) == before
@@ -87,5 +83,4 @@ def test_saved_real_pro_reply_can_finish_recovery_without_new_paid_request(tmp_p
         assert run.status == "completed" and run.limits_json == frozen
         final = session.scalars(select(AgentCall).where(AgentCall.run_id == run_id).order_by(AgentCall.created_at.desc())).first()
         assert final.status == "ready" and final.usage_json["toolExecutionDone"] is True
-    engine.dispose()
     assert hashlib.sha256(source.read_bytes()).hexdigest() == source_hash

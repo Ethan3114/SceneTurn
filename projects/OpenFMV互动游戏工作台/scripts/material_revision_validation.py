@@ -5,7 +5,9 @@ import os
 import shutil
 import sqlite3
 import uuid
+from contextlib import closing
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 from jsonpointer import JsonPointer
@@ -44,23 +46,30 @@ def revision_database(tmp_path, request):
     snapshot = Path(snapshot_path).resolve()
     if not snapshot.is_file():
         pytest.fail(f"{variable}指定的SQLite一致性副本不存在。")
-    database = tmp_path / "openfmv.sqlite3"
-    with sqlite3.connect(f"{snapshot.as_uri()}?immutable=1", uri=True) as source, sqlite3.connect(database) as destination:
-        source.backup(destination)
-    engine = create_engine(f"sqlite:///{database}")
-    settings = Settings(_env_file=None, data_dir=tmp_path, worker_enabled=False)
-    with Session(engine) as session:
-        run = session.get(AgentRun, RUN_ID)
-        references = run.limits_json["materialContext"]["referenceAssets"]
-        assert len(references) == 1
-        asset = session.get(Asset, references[0]["assetId"])
-        source = ROOT / "docs/设计参考/斗破苍穹-20261117/origin-poster.png"
-        assert hashlib.sha256(source.read_bytes()).hexdigest() == asset.sha256
-        destination = tmp_path / asset.relpath
-        destination.parent.mkdir(parents=True)
-        shutil.copyfile(source, destination)
-    yield engine, settings
-    engine.dispose()
+    with TemporaryDirectory(dir=tmp_path) as temporary:
+        directory = Path(temporary)
+        database = directory / "openfmv.sqlite3"
+        with (
+            closing(sqlite3.connect(f"{snapshot.as_uri()}?immutable=1", uri=True)) as source,
+            closing(sqlite3.connect(database)) as destination,
+        ):
+            source.backup(destination)
+        engine = create_engine(f"sqlite:///{database}")
+        try:
+            settings = Settings(_env_file=None, data_dir=directory, worker_enabled=False)
+            with Session(engine) as session:
+                run = session.get(AgentRun, RUN_ID)
+                references = run.limits_json["materialContext"]["referenceAssets"]
+                assert len(references) == 1
+                asset = session.get(Asset, references[0]["assetId"])
+                reference_image = ROOT / "docs/设计参考/斗破苍穹-20261117/origin-poster.png"
+                assert hashlib.sha256(reference_image.read_bytes()).hexdigest() == asset.sha256
+                destination = directory / asset.relpath
+                destination.parent.mkdir(parents=True)
+                shutil.copyfile(reference_image, destination)
+            yield engine, settings
+        finally:
+            engine.dispose()
 
 
 def actual_revision(session):

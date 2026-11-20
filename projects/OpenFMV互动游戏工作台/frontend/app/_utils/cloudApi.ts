@@ -24,9 +24,13 @@ export interface GenerationView {
   id: string; projectId: string; sceneId: string; sourceNodeId: string; clipId: string;
   projectRevision: number;
   outputNodeId: string | null;
-  status: string; input: { prompt: string; sourcePrompt?: string; inputCompositionVersion?: number; outputNodeId?: string; inputs?: { nodeId: string; type: string; title: string; text?: string; label?: string; assetId?: string; durationMs?: number }[]; duration: number; resolution: string; model?: string; [key: string]: unknown };
-  confirmationHash: string; quotedCents: number; reservedCents: number; actualCents: number | null;
-  remoteTaskId: string | null; assetId: string | null; error: { code: string; message: string } | string | null;
+  material?: true;
+  canResume?: boolean;
+  retryOf?: string | null;
+  canRetry?: boolean;
+  status: string; input: { prompt?: string; sourcePrompt?: string; inputCompositionVersion?: number; outputNodeId?: string; inputs?: { nodeId: string; type: string; title: string; text?: string; label?: string; assetId?: string; durationMs?: number }[]; duration: number; resolution: string; model?: string; [key: string]: unknown };
+  confirmationHash: string; quotedCents?: number; reservedCents?: number; actualCents?: number | null;
+  remoteTaskId?: string | null; assetId: string | null; error: { code: string; message: string } | string | null;
   createdAt: string; updatedAt: string;
 }
 export interface WanSettings { configured: boolean; workspaceId: string; region: string; model: string; prices: Record<string, unknown> }
@@ -133,6 +137,7 @@ export const joinGeneration = (id: string, input: { sceneId: string; sourceNodeI
 export const splitCloudImage = (id: string, input: ImageSplitParams & { sceneId: string; sourceNodeId: string; expectedRevision: number; operationId: string }) => api<ProjectEnvelope & { pieces: { nodeId: string; assetId: string; row: number; column: number }[] }>(`/projects/${id}/media-tools/split`, { method: 'POST', body: JSON.stringify(input) });
 export const quoteGeneration = (id: string, input: { sceneId: string; sourceNodeId: string; outputNodeId?: string; clipId?: string; prompt: string; duration: number; resolution: string; operationId: string }) => api<{ generation: GenerationView }>(`/projects/${id}/generations/quote`, { method: 'POST', body: JSON.stringify(input) });
 export const confirmGeneration = (task: GenerationView, expectedRevision: number) => api<{ generation: GenerationView }>(`/generations/${task.id}/confirm`, { method: 'POST', body: JSON.stringify({ confirmationHash: task.confirmationHash, expectedRevision }) });
+export const quoteGenerationRetry = (id: string, expectedRevision: number) => api<{ generation: GenerationView }>(`/generations/${id}/retry-quote`, { method: 'POST', body: JSON.stringify({ expectedRevision }) });
 export const resumeGeneration = (id: string) => api<{ generation: GenerationView }>(`/generations/${id}/resume`, { method: 'POST', body: '{}' });
 export async function adoptGeneration(id: string, expectedRevision: number) {
   return acceptProjectEnvelope(await api<ProjectEnvelope>(`/generations/${id}/adopt`, { method: 'POST', body: JSON.stringify({ expectedRevision, operationId: operationId() }) }));

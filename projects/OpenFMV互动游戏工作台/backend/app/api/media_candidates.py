@@ -3,12 +3,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, get_db
-from app.agent_models import AgentStep
 from app.api.generations import GenerationResult
 from app.core.config import get_settings
 from app.media_models import MediaAdoption, MediaSequence
 from app.media_schemas import AdoptionApplied, AdoptionCheck, AdoptionConfirm, AdoptionEnvelope, AdoptionKeep, CandidateList, MediaOperation, SequenceCreate, SequenceEnvelope
 from app.models import Asset, Canvas, Generation, User
+from app.services.canvas_delivery import public_project_envelope
 from app.services.generation import generation_view
 from app.services.media_adoptions import adoption_view, apply_adoption, check_adoption, conflict_issues, keep_current
 from app.services.media_sequences import create_sequence, quote_segment, sequence_view
@@ -21,7 +21,8 @@ router = APIRouter(tags=["media-candidates"])
 @router.post("/projects/{project_id}/scenes/{scene_id}/media-sequences", response_model=SequenceEnvelope, response_model_exclude_unset=True, status_code=201)
 def create(project_id: str, scene_id: str, body: SequenceCreate, user: User = Depends(current_user), session: Session = Depends(get_db)):
     sequence = create_sequence(session, project_id, scene_id, user.id, body, get_settings())
-    return {"sequence": sequence_view(session, sequence), "project": project_envelope(session, require_project(session, project_id, user.id))}
+    project = require_project(session, project_id, user.id)
+    return {"sequence": sequence_view(session, sequence), "project": public_project_envelope(session, user.id, project_envelope(session, project))}
 
 
 @router.post("/projects/{project_id}/media-sequences/{sequence_id}/segments/{shot_key}/quote", response_model=GenerationResult, status_code=201)
@@ -36,7 +37,8 @@ def check(project_id: str, body: AdoptionCheck, user: User = Depends(current_use
 
 @router.post("/projects/{project_id}/media-adoptions/{adoption_id}/apply", response_model=AdoptionApplied, response_model_exclude_unset=True)
 def apply(project_id: str, adoption_id: str, body: AdoptionConfirm, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    return apply_adoption(session, project_id, adoption_id, user.id, body, get_settings())
+    result = apply_adoption(session, project_id, adoption_id, user.id, body, get_settings())
+    return {**result, "project": public_project_envelope(session, user.id, result["project"])}
 
 
 @router.post("/projects/{project_id}/media-adoptions/{adoption_id}/keep", response_model=AdoptionEnvelope)
@@ -59,12 +61,13 @@ def candidates(project_id: str, scene_id: str, conversation_id: str | None = Non
     sequences = session.scalars(select(MediaSequence).where(MediaSequence.owner_id == user.id,
         MediaSequence.project_id == project_id, MediaSequence.scene_id == scene_id).order_by(MediaSequence.created_at.desc())).all()
     if conversation_id:
-        from app.services.materials import require_material
+        from app.services.materials import active_production, require_material
         conversation = require_material(session, project_id, scene_id, conversation_id, user.id)
-        sequences = [sequence for sequence in sequences if sequence.input_json.get("conversationId") == conversation.id and sequence.input_json.get("runId") == conversation.active_run_id]
+        run, run_generations = active_production(session, conversation)
+        run_id = run.id if run else None
+        sequences = [sequence for sequence in sequences if sequence.input_json.get("conversationId") == conversation.id and sequence.input_json.get("runId") == run_id]
         sequence_ids = {sequence.id for sequence in sequences}
-        receipts = session.scalars(select(AgentStep.tool_results_json).where(AgentStep.run_id == conversation.active_run_id)).all() if conversation.active_run_id else []
-        generation_ids = {receipt["result"]["generation"]["id"] for values in receipts for receipt in values if receipt["tool"] == "submit_generation"}
+        generation_ids = {item.id for item in run_generations}
         generations = [value for value in generations if value.id in generation_ids or value.input_json.get("boundaryFrames", {}).get("sequenceId") in sequence_ids]
     values = []
     for generation in generations:

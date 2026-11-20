@@ -27,9 +27,9 @@ def read_memory(project_id: str, memory_id: str, user: User = Depends(current_us
 
 @router.post("/projects/{project_id}/context/retrieve", response_model=ContextResult)
 def retrieve(project_id: str, body: ContextRetrieve, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    return retrieve_context(session, project_id, user.id, body.scene_id, body.branch_id, body.target_ids, body.max_chars)
+    return retrieve_context(session, project_id, user.id, body.scene_id, body.branch_id, body.target_ids, body.max_chars, public_artifacts=True)
 
 
 @router.post("/projects/{project_id}/context/source", response_model=ContextSourceResult)
 def read_source(project_id: str, body: ContextSource, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    return get_source(session, project_id, user.id, body.model_dump(by_alias=True))
+    return get_source(session, project_id, user.id, body.model_dump(by_alias=True), public_artifacts=True)

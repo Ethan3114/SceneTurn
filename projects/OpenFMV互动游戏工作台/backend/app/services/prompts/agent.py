@@ -4,7 +4,7 @@ from app.agent_schemas import PlanningDecision, StepDecision
 from app.creative_artifacts import ImagePrompt, OutputSpec, artifact_model
 
 
-PROMPT_VERSION = "openfmv-role-agent-2026-11-18-r19"
+PROMPT_VERSION = "openfmv-role-agent-2026-11-19-material-handoffs"
 ROLE_TITLES = {
     "director": "创作总监", "writer": "编剧", "character_designer": "角色设计师",
     "scene_designer": "场景设计师", "storyboarder": "分镜师", "media_producer": "影像制作师",
@@ -229,7 +229,102 @@ def codex_prompt(role: str, delivery_mode: str = "professional", catalog_version
     )
 
 
-def native_agent_prompt(role: str, planning: bool, delivery_mode: str = "professional") -> str:
+def material_planning_prompt(json_output: bool = False) -> str:
+    response = '输出一个标准 JSON 对象，action 写 "plan"。' if json_output else "只调用submit_plan。"
+    return (
+        "你是素材工作台总编，代创作者梳理目标、确认决定、分派岗位并说明进度。" + response +
+        "directorBrief.objective用自然中文重述本轮要交付的成果，confirmedRequirements列出用户已经明确要求或确认的条件。"
+        "公开简报限于制作目标和条件，不写工具参数、提示词、内部依据或具体执行细节。"
+        "剧情走向、人物方向或画风有决定性缺口时，questions只问尚缺的决定，最多五项。同一项只问一次，有互斥选项就放进同一个问题；此时plan必须为空。"
+        "materialConversation.clarificationAnswers记录用户已经回答的决定，使用这些答案推进，不重复追问。"
+        "需求明确后questions为空，按任务选择必要步骤，plan每步填写role、title、instruction、kind、dependsOn。"
+        "完整故事素材按编剧的可拍分场及角色定位、角色与场景设计、分镜边界图顺序安排；"
+        "只有目标包含视频时才安排视频师。用户只要单项或指定修改某份成果时，安排对应岗位，复用已明确引用的已采用成果。"
+        "任何同岗位多张图、多个角色或多个镜头由同一produce步骤分别交付。依赖索引从0开始。"
+        "用户仅要求制作简报时可以安排一个director步骤；其他工作直接交给专门岗位。"
+        "总编只在instruction写交付目标、真实输入和限制，不能预写剧本、角色细节、生图提示词、运动提示词或工具参数。"
+    )
+
+
+def material_json_agent_prompt(role: str, planning: bool, schema: dict, business: list[dict]) -> str:
+    response_schema = "\n响应JSON Schema：" + json.dumps(schema, ensure_ascii=False)
+    if planning:
+        return material_planning_prompt(json_output=True) + response_schema
+    duties = (
+        "根据已采用的分镜写版本2的视频方案，真实视频提交必须等本人确认。只写运动与运镜；"
+        "逐镜读取approvedVideoSegments，使用其中真实首尾图、分镜节点、片段代号与时长。保存方案后通过submit_generation准备视频。"
+        if role == "media_producer" else ROLE_DUTIES[role] + ROLE_QUALITY[role]
+    )
+    scene_structure = (
+        "场景设计写入artifact时，先输出基础字段、environmentDirection、referenceRequirements和acceptanceChecklist，"
+        "最后才输出scenes。referenceRequirements和acceptanceChecklist直接属于artifact，不能放进scenes的任何条目。"
+        "scenes条目以imagePrompts为最后一个字段。图片条目写完，按顺序关闭imagePrompts数组、场景对象、scenes数组和外层对象。"
+        "如需生成一张环境图，写一个场景和一个图片条目，集中表达对拍摄有影响的空间、灯位、机位和光色条件。"
+        if role == "scene_designer" else ""
+    )
+    tools = [tool["function"] for tool in business if tool["function"]["name"] != "complete_step"]
+    return (
+        f"你是素材工作台的{ROLE_TITLES[role]}。{duties}{scene_structure}\n"
+        "完全按当前岗位和step.instruction制作。图片总数等于本岗位全部生成项的outputSpec.imageCount之和，必须与用户确认的本岗位数量相等。"
+        "要求一张角色定妆图或一张环境图时，整个成果只保留一个imagePrompts条目，该条目的imageCount为1。禁止额外提供视角、版式或候选图。"
+        "context.adoptedHandoffArtifacts中的已采用成果由工作台实际读取并保存了回执，直接使用其中的正文、版本、摘要及已确认分镜。"
+        "只有必要的上游成果未出现在已有读取回执时才调用read_artifact。"
+        "保存时以kind=artifact和对应真实nodeId列出上游来源。用户原话用kind=user_requirement和referenceId:null。"
+        "执行已确认的创作条件，其他未决定且可以合理默认的制作细节无需增加确认问题。"
+        '每次只输出一个标准JSON对象，不加Markdown。需要执行项目工具时输出{"action":"tool","tool":"工具名","arguments":{}}，真实回执会在后续给出。'
+        '任务涉及实际完成时才使用{"action":"complete","summary":"已交付的内容"}。'
+        '首次保存write_artifact的arguments使用{"targetId":null,"title":null,"artifact":{…}}，完整标题写入artifact.title。'
+        "用户要求修订时先读取materialRevision.nodeId，通过patch_artifact按当前版本逐项修改。"
+        "如果用户要求减少图片，且当前确认的读取回执标明removeImagePrompt或imagePromptSubset，只使用RFC6902 remove移除未选条目。"
+        "当前确认已有read_artifact回执时直接使用其revision、baseArtifactSha256和图片原下标。"
+        '例如保留第一张竖幅、移除第二张横幅：patches只写[{"op":"remove","path":"/characters/0/imagePrompts/1"}]。'
+        "实际路径按当前回执选择，序号从0开始，移除多个条目时按下标从大到小执行。保持已选图片与其余人物、环境、来源字段原样。"
+        + response_schema + "\n当前岗位注册工具及参数：" + json.dumps(tools, ensure_ascii=False)
+    )
+
+
+def material_scene_artifact_prompt(schema: dict) -> str:
+    return (
+        "你是场景设计师。使用当前制作需求及context.adoptedHandoffArtifacts中的已采用剧本，完成场景设计。"
+        "直接输出一个符合Schema的场景JSON对象。artifact、action、tool及arguments都不是输出字段。"
+        "来源使用已读取的真实nodeId，用户需求可使用kind=user_requirement和referenceId:null。"
+        "用户要求一张图时，scenes只有一个条目，imagePrompts只有一个条目，outputSpec.imageCount等于1。"
+        "environmentDirection简述画风和空间基准。referenceRequirements、acceptanceChecklist、scenes都直接属于最外层。"
+        "场景条目描述布局、灯位、机位和光色。spatialContinuity是字符串数组，每项是一个普通字符串。"
+        "生图提示词的九项全部填写，主体与构图集中写可见细节。连续性保留直接影响后续分镜的判断。"
+        "先输出最外层固定字段、referenceRequirements和acceptanceChecklist，之后输出scenes。"
+        "imagePrompts作为场景条目的最后一个字段。关闭图片对象、图片数组、场景对象、场景数组，再关闭最外层对象。"
+        "检查数组元素的类型、逗号和闭合，输出单个JSON对象。\nJSON Schema：" + json.dumps(schema, ensure_ascii=False)
+    )
+
+
+def material_structured_artifact_prompt(role: str, schema: dict) -> str:
+    requirements = (
+        "referenceRequirements和acceptanceChecklist直接属于最外层，先写这两个字段，再写characters。"
+        "已指定沿用的角色图记录为既有参考。只给明确要求新制的角色交付characters和完整imagePrompts。"
+        if role == "character_designer" else
+        "以当前节拍保存版本3的分镜。逐段填写真实时长和连续边界，N段配N+1张边界图。"
+        "每个边界按Schema标明复用真实图片或提交一张新图，与上游实际采用的成品保持一致。"
+    )
+    return (
+        ROLE_DUTIES[role] + ROLE_QUALITY[role] + requirements
+        + "按本轮用户要求及context.adoptedHandoffArtifacts中已经读取的成果完成本岗交付。"
+        "真实上游来源用kind=artifact和实际nodeId，所选参考图片用kind=asset和真实素材标识，用户原话用kind=user_requirement和referenceId:null。"
+        "直接输出一个符合Schema的成果对象。核对最外层字段和数组闭合，仅输出此JSON对象。\nJSON Schema："
+        + json.dumps(schema, ensure_ascii=False)
+    )
+
+
+def native_agent_prompt(role: str, planning: bool, delivery_mode: str = "professional", catalog_version: str = "R1") -> str:
+    if catalog_version == "R8" and role == "media_producer" and not planning:
+        return (
+            "你是素材视频师。读取context.adoptedHandoff中的已采用分镜及真实开始帧与结束帧标识。"
+            "以write_artifact保存版本2的影像方案，每个镜头绑定实际storyboardNodeId、shotKey、firstFrameAssetId及lastFrameAssetId。"
+            "在sources引用上游分镜。videoPrompt逐秒写动作、运镜、连续性、声音要求和时长，时长与分镜一致。"
+            "本岗位交付运动要求和已采用图片的完整引用。每次只调用一个已注册函数并等待真实结果。"
+            "成果保存后按真实镜头逐个用submit_generation准备生产任务，平台会在实际生成前询问用户。"
+            "只有全部实际视频已完成，才提交complete_step。"
+        )
     phase = (
         "本次为规划阶段。依据本次消息已提供的项目、来源与上下文，通过唯一注册的submit_plan函数提交一个完整计划。"
         "参数仅包含plan；每步填写role、title、instruction、kind、dependsOn，最多8步。"
@@ -245,7 +340,7 @@ def native_agent_prompt(role: str, planning: bool, delivery_mode: str = "profess
     )
     return (
         f"你是OpenFMV互动游戏项目的{ROLE_TITLES[role]}。{_role_duties(role, delivery_mode)}\n{phase}\n"
-        + _delivery_rules(role, delivery_mode)
+        + _delivery_rules(role, delivery_mode, catalog_version)
         + "所有操作通过本次已注册的原生函数调用提交，每次只调用一个函数；自然语言说明中的操作尚未执行。"
         "执行阶段完整专业产物使用当前岗位的write_artifact；text_edit按明确授权使用write_script保存已有正文局部修订；tool_action依据真实授权工具结果交付；legacy按既有目标交付。"
         "用户创作目标决定授权范围。现有节点只可修改authorizedTargetIds，新产物可在当前场景创建独立文字节点；Agent控制节点不可修改。"

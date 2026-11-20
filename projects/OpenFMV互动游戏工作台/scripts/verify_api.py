@@ -2,8 +2,8 @@ import argparse
 import os
 import subprocess
 import sys
-import uuid
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 PRODUCT_ROOT = Path(__file__).resolve().parents[1]
@@ -15,15 +15,17 @@ def main() -> None:
     arguments = parser.parse_args()
     temporary = PRODUCT_ROOT / ".intermediate" / "tmp"
     temporary.mkdir(parents=True, exist_ok=True)
-    (PRODUCT_ROOT / ".intermediate" / "pytest").mkdir(parents=True, exist_ok=True)
+    runs = PRODUCT_ROOT / ".intermediate" / "pytest-runs"
+    runs.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
     environment.update(TMPDIR=str(temporary), XDG_CACHE_HOME=str(PRODUCT_ROOT / ".intermediate" / "cache"))
-    subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "tests", f"--basetemp={PRODUCT_ROOT / '.intermediate' / 'pytest' / uuid.uuid4().hex}"],
-        cwd=PRODUCT_ROOT / "backend",
-        env=environment,
-        check=True,
-    )
+    with TemporaryDirectory(dir=runs) as run:
+        subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "tests", f"--basetemp={run}"],
+            cwd=PRODUCT_ROOT / "backend",
+            env=environment,
+            check=True,
+        )
     if arguments.browser:
         subprocess.run(["node", "scripts/check-browser.mjs"], cwd=PRODUCT_ROOT, env=environment, check=True)
 

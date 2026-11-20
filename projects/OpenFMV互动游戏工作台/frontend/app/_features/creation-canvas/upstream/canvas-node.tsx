@@ -408,7 +408,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onViewImage?.(data);
                         return;
                     }
-                    if (data.type !== CanvasNodeType.Text) return;
+                    if (data.type !== CanvasNodeType.Text || data.metadata?.publicMaterialRole) return;
                     event.stopPropagation();
                     setIsEditingContent(true);
                 }}
@@ -588,7 +588,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
                       .map((text, index) => <ExpandedTextCard key={text.id} node={node} text={text} index={index} onSetPrimary={() => onSetBatchPrimary?.(text.id)} />)
                 : null}
             <div className="flex h-full w-full flex-col overflow-hidden rounded-3xl">
-                {isEditingContent ? (
+                {isEditingContent && !node.metadata?.publicMaterialRole ? (
                     <CanvasResourceMentionTextarea
                         data-testid="canvas-text"
                         aria-label="创作文字"
@@ -615,7 +615,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
                     <TextSlotStatus text={primaryText} />
                 ) : (
                     <div className="p-4 font-mono" style={{ color: theme.node.placeholder }}>
-                        {node.metadata?.pendingResult ? t("canvas.node.pendingResult") : t("canvas.node.editText")}
+                        {node.metadata?.publicMaterialRole ? '在岗位区域查看成果，通过“问问 AI”提出修改。' : node.metadata?.pendingResult ? t("canvas.node.pendingResult") : t("canvas.node.editText")}
                     </div>
                 )}
             </div>

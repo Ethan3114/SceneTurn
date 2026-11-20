@@ -9,6 +9,7 @@ from app.api.deps import current_user, get_db
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import Asset, User
+from app.services.canvas_delivery import public_project_envelope
 from app.services.media import asset_view, resolve_asset_path, save_upload
 from app.services.projects import iso_timestamp, lock_write, project_envelope, record_project_version, require_project
 
@@ -50,7 +51,7 @@ async def upload_asset(project_id: str, file: UploadFile = File(), user: User = 
     project.revision += 1
     project.updated_at = time.time()
     record_project_version(session, project)
-    result = {"asset": asset_view(asset), **project_envelope(session, project)}
+    result = {"asset": asset_view(asset), **public_project_envelope(session, user.id, project_envelope(session, project))}
     session.commit()
     return result
 

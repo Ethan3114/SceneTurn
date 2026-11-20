@@ -1,5 +1,8 @@
+from typing import Literal
+
 from pydantic import Field, field_validator
 
+from app.agent_schemas import RoleId, RunStatus
 from app.schemas import WireModel
 
 
@@ -19,6 +22,7 @@ class MaterialSend(WireModel):
     content: str = Field(min_length=1, max_length=12000)
     references: list[MaterialReference] = Field(default_factory=list, max_length=20)
     reference_asset_ids: list[str] = Field(default_factory=list, max_length=5)
+    intent: Literal["followup", "start"] | None = None
 
     @field_validator("reference_asset_ids")
     @classmethod
@@ -32,7 +36,7 @@ class MaterialSend(WireModel):
     def nonblank(cls, value):
         if not value.strip():
             raise ValueError("请填写素材需求")
-        return value.strip()
+        return value
 
 
 class MaterialSummary(WireModel):
@@ -44,12 +48,45 @@ class MaterialSummary(WireModel):
     updated_at: str
 
 
+class DirectorBriefView(WireModel):
+    objective: str
+    confirmed_requirements: list[str]
+    status_text: str | None = None
+
+
+class MaterialRunView(WireModel):
+    id: str
+    project_id: str
+    scene_id: str
+    workspace: Literal["materials"] = "materials"
+    role: RoleId
+    executor: Literal["platform"] = "platform"
+    goal: str
+    status: RunStatus
+    project_revision: int
+    current_revision: int
+    target_ids: list[str]
+    can_resume: bool
+    can_extend_limit: bool = False
+    retryable_unknown_call_id: str | None
+    limits: dict
+    plan: list[dict]
+    steps: list[dict]
+    usage: dict
+    error: dict | None
+
+
 class MaterialMessageView(WireModel):
     id: str
+    source: Literal["user", "automation"]
     content: str
     references: list[dict]
-    run: dict
+    run: MaterialRunView
     created_at: str
+    director_brief: DirectorBriefView | None = None
+    kind: Literal["production", "followup"] = "production"
+    reply: str | None = None
+    reference_assets: list[dict] = Field(default_factory=list)
 
 
 class MaterialView(MaterialSummary):
@@ -59,6 +96,9 @@ class MaterialView(MaterialSummary):
     capabilities: dict
     pending_review: dict | None = None
     selected_reference_assets: list[dict] = Field(default_factory=list)
+    director_brief: DirectorBriefView | None = None
+    active_run_id: str | None = None
+    can_start_production: bool = True
 
 
 class MaterialAnswer(WireModel):
@@ -87,4 +127,6 @@ def material_request_payload(body: MaterialSend | MaterialAnswer) -> dict:
     payload = body.model_dump(by_alias=True)
     if not body.reference_asset_ids:
         payload.pop("referenceAssetIds")
+    if isinstance(body, MaterialSend) and body.intent is None:
+        payload.pop("intent")
     return payload

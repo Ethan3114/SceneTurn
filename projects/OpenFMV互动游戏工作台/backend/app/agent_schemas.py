@@ -106,6 +106,32 @@ class PlanningDecision(ExecutionDecision):
     arguments: dict = Field(default_factory=dict, max_length=0)
 
 
+class MaterialDirectorBrief(WireModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    objective: str = Field(min_length=1, max_length=400)
+    confirmed_requirements: list[str] = Field(max_length=8)
+
+
+class MaterialDirectorQuestion(WireModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    question: str = Field(min_length=1, max_length=240)
+    suggested_answer: str = Field(max_length=240)
+
+
+class MaterialPlanningDecision(ExecutionDecision):
+    action: Literal["plan"]
+    director_brief: MaterialDirectorBrief
+    questions: list[MaterialDirectorQuestion] = Field(max_length=5)
+    tool: None = None
+    arguments: dict = Field(default_factory=dict, max_length=0)
+
+    @model_validator(mode="after")
+    def check_gate(self):
+        if bool(self.questions) == bool(self.plan):
+            raise ValueError("澄清问题和可执行计划必须分别提交")
+        return self
+
+
 class StepDecision(ExecutionDecision):
     action: Literal["tool", "complete"]
     plan: list[ExecutionPlanItem] = Field(default_factory=list, max_length=0)
@@ -193,7 +219,7 @@ class AgentRunView(WireModel):
     executor: Literal["platform", "codex"]
     delivery_mode: Literal["professional", "text_edit", "tool_action"] | None = None
     artifact_contract_version: str | None = None
-    tool_catalog_version: Literal["R1", "R2", "R3", "R4", "R5", "R6", "R7"] = "R1"
+    tool_catalog_version: Literal["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"] = "R1"
     goal: str
     status: RunStatus
     project_revision: int
@@ -209,6 +235,7 @@ class AgentRunView(WireModel):
     turn_id: str | None
     error: ErrorView | None
     can_resume: bool = False
+    can_extend_limit: bool = False
     retryable_unknown_call_id: str | None = None
     steps: list[StepView]
     calls: list[CallView]

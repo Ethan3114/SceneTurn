@@ -6,7 +6,7 @@ from jsonschema import Draft202012Validator
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.services.agent_provider import (
-    DEFAULT_AGENT_PROTOCOL, JSON_AGENT_PROTOCOL, THINKING_JSON_AGENT_PROTOCOL, NATIVE_AGENT_PROTOCOL,
+    DEFAULT_AGENT_PROTOCOL, JSON_AGENT_PROTOCOL, MATERIAL_JSON_AGENT_PROTOCOL, THINKING_JSON_AGENT_PROTOCOL, NATIVE_AGENT_PROTOCOL,
     SUPPORTED_JSON_PROTOCOLS, SUPPORTED_NATIVE_PROTOCOLS, SUPPORTED_PLATFORM_PROTOCOLS,
     agent_business_tools, agent_request_body, agent_response_schema, agent_tools,
     complete_agent, is_json_protocol, protocol_kind, provider_endpoint,
@@ -75,7 +75,8 @@ def test_protocol_catalog_preserves_all_native_versions():
     assert NATIVE_AGENT_PROTOCOL == "native-tools-v3-strict-ref"
     assert SUPPORTED_NATIVE_PROTOCOLS == {"native-tools-v1", "native-tools-v2-strict", "native-tools-v3-strict-ref", "native-tools-v4-materials-strict"}
     assert JSON_AGENT_PROTOCOL == "json-tools-v4"
-    assert SUPPORTED_JSON_PROTOCOLS == {JSON_AGENT_PROTOCOL, THINKING_JSON_AGENT_PROTOCOL}
+    assert MATERIAL_JSON_AGENT_PROTOCOL == "json-tools-v6-materials"
+    assert SUPPORTED_JSON_PROTOCOLS == {JSON_AGENT_PROTOCOL, THINKING_JSON_AGENT_PROTOCOL, MATERIAL_JSON_AGENT_PROTOCOL}
     assert SUPPORTED_PLATFORM_PROTOCOLS == SUPPORTED_NATIVE_PROTOCOLS | SUPPORTED_JSON_PROTOCOLS
     assert agent_response_schema(True, JSON_AGENT_PROTOCOL) == agent_response_schema(True, THINKING_JSON_AGENT_PROTOCOL)
     assert agent_response_schema(False, JSON_AGENT_PROTOCOL) == agent_response_schema(False, THINKING_JSON_AGENT_PROTOCOL)

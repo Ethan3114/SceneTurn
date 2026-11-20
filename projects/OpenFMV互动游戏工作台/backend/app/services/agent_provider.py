@@ -11,14 +11,15 @@ from referencing import Registry
 from referencing.exceptions import Unresolvable
 from referencing.jsonschema import DRAFT202012
 
-from app.agent_schemas import ExecutionPlanItem, PlanningDecision, StepDecision
+from app.agent_schemas import ExecutionPlanItem, MaterialDirectorBrief, MaterialDirectorQuestion, MaterialPlanningDecision, PlanningDecision, StepDecision
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.creative_artifacts import ArtifactSource, validate_artifact
+from app.creative_artifacts import ArtifactSource, artifact_model, validate_artifact
 from app.schemas import WireModel
-from app.services.text_provider import ENDPOINT, STRICT_ENDPOINT, MODEL, PRO_MODEL, Completion, Message, TextProviderFailure, complete_chat_request, model_aliases
+from app.services.text_provider import ENDPOINT, RESPONSES_ENDPOINT, STRICT_ENDPOINT, MODEL, PRO_MODEL, Completion, Message, TextProviderFailure, complete_chat_request, complete_structured_request, model_aliases
 from app.tools.project_tools import (
-    LEGACY_TOOL_CATALOG_VERSION, MATERIAL_TOOL_CATALOG_VERSION, MATERIAL_CATALOG_VERSIONS, ROLE_TOOLS, SCHEMAS, SUPPORTED_TOOL_CATALOG_VERSIONS,
+    LEGACY_TOOL_CATALOG_VERSION, MATERIAL_SOP_ROLE_TOOLS, MATERIAL_SOP_TOOL_CATALOG_VERSION, MATERIAL_TOOL_CATALOG_VERSION,
+    MATERIAL_CATALOG_VERSIONS, ROLE_TOOLS, SCHEMAS, SUPPORTED_TOOL_CATALOG_VERSIONS,
     TOOL_CATALOG_VERSION, ArtifactPatch, PatchArtifactArguments, allowed_tools, tool_catalog, tool_schema,
 )
 
@@ -27,12 +28,16 @@ NATIVE_AGENT_PROTOCOL = "native-tools-v3-strict-ref"
 MATERIAL_NATIVE_AGENT_PROTOCOL = "native-tools-v4-materials-strict"
 JSON_AGENT_PROTOCOL = "json-tools-v4"
 THINKING_JSON_AGENT_PROTOCOL = "json-tools-v5-thinking"
-SUPPORTED_JSON_PROTOCOLS = frozenset({JSON_AGENT_PROTOCOL, THINKING_JSON_AGENT_PROTOCOL})
+MATERIAL_JSON_AGENT_PROTOCOL = "json-tools-v6-materials"
+MATERIAL_STRUCTURED_RECOVERY_ROLES = frozenset({"character_designer", "storyboarder"})
+THINKING_JSON_PROTOCOLS = frozenset({THINKING_JSON_AGENT_PROTOCOL, MATERIAL_JSON_AGENT_PROTOCOL})
+SUPPORTED_JSON_PROTOCOLS = frozenset({JSON_AGENT_PROTOCOL, *THINKING_JSON_PROTOCOLS})
 DEFAULT_AGENT_PROTOCOL = THINKING_JSON_AGENT_PROTOCOL
 SUPPORTED_NATIVE_PROTOCOLS = frozenset({"native-tools-v1", "native-tools-v2-strict", NATIVE_AGENT_PROTOCOL, MATERIAL_NATIVE_AGENT_PROTOCOL})
 SUPPORTED_PLATFORM_PROTOCOLS = SUPPORTED_NATIVE_PROTOCOLS | SUPPORTED_JSON_PROTOCOLS
 SUPPORTED_AGENT_PROTOCOLS = SUPPORTED_PLATFORM_PROTOCOLS
-REQUEST_ENDPOINT = {"native-tools-v1": ENDPOINT, "native-tools-v2-strict": STRICT_ENDPOINT, NATIVE_AGENT_PROTOCOL: STRICT_ENDPOINT, MATERIAL_NATIVE_AGENT_PROTOCOL: STRICT_ENDPOINT, JSON_AGENT_PROTOCOL: ENDPOINT, THINKING_JSON_AGENT_PROTOCOL: ENDPOINT}
+REQUEST_ENDPOINT = {"native-tools-v1": ENDPOINT, "native-tools-v2-strict": STRICT_ENDPOINT, NATIVE_AGENT_PROTOCOL: STRICT_ENDPOINT,
+    MATERIAL_NATIVE_AGENT_PROTOCOL: STRICT_ENDPOINT, **{protocol: ENDPOINT for protocol in SUPPORTED_JSON_PROTOCOLS}}
 FunctionName = Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")]
 CallId = Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=r"^\S+$")]
 
@@ -58,7 +63,17 @@ class CompleteStepArguments(NativeModel):
     summary: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=12000)]
 
 
+class SubmitMaterialPlanArguments(SubmitPlanArguments):
+    plan: list[ExecutionPlanItem] = Field(max_length=8)
+    director_brief: MaterialDirectorBrief
+    questions: list[MaterialDirectorQuestion] = Field(max_length=5)
+
+
 class JsonPlanningDecision(SubmitPlanArguments):
+    action: Literal["plan"]
+
+
+class JsonMaterialPlanningDecision(SubmitMaterialPlanArguments):
     action: Literal["plan"]
 
 
@@ -138,16 +153,29 @@ def is_json_protocol(protocol: str = DEFAULT_AGENT_PROTOCOL) -> bool:
     return protocol_kind(protocol) == "json"
 
 
-def provider_endpoint(protocol: str = DEFAULT_AGENT_PROTOCOL) -> str:
+def provider_endpoint(protocol: str = DEFAULT_AGENT_PROTOCOL, *, structured_response: bool = False) -> str:
     protocol_kind(protocol)
+    if structured_response:
+        if protocol != MATERIAL_JSON_AGENT_PROTOCOL:
+            raise AppError(422, "AGENT_STRUCTURED_OUTPUT_INVALID", "结构化产物请求需要当前素材协议")
+        return RESPONSES_ENDPOINT
     return REQUEST_ENDPOINT[protocol]
 
 
 def resolve_tool_catalog_version(protocol: str = DEFAULT_AGENT_PROTOCOL, catalog_version: str | None = None) -> str:
     kind = protocol_kind(protocol)
-    version = catalog_version if catalog_version is not None else MATERIAL_TOOL_CATALOG_VERSION if protocol == MATERIAL_NATIVE_AGENT_PROTOCOL else TOOL_CATALOG_VERSION if kind == "json" else LEGACY_TOOL_CATALOG_VERSION
+    if catalog_version is not None:
+        version = catalog_version
+    elif protocol == MATERIAL_JSON_AGENT_PROTOCOL:
+        version = MATERIAL_SOP_TOOL_CATALOG_VERSION
+    elif protocol == MATERIAL_NATIVE_AGENT_PROTOCOL:
+        version = MATERIAL_TOOL_CATALOG_VERSION
+    else:
+        version = TOOL_CATALOG_VERSION if kind == "json" else LEGACY_TOOL_CATALOG_VERSION
     if version not in SUPPORTED_TOOL_CATALOG_VERSIONS:
         raise AppError(422, "AGENT_TOOL_CATALOG_INVALID", "工具目录版本不可用")
+    if protocol == MATERIAL_JSON_AGENT_PROTOCOL and version != MATERIAL_SOP_TOOL_CATALOG_VERSION:
+        raise AppError(422, "AGENT_TOOL_CATALOG_PROTOCOL_INVALID", "素材JSON协议需要当前素材工具目录")
     if protocol == MATERIAL_NATIVE_AGENT_PROTOCOL and version not in MATERIAL_CATALOG_VERSIONS:
         raise AppError(422, "AGENT_TOOL_CATALOG_PROTOCOL_INVALID", "素材严格协议需要有效的素材工具目录")
     if kind == "native" and protocol != MATERIAL_NATIVE_AGENT_PROTOCOL and version != LEGACY_TOOL_CATALOG_VERSION:
@@ -157,7 +185,10 @@ def resolve_tool_catalog_version(protocol: str = DEFAULT_AGENT_PROTOCOL, catalog
 
 def agent_response_schema(planning: bool, protocol: str = DEFAULT_AGENT_PROTOCOL) -> dict:
     if is_json_protocol(protocol):
-        return JsonPlanningDecision.model_json_schema(by_alias=True) if planning else JSON_STEP_ADAPTER.json_schema(by_alias=True)
+        if not planning:
+            return JSON_STEP_ADAPTER.json_schema(by_alias=True)
+        schema = JsonMaterialPlanningDecision if protocol == MATERIAL_JSON_AGENT_PROTOCOL else JsonPlanningDecision
+        return schema.model_json_schema(by_alias=True)
     return (PlanningDecision if planning else StepDecision).model_json_schema(by_alias=True)
 
 
@@ -305,7 +336,10 @@ def agent_business_tools(role: str, planning: bool, catalog_version: str = TOOL_
         raise AppError(422, "AGENT_NATIVE_ROLE_INVALID", "当前原生工具岗位无效")
     allowed_tools(role, catalog_version)
     if planning:
-        catalog = [{"name": "submit_plan", "description": "提交本次任务的唯一完整执行计划；只填写plan，按岗位与交付类型列出必要步骤、kind和真实前置依赖。", "inputSchema": SubmitPlanArguments.model_json_schema(by_alias=True)}]
+        if catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+            catalog = [{"name": "submit_plan", "description": "提交总编面向创作者的简报及本轮安排。需要创作者决定时先提交questions，plan为空；需求明确后questions为空，填写必要岗位和前置依赖。", "inputSchema": SubmitMaterialPlanArguments.model_json_schema(by_alias=True)}]
+        else:
+            catalog = [{"name": "submit_plan", "description": "提交本次任务的唯一完整执行计划；只填写plan，按岗位与交付类型列出必要步骤、kind和真实前置依赖。", "inputSchema": SubmitPlanArguments.model_json_schema(by_alias=True)}]
     else:
         catalog = [*tool_catalog(role, catalog_version), {"name": "complete_step", "description": "当前步骤所需实际写入或工具操作完成并核实后提交完成说明；规划、只读资料或未执行的建议不能作为实际交付。", "inputSchema": CompleteStepArguments.model_json_schema(by_alias=True)}]
     return [{"type": "function", "function": {"name": tool["name"], "description": tool["description"], "parameters": tool["inputSchema"]}} for tool in catalog]
@@ -322,11 +356,15 @@ def agent_tools(role: str, planning: bool, protocol: str = DEFAULT_AGENT_PROTOCO
     tools = agent_business_tools(role, planning, version)
     if protocol == "native-tools-v1":
         return tools
+    if protocol == MATERIAL_NATIVE_AGENT_PROTOCOL and version == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+        for tool in tools:
+            if tool["function"]["name"] == "patch_artifact":
+                tool["function"]["parameters"] = PatchArtifactArguments.model_json_schema(by_alias=True)
     return [{"type": "function", "function": {**tool["function"], "parameters": strict_schema(tool["function"]["parameters"], protocol), "strict": True}} for tool in tools]
 
 
-def agent_request_body(messages: list[dict], max_tokens: int, tools: list[dict], planning: bool, settings: Settings, protocol: str = DEFAULT_AGENT_PROTOCOL, model: str = MODEL, catalog_version: str | None = None) -> dict:
-    provider_endpoint(protocol)
+def agent_request_body(messages: list[dict], max_tokens: int, tools: list[dict], planning: bool, settings: Settings, protocol: str = DEFAULT_AGENT_PROTOCOL, model: str = MODEL, catalog_version: str | None = None, *, structured_response_schema: dict | None = None) -> dict:
+    provider_endpoint(protocol, structured_response=structured_response_schema is not None)
     model_aliases(model)
     version = resolve_tool_catalog_version(protocol, catalog_version)
     if type(max_tokens) is not int or max_tokens < 64 or max_tokens > settings.text_max_output_tokens:
@@ -338,9 +376,21 @@ def agent_request_body(messages: list[dict], max_tokens: int, tools: list[dict],
             raise AppError(422, "AGENT_JSON_TOOLS_INVALID", "JSON角色协议不发送原生函数定义")
         if not any(isinstance(message.get("content"), str) and "json" in message["content"].lower() for message in messages):
             raise AppError(422, "AGENT_JSON_MESSAGES_INVALID", "JSON角色协议的实际提示词必须明确要求JSON输出")
+        if structured_response_schema is not None:
+            if planning or model != MODEL or structured_response_schema.get("type") != "object":
+                raise AppError(422, "AGENT_STRUCTURED_OUTPUT_INVALID", "结构化产物请求需要当前执行步骤和对象结构")
+            if any(message.get("role") not in {"system", "user", "assistant"} or not isinstance(message.get("content"), str) for message in messages):
+                raise AppError(422, "AGENT_JSON_MESSAGES_INVALID", "结构化产物请求需要明确的文本消息")
+            try:
+                Draft202012Validator.check_schema(structured_response_schema)
+            except SchemaError as error:
+                raise AppError(422, "AGENT_STRUCTURED_OUTPUT_INVALID", "结构化产物定义未通过JSON Schema校验") from error
+            return {"model": model, "input": [{"role": message["role"], "content": message["content"]} for message in messages],
+                    "reasoning": {"effort": "high"}, "tool_choice": "none", "stream": False, "max_output_tokens": max_tokens,
+                    "text": {"format": {"type": "json_schema", "name": "material_artifact", "schema": structured_response_schema}}}
         body = {"model": model, "messages": messages, "thinking": {"type": "disabled"}, "temperature": 0.4,
                 "response_format": {"type": "json_object"}, "stream": False, "max_tokens": max_tokens, "tool_choice": "none"}
-        if protocol == THINKING_JSON_AGENT_PROTOCOL:
+        if protocol in THINKING_JSON_PROTOCOLS:
             body["thinking"] = {"type": "enabled"}
             del body["temperature"]
             body["reasoning_effort"] = "high"
@@ -359,7 +409,8 @@ def agent_request_body(messages: list[dict], max_tokens: int, tools: list[dict],
         raise AppError(422, "AGENT_NATIVE_TOOLS_INVALID", "原生角色工具名称必须有效且唯一")
     if planning and names != ["submit_plan"]:
         raise AppError(422, "AGENT_NATIVE_TOOLS_INVALID", "规划阶段只允许submit_plan函数")
-    if not planning and ("complete_step" not in names or any(name not in allowed_tools("director", version) and name != "complete_step" for name in names)):
+    registered = set().union(*MATERIAL_SOP_ROLE_TOOLS.values()) if version == MATERIAL_SOP_TOOL_CATALOG_VERSION else allowed_tools("director", version)
+    if not planning and ("complete_step" not in names or not set(names) <= registered | {"complete_step"}):
         raise AppError(422, "AGENT_NATIVE_TOOLS_INVALID", "执行阶段仅允许已注册的项目函数与complete_step")
     return {"model": model, "messages": messages, "thinking": {"type": "disabled"}, "temperature": 0.4, "stream": False,
             "max_tokens": max_tokens, "tools": tools,
@@ -375,11 +426,14 @@ async def _agent_request_deadline(seconds: float):
         raise TextProviderFailure("TEXT_SUBMISSION_UNKNOWN", "文本请求总时限已到，费用预留继续保留，请核实原请求，系统不会自动重发", True) from error
 
 
-async def complete_agent(api_key: str, messages: list[dict], max_tokens: int, tools: list[dict], planning: bool, settings: Settings, protocol: str = DEFAULT_AGENT_PROTOCOL, model: str = MODEL, catalog_version: str | None = None) -> Completion:
+async def complete_agent(api_key: str, messages: list[dict], max_tokens: int, tools: list[dict], planning: bool, settings: Settings, protocol: str = DEFAULT_AGENT_PROTOCOL, model: str = MODEL, catalog_version: str | None = None, *, structured_response_schema: dict | None = None) -> Completion:
     if not api_key.strip():
         raise AppError(503, "TEXT_NOT_CONFIGURED", "平台文字配置尚未完成")
-    body = agent_request_body(messages, max_tokens, tools, planning, settings, protocol, model, catalog_version)
+    body = agent_request_body(messages, max_tokens, tools, planning, settings, protocol, model, catalog_version,
+        structured_response_schema=structured_response_schema)
     async with _agent_request_deadline(settings.text_timeout):
+        if structured_response_schema is not None:
+            return await complete_structured_request(api_key, body, settings)
         return await complete_chat_request(api_key, body, settings, endpoint=provider_endpoint(protocol))
 
 
@@ -391,7 +445,7 @@ def json_syntax_details(error: json.JSONDecodeError) -> dict:
             "excerpt": error.doc[start:start + 160]}
 
 
-def decode_json_agent_message(message: dict, planning: bool, role: str, catalog_version: str = TOOL_CATALOG_VERSION) -> tuple[dict, None]:
+def decode_json_agent_message(message: dict, planning: bool, role: str, catalog_version: str = TOOL_CATALOG_VERSION, *, scene_artifact_only: bool = False, material_artifact_only: bool = False) -> tuple[dict, None]:
     if role not in ROLE_TOOLS:
         raise AppError(422, "AGENT_NATIVE_ROLE_INVALID", "当前角色岗位无效")
     allowed = allowed_tools(role, catalog_version)
@@ -408,12 +462,21 @@ def decode_json_agent_message(message: dict, planning: bool, role: str, catalog_
         json.dumps(values, allow_nan=False)
     except ValueError as error:
         raise AppError(422, "AGENT_JSON_ARGUMENTS_INVALID", "JSON角色响应未通过标准JSON语法校验") from error
+    if scene_artifact_only or material_artifact_only:
+        roles = {"scene_designer"} if scene_artifact_only else MATERIAL_STRUCTURED_RECOVERY_ROLES
+        if planning or role not in roles or catalog_version != MATERIAL_SOP_TOOL_CATALOG_VERSION:
+            raise AppError(422, "AGENT_JSON_FUNCTION_FORBIDDEN", "直接结构化成果仅用于已授权的素材制作岗位")
+        values = {"action": "tool", "tool": "write_artifact", "arguments": {"artifact": values}}
     try:
         if planning:
-            compact = JsonPlanningDecision.model_validate(values, strict=True)
+            schema = JsonMaterialPlanningDecision if catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION else JsonPlanningDecision
+            compact = schema.model_validate(values, strict=True)
             if role != "director" and any(step.role != role for step in compact.plan):
                 raise AppError(422, "AGENT_JSON_FUNCTION_FORBIDDEN", "本岗位计划不能安排其他岗位的工作")
-            decision = PlanningDecision(action="plan", plan=compact.plan)
+            if isinstance(compact, JsonMaterialPlanningDecision):
+                decision = MaterialPlanningDecision(action="plan", plan=compact.plan, director_brief=compact.director_brief, questions=compact.questions)
+            else:
+                decision = PlanningDecision(action="plan", plan=compact.plan)
         else:
             compact = JSON_STEP_ADAPTER.validate_python(values, strict=True)
             if isinstance(compact, JsonCompleteDecision):
@@ -424,18 +487,48 @@ def decode_json_agent_message(message: dict, planning: bool, role: str, catalog_
                 arguments = tool_schema(compact.tool, catalog_version).model_validate(compact.arguments, strict=True)
                 normalized = arguments.model_dump(mode="json", by_alias=True, exclude_unset=True)
                 if compact.tool == "write_artifact":
-                    normalized["artifact"] = validate_artifact(role, arguments.artifact)
+                    if catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+                        contract = artifact_model(role, reusable_frames=True, material_video_plan=True)
+                        normalized["artifact"] = contract.model_validate(arguments.artifact, strict=True).model_dump(mode="json", by_alias=True)
+                    else:
+                        normalized["artifact"] = validate_artifact(role, arguments.artifact)
                 decision = StepDecision(action="tool", tool=compact.tool, arguments=normalized)
     except ValidationError as error:
         raise AppError(422, "AGENT_JSON_ARGUMENTS_INVALID", "JSON角色决策未通过当前阶段、岗位及工具参数的严格结构或语义校验") from error
     return decision.model_dump(mode="json", by_alias=True), None
 
 
-def decode_platform_message(message: dict, planning: bool, role: str, protocol: str = DEFAULT_AGENT_PROTOCOL, catalog_version: str | None = None) -> tuple[dict, str | None]:
+def decode_platform_message(message: dict, planning: bool, role: str, protocol: str = DEFAULT_AGENT_PROTOCOL, catalog_version: str | None = None, *, scene_artifact_only: bool = False, material_artifact_only: bool = False) -> tuple[dict, str | None]:
     version = resolve_tool_catalog_version(protocol, catalog_version)
+    if (scene_artifact_only or material_artifact_only) and protocol != MATERIAL_JSON_AGENT_PROTOCOL:
+        raise AppError(422, "AGENT_JSON_FUNCTION_FORBIDDEN", "直接结构化成果只适用于素材JSON响应")
     if is_json_protocol(protocol):
-        return decode_json_agent_message(message, planning, role, version)
+        return decode_json_agent_message(message, planning, role, version, scene_artifact_only=scene_artifact_only,
+            material_artifact_only=material_artifact_only)
     return decode_agent_message(message, planning, role, version, protocol=protocol)
+
+
+def decode_structured_scene_closure(message: dict) -> tuple[dict, str] | None:
+    content = message.get("content")
+    if not isinstance(content, str):
+        return None
+    trimmed = content.rstrip()
+    if not trimmed.endswith("}]}"):
+        return None
+    try:
+        json.loads(trimmed)
+    except json.JSONDecodeError as error:
+        if error.pos != len(trimmed) or error.msg != "Expecting ',' delimiter":
+            return None
+    else:
+        return None
+    suffix = "]}"
+    try:
+        decision, _ = decode_platform_message({**message, "content": content + suffix}, False, "scene_designer",
+            MATERIAL_JSON_AGENT_PROTOCOL, scene_artifact_only=True)
+    except AppError:
+        return None
+    return decision, suffix
 
 
 def decode_agent_message(message: dict, planning: bool, role: str, catalog_version: str = LEGACY_TOOL_CATALOG_VERSION, *, protocol: str = "native-tools-v1") -> tuple[dict, str]:
@@ -460,15 +553,22 @@ def decode_agent_message(message: dict, planning: bool, role: str, catalog_versi
         raise AppError(422, "AGENT_NATIVE_ARGUMENTS_INVALID", "原生角色函数参数必须是完整有效的JSON") from error
     try:
         if planning:
-            body = SubmitPlanArguments.model_validate(arguments, strict=True)
+            if version == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+                body = SubmitMaterialPlanArguments.model_validate(arguments, strict=True)
+            else:
+                body = SubmitPlanArguments.model_validate(arguments, strict=True)
             if role != "director" and any(step.role != role for step in body.plan):
                 raise AppError(422, "AGENT_NATIVE_FUNCTION_FORBIDDEN", "本岗位计划不能安排其他岗位的工作")
-            decision = PlanningDecision(action="plan", plan=body.plan)
+            if isinstance(body, SubmitMaterialPlanArguments):
+                decision = MaterialPlanningDecision(action="plan", **body.model_dump())
+            else:
+                decision = PlanningDecision(action="plan", plan=body.plan)
         elif name == "complete_step":
             body = CompleteStepArguments.model_validate(arguments, strict=True)
             decision = StepDecision(action="complete", summary=body.summary)
         else:
-            body = tool_schema(name, version).model_validate(arguments, strict=True)
+            schema = PatchArtifactArguments if name == "patch_artifact" and version == MATERIAL_SOP_TOOL_CATALOG_VERSION else tool_schema(name, version)
+            body = schema.model_validate(arguments, strict=True)
             values = body.model_dump(mode="json", by_alias=True, exclude_unset=True)
             if name == "write_artifact":
                 values["artifact"] = validate_artifact(role, body.artifact)

@@ -83,20 +83,21 @@ function projectCanvasNode(node: CanvasNodeData, tasks: GenerationView[]): Canva
   return { ...node, metadata: { ...node.metadata, ...media, status: ['queued', 'submitting', 'processing', 'downloading'].includes(task.status) ? 'loading' : 'idle' } };
 }
 
+function canResumeVideo(task: GenerationView) {
+  return (task.canResume ?? Boolean(task.remoteTaskId)) && ['query_interrupted', 'processing', 'downloading', 'submission_unknown'].includes(task.status);
+}
+
 export interface MaterialCanvasHandle { save: () => Promise<void> }
 
-const publicScript = z.object({ plot: z.string(), scenes: z.array(z.object({ heading: z.string(), action: z.string(), dialogues: z.array(z.object({ speaker: z.string(), line: z.string() })) })) });
+const legacyScript = z.object({ plot: z.string(), scenes: z.array(z.object({ heading: z.string(), action: z.string(), dialogues: z.array(z.object({ speaker: z.string(), line: z.string() })) })) });
 
-function materialDisplayNode(node: CanvasNodeData): CanvasNodeData {
-  const professional = node.metadata?.creativeArtifact;
-  if (!professional || typeof professional !== 'object') return node;
-  const role = z.object({ role: z.string() }).parse(professional).role;
-  let content = '在岗位区域查看成果，通过“问问 AI”提出修改。';
-  if (role === 'writer') {
-    const script = publicScript.parse(professional);
-    content = [script.plot, ...script.scenes.flatMap((scene) => [scene.heading, scene.action, ...scene.dialogues.map((line) => `${line.speaker}：${line.line}`)])].join('\n\n');
-  }
-  return { ...node, metadata: { ...node.metadata, content, texts: [], primaryTextId: undefined } };
+function projectLegacyMaterialNode(node: CanvasNodeData): CanvasNodeData {
+  const artifact = node.metadata?.creativeArtifact;
+  if (node.metadata?.publicMaterialRole || typeof artifact?.role !== 'string') return node;
+  const role = artifact.role;
+  const script = role === 'writer' ? legacyScript.parse(artifact) : undefined;
+  const content = script ? [script.plot, ...script.scenes.flatMap((scene) => [scene.heading, scene.action, ...scene.dialogues.map((line) => `${line.speaker}：${line.line}`)])].join('\n\n') : '';
+  return { ...node, metadata: { ...node.metadata, publicMaterialRole: role, content, texts: [], primaryTextId: undefined } };
 }
 
 export default function StudioPage({ projectId, initialSceneId, embedded = false, saveRef }: { projectId: string; initialSceneId?: string; embedded?: boolean; saveRef?: React.Ref<MaterialCanvasHandle> }) {
@@ -490,7 +491,10 @@ export default function StudioPage({ projectId, initialSceneId, embedded = false
   }
 
   const sceneTasks = useMemo(() => tasks.filter((task) => task.sceneId === sceneId), [tasks, sceneId]);
-  const displayNodes = canvas.nodes.filter((node) => node.metadata?.agentWorkspace !== 'project').map((node) => { const projected = projectCanvasNode(node, sceneTasks); return embedded ? materialDisplayNode(projected) : projected; });
+  const displayNodes = canvas.nodes.filter((node) => node.metadata?.agentWorkspace !== 'project').map((node) => {
+    const projected = projectCanvasNode(node, sceneTasks);
+    return embedded ? projectLegacyMaterialNode(projected) : projected;
+  });
   const scenes = envelope?.project.graphData.nodes.filter((node) => node.type === 'scene') || [];
   const agentBranches = useMemo(() => upstreamBranchEdges(envelope?.project.graphData.edges || [], sceneId), [envelope?.project.graphData.edges, sceneId]);
   const sceneTitle = (id: string) => { const scene = scenes.find((item) => item.id === id); return scene && 'title' in scene.data ? scene.data.title || '未命名场景' : '剧情场景'; };
@@ -534,10 +538,10 @@ export default function StudioPage({ projectId, initialSceneId, embedded = false
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', finish);
   };
   const regenerate = (id: string) => { const source = canvasRef.current.nodes.find((node) => node.id === id); if (source?.type === CanvasNodeType.Config) void generateFromConfig(id); else void requestQuote(id); };
-  const retryNode = (node: CanvasNodeData) => { const task = sceneTasks.find((item) => item.outputNodeId === node.id || item.sourceNodeId === node.id); if (task?.remoteTaskId && ['query_interrupted', 'processing', 'downloading', 'submission_unknown'].includes(task.status)) void resume(task); else if (task?.status === 'failed') regenerate(task.sourceNodeId); else if (!task && (node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Text)) createConfigForNode(node); };
+  const retryNode = (node: CanvasNodeData) => { const task = sceneTasks.find((item) => item.outputNodeId === node.id || item.sourceNodeId === node.id); if (task && canResumeVideo(task)) void resume(task); else if (task?.status === 'failed' && !task.material) regenerate(task.sourceNodeId); else if (!task && (node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Text)) createConfigForNode(node); };
   const renderNodePanel = (node: CanvasNodeData) => {
-    if (embedded && node.metadata?.creativeArtifact) return <p>在“问问 AI”中选择成果并提出修改。</p>;
-    const nodeTasks = sceneTasks.filter((task) => task.sourceNodeId === node.id || task.outputNodeId === node.id);
+    if (node.metadata?.publicMaterialRole) return <p>在“问问 AI”中选择成果并提出修改。</p>;
+    const nodeTasks = sceneTasks.filter((task) => !task.material && (task.sourceNodeId === node.id || task.outputNodeId === node.id));
     const nodeTextTasks = textTasks.filter((task) => task.sceneId === sceneId && (task.sourceNodeId === node.id || task.outputNodeId === node.id));
     return <div data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
       {[CanvasNodeType.Text, CanvasNodeType.Video].includes(node.type as CanvasNodeType) && <button data-testid="generation-create-config" onClick={() => createConfigForNode(node)}>编辑生成配置</button>}
@@ -550,12 +554,12 @@ export default function StudioPage({ projectId, initialSceneId, embedded = false
   function duplicateSelection() {
     const current = canvasRef.current;
     const ids = new Set([...selectedIds, ...collectGroupMemberNodes(selectedIds, current.nodes).map((node) => node.id)]);
-    const originals = current.nodes.filter((node) => ids.has(node.id)).map((node) => projectCanvasNode(node, sceneTasks));
+    const originals = displayNodes.filter((node) => ids.has(node.id));
     const idMap = new Map(originals.map((node) => [node.id, operationId()]));
     const remapReferences = (value?: string) => value?.replace(/@\[node:([^\]]+)\]/g, (reference, id: string) => idMap.has(id) ? `@[node:${idMap.get(id)}]` : reference);
     const copies = originals.map((node): CanvasNodeData => ({
       ...structuredClone(node), id: idMap.get(node.id)!, title: `${node.title} 副本`, position: { x: node.position.x + 36, y: node.position.y + 36 },
-      metadata: { ...structuredClone(node.metadata), composerContent: remapReferences(node.metadata?.composerContent), prompt: remapReferences(node.metadata?.prompt), agentGoal: remapReferences(node.metadata?.agentGoal), agentTargetIds: node.metadata?.agentTargetIds?.map((id) => idMap.get(id) || id), groupId: node.metadata?.groupId ? idMap.get(node.metadata.groupId) : undefined, outputNodeId: node.metadata?.outputNodeId ? idMap.get(node.metadata.outputNodeId) : undefined, status: node.metadata?.storageKey || node.metadata?.content ? 'success' : 'idle', pendingResult: false, textGenerationId: undefined, videoTaskId: undefined, videoTaskProvider: undefined, errorDetails: undefined },
+      metadata: { ...structuredClone(node.metadata), publicMaterialRole: undefined, creativeArtifact: undefined, composerContent: remapReferences(node.metadata?.composerContent), prompt: remapReferences(node.metadata?.prompt), agentGoal: remapReferences(node.metadata?.agentGoal), agentTargetIds: node.metadata?.agentTargetIds?.map((id) => idMap.get(id) || id), groupId: node.metadata?.groupId ? idMap.get(node.metadata.groupId) : undefined, outputNodeId: node.metadata?.outputNodeId ? idMap.get(node.metadata.outputNodeId) : undefined, status: node.metadata?.storageKey || node.metadata?.content ? 'success' : 'idle', pendingResult: false, textGenerationId: undefined, videoTaskId: undefined, videoTaskProvider: undefined, errorDetails: undefined },
     }));
     const connections = current.connections.filter((edge) => idMap.has(edge.toNodeId)).map((edge) => ({ ...edge, id: operationId(), fromNodeId: idMap.get(edge.fromNodeId) || edge.fromNodeId, toNodeId: idMap.get(edge.toNodeId)! }));
     changeCanvas((value) => ({ ...value, nodes: [...value.nodes, ...copies], connections: [...value.connections, ...connections] }));
@@ -603,7 +607,7 @@ export default function StudioPage({ projectId, initialSceneId, embedded = false
       beforeRequest={async () => { if (dirtyRef.current) return saveCanvas(); const current = envelopeRef.current; if (!current) throw new Error('请先读取当前项目。'); return current.revision; }}
       refreshProject={async () => { await refreshSavedText(sceneId); }} onFocusSource={(id) => { if (canvasRef.current.nodes.some((item) => item.id === id)) focusNode(id); else if (scenes.some((item) => item.id === id)) void selectScene(id); }} />;
     const task = sceneTasks.find((item) => item.outputNodeId === node.id || (!item.outputNodeId && item.sourceNodeId === node.id && node.type === CanvasNodeType.Video));
-    const retryable = task ? task.status === 'failed' || Boolean(task.remoteTaskId && ['query_interrupted', 'processing', 'downloading', 'submission_unknown'].includes(task.status)) : node.type === CanvasNodeType.Video && Boolean(rawPrompt(node));
+    const retryable = task ? (task.status === 'failed' && !task.material) || canResumeVideo(task) : node.type === CanvasNodeType.Video && Boolean(rawPrompt(node));
     const referenceState = !referencePickerId ? undefined : referencePickerId === node.id ? 'target' : isCanvasReferenceNode(node, displayNodes) && !canvas.connections.some((edge) => edge.fromNodeId === node.id && edge.toNodeId === referencePickerId) ? 'available' : 'disabled';
     const panelWidth = Math.max(240, Math.min(600, canvasSize.width - 32));
     const nodeCenter = canvas.viewport.x + (node.position.x + node.width / 2) * canvas.viewport.k;
@@ -623,7 +627,7 @@ export default function StudioPage({ projectId, initialSceneId, embedded = false
       onMouseDown={nodeMouseDown} onSelectCapture={nodeSelectCapture} onDelete={(id) => removeNodes([id])} deleteDisabled={busy || loadingCanvas} onHoverStart={setHoveredId} onHoverEnd={(id) => setHoveredId((current) => current === id ? null : current)}
       onConnectStart={(event, nodeId, handleType) => { event.preventDefault(); event.stopPropagation(); setConnection({ nodeId, handleType }); setMouseWorld(screenToCanvas(event.clientX, event.clientY)); }}
       onResizeStart={() => setResizing(true)} onResize={(id, width, height, position) => changeNode(id, { width, height, ...(position ? { position } : {}) })} onResizeEnd={() => setResizing(false)}
-      onContentChange={(id, content) => { if (!(embedded && node.metadata?.creativeArtifact)) changeMetadata(id, { content }); }} onTitleChange={(id, title) => changeNode(id, { title })}
+      onContentChange={(id, content) => { if (!node.metadata?.publicMaterialRole) changeMetadata(id, { content }); }} onTitleChange={(id, title) => changeNode(id, { title })}
       onToggleBatch={(id) => setExpandedBatches((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })}
       onSetBatchPrimary={setBatchPrimary} onDuplicateBatchImage={duplicateImage} onDownloadBatchImage={downloadImage}
       onDeleteBatchImage={(id, imageId) => { if (!window.confirm('移除此画布候选？原素材和生成任务继续保存。')) return; const original = canvasRef.current.nodes.find((item) => item.id === id); const images = original?.metadata?.images?.filter((item) => item.id !== imageId) || []; changeMetadata(id, { images, primaryImageId: images[0]?.id, content: images[0]?.content, storageKey: images[0]?.storageKey }); }}

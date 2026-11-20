@@ -11,7 +11,7 @@ const sourceSchema = z.object({ kind: z.string(), id: z.string(), revision: z.nu
 const memorySchema = z.object({ id: z.string(), kind: z.string(), content: z.string(), sceneId: z.string().nullable().optional(), branchId: z.string().nullable().optional(), sources: z.array(sourceSchema), valid: z.boolean().optional() }).passthrough();
 
 export type AgentRole = z.infer<typeof roleSchema>;
-export const agentRunSchema = runSchema.extend({ limits: z.object({ maxSteps: z.number() }).passthrough().optional(), initialRevision: z.number().optional(), canResume: z.boolean().optional(), retryableUnknownCallId: z.string().nullable().optional(), plan: z.array(z.object({ role: z.string(), title: z.string(), instruction: z.string() }).passthrough()) });
+export const agentRunSchema = runSchema.extend({ limits: z.object({ maxSteps: z.number() }).passthrough().optional(), initialRevision: z.number().optional(), canResume: z.boolean().optional(), canExtendLimit: z.boolean().optional(), retryableUnknownCallId: z.string().nullable().optional(), plan: z.array(z.object({ role: z.string(), title: z.string(), instruction: z.string() }).passthrough()) });
 export type AgentRun = z.infer<typeof runSchema>;
 export type ProjectMemory = z.infer<typeof memorySchema>;
 export type CodexConnection = z.infer<typeof connectionSchema>;
@@ -28,6 +28,9 @@ export async function controlAgentRun(projectId: string, runId: string, action: 
 }
 export async function retryUnknownAgentRun(projectId: string, runId: string, callId: string, expectedRevision: number, operation: string, maxSteps = 40) {
   return z.object({ run: runSchema }).passthrough().parse(await api(`/projects/${projectId}/agent-runs/${runId}/retry-unknown`, { method: 'POST', body: JSON.stringify({ operationId: operation, callId, expectedRevision, confirmed: true, maxSteps }) })).run;
+}
+export async function extendAgentRunLimit(projectId: string, runId: string, expectedRevision: number, operation: string, maxSteps: number) {
+  return z.object({ run: agentRunSchema }).parse(await api(`/projects/${projectId}/agent-runs/${runId}/extend-limit`, { method: 'POST', body: JSON.stringify({ operationId: operation, expectedRevision, confirmed: true, maxSteps }) })).run;
 }
 export async function getProjectMemories(projectId: string) { return z.object({ memories: z.array(memorySchema) }).passthrough().parse(await api(`/projects/${projectId}/memories`)).memories; }
 export async function readMemorySource(projectId: string, source: z.infer<typeof sourceSchema>) {

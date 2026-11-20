@@ -1,7 +1,6 @@
 import copy
 import hashlib
 import json
-import sqlite3
 import uuid
 
 import pytest
@@ -24,18 +23,16 @@ RUN_ID = "1e52a75c-7840-4c95-81fd-83c7be57cdfa"
 
 
 @pytest.fixture
-def genuine_pending_completion(tmp_path):
+def genuine_pending_completion(writable_snapshot, request):
     original = SOURCE / "data" / "openfmv.sqlite3"
     if not original.exists():
         pytest.skip("需要本产品已有本人Codex真实完成记录")
     original_hash = hashlib.sha256(original.read_bytes()).hexdigest()
     proof_hash = hashlib.sha256((SOURCE / "proof.json").read_bytes()).hexdigest()
-    destination = tmp_path / "completion-boundary.sqlite3"
-    with sqlite3.connect(original.resolve().as_uri() + "?mode=ro", uri=True) as source:
-        with sqlite3.connect(destination) as copied:
-            source.backup(copied)
+    destination = writable_snapshot(original)
     destination.chmod(0o600)
     engine = create_engine(f"sqlite:///{destination}", connect_args={"timeout": 10})
+    request.addfinalizer(engine.dispose)
     with Session(engine, expire_on_commit=False) as session:
         run = session.get(AgentRun, RUN_ID)
         recorded = session.scalar(select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.provider == "personal-codex"))
@@ -56,7 +53,6 @@ def genuine_pending_completion(tmp_path):
         completion.update(owner_id=run.owner_id, run_id=run.id, connection_id=connection_id)
         session.commit()
     yield engine, completion
-    engine.dispose()
     assert hashlib.sha256(original.read_bytes()).hexdigest() == original_hash
     assert hashlib.sha256((SOURCE / "proof.json").read_bytes()).hexdigest() == proof_hash
 

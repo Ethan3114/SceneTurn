@@ -23,9 +23,10 @@ export const isValidGraphConnection = (connection: Connection | Edge, edges: Edg
   return !hasSourceHandleEdge(edges, connection.source, connection.sourceHandle);
 };
 
-export const addGraphEdge = (connection: Connection, edges: AppEdge[], nodes?: AppNode[]) => {
+export const addGraphEdge = (connection: Connection | AppEdge, edges: AppEdge[], nodes?: AppNode[]) => {
   if (!isValidGraphConnection(connection, edges, nodes)) return edges;
-  return addEdge(connection, edges) as AppEdge[];
+  const edge = 'id' in connection ? connection : { ...connection, id: crypto.randomUUID() };
+  return addEdge(edge, edges) as AppEdge[];
 };
 
 export const filterEdgesForNodes = (edges: AppEdge[] | undefined, nodes: AppNode[]) => {

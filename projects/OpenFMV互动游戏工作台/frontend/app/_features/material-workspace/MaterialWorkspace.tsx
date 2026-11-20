@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import dynamic from 'next/dynamic';
 import { Expand, MessageSquare, Minus, Plus } from 'lucide-react';
+import { agentStatuses } from '@/app/_utils/agentApi';
 import { assetContentUrl } from '@/app/_utils/cloudApi';
-import type { MaterialNode } from '@/app/_utils/materialApi';
+import { getProductionMessage, type MaterialNode } from '@/app/_utils/materialApi';
 import type { MaterialCanvasHandle } from '@/app/_components/workbench/StudioPage';
 import { useResolvedMediaSrc } from '@/app/_hooks/useResolvedMediaSrc';
 import { materialRoles, useMaterialWorkspace } from './store';
@@ -22,6 +23,13 @@ function Artifact({ node }: { node: MaterialNode }) {
   const metadata = node.metadata || {};
   const src = useResolvedMediaSrc(typeof metadata.storageKey === 'string' ? assetContentUrl(metadata.storageKey) : typeof metadata.assetId === 'string' ? assetContentUrl(metadata.assetId) : typeof metadata.src === 'string' ? metadata.src : node.type !== 'text' && typeof metadata.content === 'string' ? metadata.content : '');
   const content = typeof metadata.content === 'string' ? metadata.content : '';
+  const frameKeys = new Set(node.delivery?.segments.flatMap(({ firstFrameKey, lastFrameKey }) => [firstFrameKey, lastFrameKey]));
+  const frameOrder = new Map([...frameKeys].map((key, index) => [key, index]));
+  const images = [
+    ...(node.delivery?.reusedFrames.map((image) => ({ ...image, id: image.frameKey, status: 'ready', errorCode: null, reused: true })) ?? []),
+    ...(node.delivery?.images.map((image) => ({ ...image, reused: false })) ?? []),
+  ];
+  images.sort((a, b) => (frameOrder.get(a.frameKey || '') ?? frameOrder.size) - (frameOrder.get(b.frameKey || '') ?? frameOrder.size));
   return <article className={`material-artifact ${selected ? 'is-selected' : ''}`} data-testid="material-artifact" data-node-id={node.id}>
     <button className="material-artifact-title" onClick={() => { if (conversation) select({ nodeId: node.id, contentHash: node.contentHash, title: node.title || '素材', revision: conversation.revision }); }}>
       <span>{node.title || '素材'}</span><span className="material-subtle">{selected ? '已引用' : '引用到对话'}</span>
@@ -29,17 +37,13 @@ function Artifact({ node }: { node: MaterialNode }) {
     {node.type === 'image' && src && <img src={src} alt={node.title || '图片素材'} loading="lazy" />}
     {node.type === 'video' && src && <video src={src} controls preload="metadata" playsInline />}
     {node.type === 'audio' && src && <audio src={src} controls preload="metadata" />}
-    {node.delivery?.reusedFrames.map((image) => <figure className="material-image-result" key={image.frameKey}>
-      <img src={assetContentUrl(image.assetId)} alt={image.label} width={image.width} height={image.height} loading="lazy" />
-      <figcaption>{image.label} · 复用原图 · {image.width} × {image.height}</figcaption>
-    </figure>)}
-    {node.delivery?.images.map((image) => <figure className="material-image-result" key={image.id} data-image-job={image.id}>
-      {image.assetId && image.status === 'ready' ? <img src={assetContentUrl(image.assetId)} alt={image.label} loading="lazy" /> : <div className="material-role-empty" role="status">{image.status === 'response_saved' && image.errorCode === 'IMAGE_REGISTRATION_FAILED' ? '图片已生成，登记失败，等待恢复' : imageStatuses[image.status] || '等待图片成果'}</div>}
-      <figcaption>{image.label} · {image.width} × {image.height}</figcaption>
+    {images.map((image) => <figure className="material-image-result" key={image.id} data-image-job={image.reused ? undefined : image.id}>
+      {image.assetId && image.status === 'ready' ? <img src={assetContentUrl(image.assetId)} alt={image.label} width={image.width} height={image.height} loading="lazy" /> : <div className="material-role-empty" role="status">{image.status === 'response_saved' && image.errorCode === 'IMAGE_REGISTRATION_FAILED' ? '图片已生成，登记失败，等待恢复' : imageStatuses[image.status] || '等待图片成果'}</div>}
+      <figcaption>{image.label} · {image.reused && '复用原图 · '}{image.width} × {image.height}</figcaption>
     </figure>)}
     {!!node.delivery?.segments.length && <ol className="material-plan-list">{node.delivery.segments.map((segment) => <li key={segment.key}>{segment.key} · {segment.durationSeconds} 秒：{segment.firstFrameKey} → {segment.lastFrameKey}</li>)}</ol>}
     {content && <div className={expanded ? 'material-artifact-body expanded' : 'material-artifact-body'}>{content}</div>}
-    {!content && !src && !node.delivery?.images.length && !node.delivery?.reusedFrames.length && <p className="material-subtle">{node.delivery?.kind === 'audio' ? '等待声音素材' : node.delivery?.kind === 'images' ? '等待图片成果' : '等待视频生成结果'}</p>}
+    {!content && !src && !images.length && <p className="material-subtle">{node.delivery?.kind === 'audio' ? '等待声音素材' : node.delivery?.kind === 'images' ? '等待图片成果' : '等待视频生成结果'}</p>}
     {content && <button className="material-text-button" onClick={() => setExpanded(!expanded)}>{expanded ? '收起正文' : '展开正文'}</button>}
   </article>;
 }
@@ -80,11 +84,16 @@ export default function MaterialWorkspace({ projectId, sceneId, saveRef }: { pro
     setManual(!manual);
     if (manual) await useMaterialWorkspace.getState().refresh();
   }
+  const latestMessage = getProductionMessage(value);
+  const brief = latestMessage?.directorBrief ?? value?.directorBrief;
+  const run = latestMessage?.run;
+  const steps = run?.steps ?? [];
+  const status = brief?.statusText || (run && (agentStatuses[run.status] || run.status));
   const roles = materialRoles.filter((role) => role.id !== 'sound_designer' || value?.nodes.some((node) => node.producerRole === role.id));
   return <section className="material-workspace" data-testid="material-workspace">
-    <header className="material-workspace-toolbar"><div><strong>素材制作</strong><span className="material-subtle">与总监对话，产物按岗位展示</span></div><div className="material-actions">
+    <header className="material-workspace-toolbar"><div><strong>素材制作</strong><span className="material-subtle">与总编对话，产物按岗位展示</span></div><div className="material-actions">
       <button onClick={() => useMaterialWorkspace.setState({ chatOpen: true })}><MessageSquare size={15} />问问 AI</button>
-      <button disabled={['queued', 'running', 'stopping'].includes(value?.messages.at(-1)?.run.status || '')} onClick={() => { void switchManual().catch((problem: Error) => useMaterialWorkspace.setState({ error: problem.message })); }}>{manual ? '返回岗位展示' : '手动编辑画布'}</button>
+      <button disabled={['queued', 'running', 'stopping'].includes(run?.status || '')} onClick={() => { void switchManual().catch((problem: Error) => useMaterialWorkspace.setState({ error: problem.message })); }}>{manual ? '返回岗位展示' : '手动编辑画布'}</button>
     </div></header>
     {error && <p role="alert" className="material-error">{error}</p>}
     {loading && <p role="status" className="material-empty">正在读取素材与对话…</p>}
@@ -92,12 +101,21 @@ export default function MaterialWorkspace({ projectId, sceneId, saveRef }: { pro
       <div className="material-canvas-viewport" data-testid="material-role-canvas"><div className="material-role-grid" style={{ zoom }}>
         {roles.map((role) => {
           const nodes = value?.nodes.filter((node) => node.producerRole === role.id) || [];
-          const steps = value?.messages.at(-1)?.run.steps.filter((step) => step.role === role.id) || [];
-          const active = steps.some((step) => ['running', 'queued', 'waiting_confirmation'].includes(step.status || ''));
+          const active = steps.some((step) => step.role === role.id && ['running', 'queued', 'waiting_confirmation'].includes(step.status || ''));
+          const isDirector = role.id === 'director';
           return <section key={role.id} className="material-role-area" data-role={role.id} style={{ borderTopColor: role.color }}><header><span style={{ color: role.color }}>●</span><strong>{role.title}</strong><span className="material-subtle">{active ? '处理中' : `${nodes.length} 份产物`}</span></header>
             <p className="material-subtle">{role.description}</p>
-            {role.id === 'director' && !!value?.messages.at(-1)?.run.plan.length && <article className="material-artifact"><div className="material-artifact-body expanded"><strong>本轮制作安排</strong><p>{value.messages.at(-1)?.content}</p><ol className="material-plan-list">{value.messages.at(-1)?.run.plan.map((item, index) => <li key={index}><span>{materialRoles.find((entry) => entry.id === item.role)?.title}</span><strong>{item.title}</strong></li>)}</ol></div></article>}
-            {nodes.length ? nodes.map((node) => <Artifact key={node.id} node={node} />) : !(role.id === 'director' && value?.messages.at(-1)?.run.plan.length) && <div className="material-role-empty">{active ? '岗位正在处理，产物会保存到这里' : role.id === 'director' ? '在“问问 AI”中描述需求，总监会梳理制作安排' : '收到总监安排后，在这里展示产物'}</div>}
+            {isDirector && (brief || run) && <article className="material-artifact" data-testid="material-director-brief">
+              <div className="material-artifact-body expanded">
+                <strong>本轮制作安排</strong>
+                {brief?.objective && <p>{brief.objective}</p>}
+                {status && <p className="material-subtle">{status}</p>}
+                {steps.length > 0 && <ol className="material-plan-list material-director-steps">{steps.map((step, index) => (
+                  <li key={step.id || index}><span>{materialRoles.find((entry) => entry.id === step.role)?.title}</span><strong>{step.title}</strong><span className="material-subtle">{agentStatuses[step.status || ''] || step.status}</span></li>
+                ))}</ol>}
+              </div>
+            </article>}
+            {nodes.length ? nodes.map((node) => <Artifact key={node.id} node={node} />) : !(isDirector && (brief || run)) && <div className="material-role-empty">{active ? '岗位正在处理，产物会保存到这里' : isDirector ? '在“问问 AI”中描述需求，总编会梳理制作安排' : '收到总编安排后，在这里展示产物'}</div>}
             {['character_designer', 'scene_designer', 'storyboarder'].includes(role.id) && value && !value.capabilities.image && <p className="material-capability">请配置商汤图片服务</p>}
             {role.id === 'media_producer' && value && <MediaCandidates key={value.id} projectId={projectId} sceneId={sceneId} conversationId={value.id} />}
           </section>;

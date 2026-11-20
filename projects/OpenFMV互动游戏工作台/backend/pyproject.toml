@@ -28,4 +28,5 @@ dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--basetemp=../.intermediate/pytest"
+addopts = "--basetemp=../.intermediate/pytest-default"
+tmp_path_retention_policy = "failed"

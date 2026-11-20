@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 MODEL = "sensenova-u1.5-fast"
 BASE_URL = "https://token.sensenova.cn/v1"
 MAX_IMAGE_BYTES = 32 * 1024 * 1024
+IMAGE_RECEIPT_TIMEOUT_SECONDS = 180
 
 
 class SenseTimeItem(BaseModel):
@@ -48,5 +49,5 @@ async def submit_image(key: str, request: dict, references: list[tuple[str, byte
     if references:
         payload["images"] = [{"image_url": f"data:{mime};base64,{base64.b64encode(raw).decode()}"} for mime, raw in references]
     endpoint = "/images/edits" if references else "/images/generations"
-    async with httpx.AsyncClient(timeout=600, trust_env=False) as client:
+    async with httpx.AsyncClient(timeout=IMAGE_RECEIPT_TIMEOUT_SECONDS, trust_env=False) as client:
         return await client.post(BASE_URL + endpoint, headers={"Authorization": f"Bearer {key}"}, json=payload)

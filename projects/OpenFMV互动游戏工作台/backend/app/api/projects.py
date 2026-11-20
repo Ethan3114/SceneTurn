@@ -11,6 +11,7 @@ from app.core.errors import AppError
 from app.core.config import get_settings
 from app.models import Canvas, Project, User, new_id
 from app.schemas import CanvasResult, CanvasSave, CanvasSnapshot, ProjectCreate, ProjectEnvelope, ProjectList, ProjectSave, SceneCreate
+from app.services.canvas_delivery import material_canvas_ids, public_canvas, public_project_envelope, restore_canvas_private_data
 from app.services.projects import create_project_record, empty_canvas, get_operation, iso_timestamp, lock_write, project_envelope, record_project_version, require_project, require_revision, require_scene, save_operation, scene_node, validate_project_assets
 from app.tools.story_tools import TimelineEdit, owned_asset, put_media_clip
 from app.schemas import ProjectSnapshot
@@ -33,7 +34,7 @@ def add_timeline_asset(project_id: str, body: TimelineAssetInput, user: User = D
     payload = body.model_dump(by_alias=True)
     replay = get_operation(session, user.id, project_id, body.operation_id, "timeline.asset", payload)
     if replay is not None:
-        return replay
+        return public_project_envelope(session, user.id, replay)
     require_revision(project, body.expected_revision)
     require_scene(project, body.scene_id)
     snapshot = copy.deepcopy(project.data_json)
@@ -51,7 +52,7 @@ def add_timeline_asset(project_id: str, body: TimelineAssetInput, user: User = D
     result = project_envelope(session, project)
     save_operation(session, user.id, project_id, body.operation_id, "timeline.asset", payload, result)
     session.commit()
-    return result
+    return public_project_envelope(session, user.id, result)
 
 
 @router.get("/projects", response_model=ProjectList)
@@ -66,12 +67,13 @@ def create_project(body: ProjectCreate, user: User = Depends(current_user), sess
     project = create_project_record(session, user.id, body.title)
     result = project_envelope(session, project)
     session.commit()
-    return result
+    return public_project_envelope(session, user.id, result)
 
 
 @router.get("/projects/{project_id}", response_model=ProjectEnvelope, response_model_exclude_unset=True)
 def get_project(project_id: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    return project_envelope(session, require_project(session, project_id, user.id))
+    project = require_project(session, project_id, user.id)
+    return public_project_envelope(session, user.id, project_envelope(session, project))
 
 
 @router.put("/projects/{project_id}", response_model=ProjectEnvelope, response_model_exclude_unset=True)
@@ -81,7 +83,7 @@ def save_project(project_id: str, body: ProjectSave, user: User = Depends(curren
     payload = body.model_dump(by_alias=True, exclude_unset=True)
     replay = get_operation(session, user.id, project_id, body.operation_id, "project.save", payload)
     if replay is not None:
-        return replay
+        return public_project_envelope(session, user.id, replay)
     require_revision(project, body.expected_revision)
     snapshot = body.project.model_dump(by_alias=True, exclude_unset=True)
     if snapshot["id"] != project_id:
@@ -102,7 +104,7 @@ def save_project(project_id: str, body: ProjectSave, user: User = Depends(curren
     result = project_envelope(session, project)
     save_operation(session, user.id, project_id, body.operation_id, "project.save", payload, result)
     session.commit()
-    return result
+    return public_project_envelope(session, user.id, result)
 
 
 @router.post("/projects/{project_id}/scenes", response_model=ProjectEnvelope, response_model_exclude_unset=True, status_code=201)
@@ -113,7 +115,7 @@ def create_scene(project_id: str, body: SceneCreate, response: Response, user: U
     replay = get_operation(session, user.id, project_id, body.operation_id, "scene.create", payload)
     if replay is not None:
         response.status_code = 200
-        return replay
+        return public_project_envelope(session, user.id, replay)
     require_revision(project, body.expected_revision)
     snapshot = project_envelope(session, project)["project"]
     scene_id = new_id()
@@ -128,7 +130,7 @@ def create_scene(project_id: str, body: SceneCreate, response: Response, user: U
     result = project_envelope(session, project)
     save_operation(session, user.id, project_id, body.operation_id, "scene.create", payload, result)
     session.commit()
-    return result
+    return public_project_envelope(session, user.id, result)
 
 
 @router.get("/projects/{project_id}/canvases/{scene_id}", response_model=CanvasResult)
@@ -138,7 +140,8 @@ def get_canvas(project_id: str, scene_id: str, user: User = Depends(current_user
     canvas = session.scalar(select(Canvas).where(Canvas.project_id == project_id, Canvas.scene_id == scene_id))
     if canvas is None:
         raise AppError(404, "CANVAS_NOT_FOUND", "场景画布不存在")
-    return {"canvas": canvas.data_json, "revision": project.revision}
+    public_nodes = material_canvas_ids(session, project_id, user.id, scene_id)[scene_id]
+    return {"canvas": public_canvas(canvas.data_json, public_nodes), "revision": project.revision}
 
 
 @router.put("/projects/{project_id}/canvases/{scene_id}", response_model=CanvasResult)
@@ -147,15 +150,16 @@ def save_canvas(project_id: str, scene_id: str, body: CanvasSave, user: User = D
     project = require_project(session, project_id, user.id)
     require_scene(project, scene_id)
     payload = {"sceneId": scene_id, **body.model_dump(by_alias=True, exclude_unset=True)}
+    public_nodes = material_canvas_ids(session, project_id, user.id, scene_id)[scene_id]
     replay = get_operation(session, user.id, project_id, body.operation_id, "canvas.save", payload)
     if replay is not None:
-        return replay
+        return {**replay, "canvas": public_canvas(replay["canvas"], public_nodes)}
     require_revision(project, body.expected_revision)
     snapshot = CanvasSnapshot(scene_id=scene_id, nodes=body.nodes, connections=body.connections, viewport=body.viewport)
     canvas = session.scalar(select(Canvas).where(Canvas.project_id == project_id, Canvas.scene_id == scene_id))
     if canvas is None:
         raise AppError(404, "CANVAS_NOT_FOUND", "场景画布不存在")
-    canvas.data_json = snapshot.model_dump(by_alias=True, exclude_unset=True)
+    canvas.data_json = restore_canvas_private_data(canvas.data_json, snapshot.model_dump(by_alias=True, exclude_unset=True), public_nodes)
     canvas.updated_at = time.time()
     project.revision += 1
     project.updated_at = time.time()
@@ -163,4 +167,4 @@ def save_canvas(project_id: str, scene_id: str, body: CanvasSave, user: User = D
     result = {"canvas": canvas.data_json, "revision": project.revision}
     save_operation(session, user.id, project_id, body.operation_id, "canvas.save", payload, result)
     session.commit()
-    return result
+    return {**result, "canvas": public_canvas(result["canvas"], public_nodes)}

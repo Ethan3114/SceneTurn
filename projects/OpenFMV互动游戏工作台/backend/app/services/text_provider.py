@@ -20,6 +20,7 @@ MODEL_ALIASES = {
 }
 ENDPOINT = "https://api.deepseek.com/chat/completions"
 STRICT_ENDPOINT = "https://api.deepseek.com/beta/chat/completions"
+RESPONSES_ENDPOINT = "https://api.deepseek.com/responses"
 PRICE_VERSION = "deepseek-flash-2026-11-13"
 PRICE_VERSIONS = {MODEL: PRICE_VERSION, PRO_MODEL: "deepseek-v4-pro-2026-11-13"}
 PEAK_MICROS = {MODEL: (40000, 2000000, 8000000), PRO_MODEL: (300000, 9000000, 27000000)}
@@ -137,6 +138,56 @@ class Completion(BaseModel):
     usage: Usage
 
 
+class ResponseInputUsage(BaseModel):
+    model_config = ConfigDict(strict=True)
+    cached_tokens: int = Field(ge=0)
+
+
+class ResponseUsage(BaseModel):
+    model_config = ConfigDict(strict=True)
+    input_tokens: int = Field(ge=1)
+    input_tokens_details: ResponseInputUsage
+    output_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=1)
+
+
+class ResponseItem(BaseModel):
+    model_config = ConfigDict(strict=True)
+    type: str
+    role: str | None = None
+    status: str | None = None
+    content: list[dict] | None = None
+
+
+class StructuredResponse(BaseModel):
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True)
+    object: Literal["response"]
+    id: str
+    model: str
+    status: Literal["completed", "incomplete", "failed"]
+    output: list[ResponseItem]
+    usage: ResponseUsage
+
+    def completion(self) -> Completion:
+        messages = [item for item in self.output if item.type == "message"]
+        parts = messages[0].content if len(messages) == 1 else None
+        content = None
+        if parts and messages[0].role == "assistant" and all(
+                part.get("type") == "output_text" and isinstance(part.get("text"), str) for part in parts):
+            content = "".join(part["text"] for part in parts)
+        finish_reason = self.status
+        if self.status == "completed":
+            valid_output = content is not None and messages[0].status == "completed" and all(
+                item.type in {"reasoning", "message"} for item in self.output)
+            finish_reason = "stop" if valid_output else "unexpected_output"
+        cached = self.usage.input_tokens_details.cached_tokens
+        return Completion(id=self.id, model=self.model, choices=[Choice(finish_reason=finish_reason,
+            message=Message(role="assistant", content=content))], usage=Usage(
+                prompt_tokens=self.usage.input_tokens, prompt_cache_hit_tokens=cached,
+                prompt_cache_miss_tokens=self.usage.input_tokens - cached, completion_tokens=self.usage.output_tokens,
+                total_tokens=self.usage.total_tokens))
+
+
 class TextProviderFailure(Exception):
     def __init__(self, code: str, message: str, unknown: bool, http_status: int | None = None, provider_error: dict | None = None):
         super().__init__(message)
@@ -159,10 +210,7 @@ def provider_rejection_message(status: int) -> str:
     return "文本供应商拒绝了本次请求，请检查生成参数与服务状态"
 
 
-async def complete_chat_request(api_key: str, body: dict, settings: Settings, endpoint: str = ENDPOINT) -> Completion:
-    if endpoint not in {ENDPOINT, STRICT_ENDPOINT}:
-        raise AppError(422, "TEXT_ENDPOINT_INVALID", "文字供应商请求端点未获支持")
-    aliases = model_aliases(body.get("model"))
+async def _submit_text_request(api_key: str, body: dict, settings: Settings, endpoint: str) -> httpx.Response:
     try:
         async with httpx.AsyncClient(timeout=settings.text_timeout, follow_redirects=False, trust_env=False) as client:
             response = await client.post(endpoint, headers={"Authorization": f"Bearer {api_key}"}, json=body)
@@ -176,10 +224,30 @@ async def complete_chat_request(api_key: str, body: dict, settings: Settings, en
             provider_error = payload if isinstance(payload, dict) else {"response": payload}
         raise TextProviderFailure("TEXT_SUBMISSION_UNKNOWN" if unknown else "TEXT_PROVIDER_REJECTED", "文本供应商没有确认本次结果，费用预留继续保留" if unknown else provider_rejection_message(response.status_code), unknown,
                                   http_status=response.status_code, provider_error=provider_error)
+    return response
+
+
+async def complete_chat_request(api_key: str, body: dict, settings: Settings, endpoint: str = ENDPOINT) -> Completion:
+    if endpoint not in {ENDPOINT, STRICT_ENDPOINT}:
+        raise AppError(422, "TEXT_ENDPOINT_INVALID", "文字供应商请求端点未获支持")
+    aliases = model_aliases(body.get("model"))
+    response = await _submit_text_request(api_key, body, settings, endpoint)
     try:
         result = Completion.model_validate(response.json())
     except ValueError as error:
         raise TextProviderFailure("TEXT_USAGE_UNKNOWN", "供应商响应或Token用量不完整，费用预留继续保留，请核实原请求", True) from error
     if result.model not in aliases or result.usage.completion_tokens > body["max_tokens"]:
+        raise TextProviderFailure("TEXT_USAGE_UNKNOWN", "供应商返回的模型或Token用量与本次请求不一致，费用预留继续保留", True)
+    return result
+
+
+async def complete_structured_request(api_key: str, body: dict, settings: Settings) -> Completion:
+    aliases = model_aliases(body.get("model"))
+    response = await _submit_text_request(api_key, body, settings, RESPONSES_ENDPOINT)
+    try:
+        result = StructuredResponse.model_validate(response.json()).completion()
+    except ValueError as error:
+        raise TextProviderFailure("TEXT_USAGE_UNKNOWN", "供应商响应或Token用量不完整，费用预留继续保留，请核实原请求", True) from error
+    if result.model not in aliases or result.usage.completion_tokens > body["max_output_tokens"]:
         raise TextProviderFailure("TEXT_USAGE_UNKNOWN", "供应商返回的模型或Token用量与本次请求不一致，费用预留继续保留", True)
     return result

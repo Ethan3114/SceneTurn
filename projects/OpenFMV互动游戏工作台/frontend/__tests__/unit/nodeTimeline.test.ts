@@ -71,7 +71,7 @@ import {
   updateTimelineTrack,
 } from '@/app/_features/node-timeline';
 import { buildNodeEffects, compileNodeTimeline, createRuntime, getActiveTimelineClips, getActiveTimelineMediaClips, getTimelineClipRuntimeEndTime, getTimelineDuration } from '@/app/_utils/graphRuntime';
-import { getTimelineClipOutputHandleId } from '@/app/_utils/timelineOutputEdges';
+import { getTimelineClipOutputHandleId, upsertTimelineOutputEdge } from '@/app/_utils/timelineOutputEdges';
 
 const node = (id: string, type: AppNode['type'], data: AppNode['data']): AppNode => ({
   id,
@@ -81,6 +81,23 @@ const node = (id: string, type: AppNode['type'], data: AppNode['data']): AppNode
 });
 
 describe('NodeTimeline v2', () => {
+  it('keeps a saveable edge id when a button with a UUID is linked and relinked', () => {
+    const clip = createInteractionClip('button', 7.25, 8);
+    const timeline = insertTimelineClip({ timeline: ensureNodeTimeline(), clip });
+    const source = node(crypto.randomUUID(), 'scene', { type: 'scene', title: '夜试斗气', timeline });
+    const hold = node(crypto.randomUUID(), 'scene', { type: 'scene', title: '稳住斗气' });
+    const force = node(crypto.randomUUID(), 'scene', { type: 'scene', title: '裂盏失手' });
+    const nodes = [source, hold, force];
+    const connection = { source: source.id, sourceHandle: getTimelineClipOutputHandleId(clip.id), target: hold.id, targetHandle: null };
+
+    const edges = upsertTimelineOutputEdge(connection, [], nodes);
+    expect(edges).toHaveLength(1);
+    expect(edges[0].id.length).toBeLessThanOrEqual(100);
+    expect(upsertTimelineOutputEdge({ ...connection, target: force.id }, edges, nodes))
+      .toEqual([{ ...edges[0], target: force.id }]);
+    expect(upsertTimelineOutputEdge({ ...connection, target: source.id }, edges, nodes)).toBe(edges);
+  });
+
   it('preserves millisecond freeze position and independent timeline duration for actual saved media', () => {
     const product = path.resolve('..');
     const manifest = JSON.parse(readFileSync(path.join(product, '.intermediate/media-sequence-smoke-20261116/browser-media.json'), 'utf8'));

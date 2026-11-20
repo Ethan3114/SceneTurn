@@ -10,21 +10,22 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.agent_models import AgentCall, AgentRun, AgentStep
-from app.agent_schemas import AgentDecision, PlanningDecision, ReportedCodexUsage, RunCreate, RunRetryUnknown, RunLimitExtension, StepDecision
+from app.agent_schemas import AgentDecision, MaterialPlanningDecision, PlanningDecision, ReportedCodexUsage, RunCreate, RunRetryUnknown, RunLimitExtension, StepDecision
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.security import decode_secret
-from app.creative_artifacts import ARTIFACT_CONTRACT_VERSION
+from app.creative_artifacts import ARTIFACT_CONTRACT_VERSION, artifact_model
 from app.models import Budget, BudgetReservation, Canvas, Generation, Project, TextProviderSettings, User, new_id
-from app.services.agent_provider import DEFAULT_AGENT_PROTOCOL, JSON_AGENT_PROTOCOL, MATERIAL_NATIVE_AGENT_PROTOCOL, THINKING_JSON_AGENT_PROTOCOL, SUPPORTED_JSON_PROTOCOLS, SUPPORTED_NATIVE_PROTOCOLS, SUPPORTED_PLATFORM_PROTOCOLS, agent_business_tools, agent_request_body, agent_response_schema, agent_tools, complete_agent, decode_platform_message, is_json_protocol, json_syntax_details, provider_endpoint
+from app.services.agent_provider import DEFAULT_AGENT_PROTOCOL, JSON_AGENT_PROTOCOL, MATERIAL_JSON_AGENT_PROTOCOL, MATERIAL_NATIVE_AGENT_PROTOCOL, THINKING_JSON_PROTOCOLS, SUPPORTED_JSON_PROTOCOLS, SUPPORTED_NATIVE_PROTOCOLS, SUPPORTED_PLATFORM_PROTOCOLS, agent_business_tools, agent_request_body, agent_response_schema, agent_tools, complete_agent, decode_platform_message, decode_structured_scene_closure, is_json_protocol, json_syntax_details, provider_endpoint
 from app.services.context import retrieve_context, source_scope
 from app.services.projects import get_operation, iso_timestamp, lock_write, payload_digest, require_project, require_revision, require_scene, save_operation
-from app.services.prompts.agent import PROMPT_VERSION, agent_prompt, codex_prompt, json_agent_prompt, native_agent_prompt
+from app.services.prompts.agent import PROMPT_VERSION, agent_prompt, codex_prompt, json_agent_prompt, material_json_agent_prompt, material_planning_prompt, material_scene_artifact_prompt, native_agent_prompt
 from app.services.text_generation import _reserve, require_text_admin
 from app.services.text_provider import MODEL, TextProviderFailure, complete_text, cost_micros, current_price, model_aliases, peak_price
-from app.services.agent_provider import native_batch_ids
+from app.services.agent_provider import MATERIAL_STRUCTURED_RECOVERY_ROLES, native_batch_ids
+from app.services.prompts.agent import material_structured_artifact_prompt
 from app.tools.project_tools import LEGACY_TOOL_CATALOG_VERSION, TOOL_CATALOG_VERSION, WORKSPACE_TOOL_CATALOG_VERSION, MATERIAL_TOOL_CATALOG_VERSION, MATERIAL_ROLES, PROJECT_ROLE_TOOLS, SCENE_ROLES, READ_TOOLS, ROLE_TOOLS, _read_artifact, check_codex_connection, execute_tool, require_canvas, role_catalog, tool_catalog, validate_artifacts
-from app.tools.project_tools import REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION, MATERIAL_CATALOG_VERSIONS
+from app.tools.project_tools import MATERIAL_SOP_TOOL_CATALOG_VERSION, MATERIAL_CATALOG_VERSIONS
 
 
 TERMINAL = {"completed", "failed", "stopped", "submission_unknown"}
@@ -152,7 +153,10 @@ def _recoverable_scope_read(session: Session, run: AgentRun, revision: int) -> A
 
 
 def run_view(session: Session, run: AgentRun, settings: Settings | None = None) -> dict:
-    steps = session.scalars(select(AgentStep).where(AgentStep.run_id == run.id).order_by(AgentStep.index)).all()
+    planned_steps = session.execute(select(AgentRun.plan_json, AgentStep).outerjoin(
+        AgentStep, AgentStep.run_id == AgentRun.id).where(AgentRun.id == run.id).order_by(AgentStep.index)).all()
+    plan = planned_steps[0][0]
+    steps = [step for _, step in planned_steps if step is not None]
     calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
     reservations = session.scalars(select(BudgetReservation).where(BudgetReservation.id.in_([call.id for call in calls]))).all() if calls else []
     project = require_project(session, run.project_id, run.owner_id)
@@ -168,14 +172,15 @@ def run_view(session: Session, run: AgentRun, settings: Settings | None = None) 
         "deliveryMode": run.limits_json.get("deliveryMode"), "artifactContractVersion": run.limits_json.get("artifactContractVersion"),
         "workspace": run.limits_json.get("workspace"),
         "toolCatalogVersion": run.limits_json.get("toolCatalogVersion", LEGACY_TOOL_CATALOG_VERSION),
-        "plan": run.plan_json, "result": _public_run_result(run.result_json),
+        "plan": plan, "result": _public_run_result(run.result_json),
         "stopRequested": bool(run.stop_requested), "threadId": run.thread_id, "turnId": run.turn_id,
         "error": {"code": run.error_code, "message": run.error_message} if run.error_code else None,
-        "canResume": _recoverable_native_batch(session, run, project.revision) is not None or _recoverable_plain_read(session, run, project) is not None or _recoverable_native_format(session, run, project.revision) is not None or _recoverable_scope_read(session, run, project.revision) is not None or _recoverable_material_revision(session, run, project.revision, settings) is not None,
+        "canResume": _recoverable_native_batch(session, run, project.revision) is not None or _recoverable_plain_read(session, run, project) is not None or _recoverable_native_format(session, run, project.revision) is not None or _recoverable_scope_read(session, run, project.revision) is not None or _recoverable_material_revision(session, run, project.revision, settings) is not None or _recoverable_image_prompt_selection(session, run, project.revision) is not None or _recoverable_material_json_format(session, run, project.revision) is not None or _recoverable_structured_scene_closure(session, run, project.revision, calls) is not None,
+        "canExtendLimit": _material_limit_extension_available(session, run, project.revision, calls),
         "retryableUnknownCallId": retryable.id if retryable is not None else None,
         "steps": [{"id": step.id, "index": step.index, "role": step.role, "title": step.title,
-                   "instruction": step.instruction, "kind": run.plan_json[step.index].get("kind", "produce"),
-                   "dependsOn": run.plan_json[step.index].get("dependsOn", []), "status": step.status, "result": step.result_json,
+                   "instruction": step.instruction, "kind": plan[step.index].get("kind", "produce"),
+                   "dependsOn": plan[step.index].get("dependsOn", []), "status": step.status, "result": step.result_json,
                    "toolResults": step.tool_results_json} for step in steps],
         "calls": [{"id": call.id, "stepId": call.step_id, "role": call.role, "provider": call.provider,
                    "model": call.model, "status": call.status, "remoteRequestId": call.remote_request_id,
@@ -204,10 +209,10 @@ def _new_run_limits(body: RunCreate) -> dict:
         limits["toolCatalogVersion"] = WORKSPACE_TOOL_CATALOG_VERSION
     if body.workspace == "materials":
         from app.services.materials import MATERIAL_INSTRUCTIONS
-        limits["toolCatalogVersion"] = REUSABLE_BOUNDARY_TOOL_CATALOG_VERSION
+        limits["toolCatalogVersion"] = MATERIAL_SOP_TOOL_CATALOG_VERSION
         limits["materialContext"] = {"requireHumanReview": True, "scope": "current_round", "instructions": MATERIAL_INSTRUCTIONS}
     if body.executor == "platform":
-        limits.update(providerProtocol=MATERIAL_NATIVE_AGENT_PROTOCOL if body.workspace == "materials" else DEFAULT_AGENT_PROTOCOL, model=MODEL)
+        limits.update(providerProtocol=MATERIAL_JSON_AGENT_PROTOCOL if body.workspace == "materials" else DEFAULT_AGENT_PROTOCOL, model=MODEL)
     return limits
 
 
@@ -298,8 +303,10 @@ def stop_run(session: Session, project_id: str, run_id: str, owner_id: str, oper
     return run
 
 
-def resume_run(session: Session, project_id: str, run_id: str, owner_id: str, operation_id: str, expected_revision: int, settings: Settings | None = None) -> AgentRun:
-    lock_write(session)
+def resume_run(session: Session, project_id: str, run_id: str, owner_id: str, operation_id: str, expected_revision: int,
+               settings: Settings | None = None, *, commit: bool = True) -> AgentRun:
+    if commit:
+        lock_write(session)
     run = require_run(session, project_id, run_id, owner_id)
     payload = {"runId": run_id, "expectedRevision": expected_revision}
     replay = get_operation(session, owner_id, project_id, operation_id, "agent.resume", payload)
@@ -309,7 +316,8 @@ def resume_run(session: Session, project_id: str, run_id: str, owner_id: str, op
     require_revision(project, expected_revision)
     if run.status == "submission_unknown":
         raise AppError(409, "AGENT_SUBMISSION_UNKNOWN", "原模型请求结果待核实，保留费用预留且不会再次提交")
-    if (run.result_json or {}).get("materialReview", {}).get("status") in {"pending", "generating", "review_images"}:
+    if ((run.result_json or {}).get("materialReview", {}).get("status") in {"pending", "generating", "review_images"}
+            or (run.result_json or {}).get("materialClarification", {}).get("status") == "pending"):
         raise AppError(409, "MATERIAL_CONFIRMATION_REQUIRED", "请先在素材对话中回答待确认事项")
     if run.executor == "platform" and any(call.status == "submitting" or not _unknown_retry_authorized(session, run, call) for call in session.scalars(select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.status.in_(["submitting", "submission_unknown"])))):
         raise AppError(409, "AGENT_SUBMISSION_UNKNOWN", "原模型请求仍待核实，当前任务不能提交新的模型调用")
@@ -320,6 +328,12 @@ def resume_run(session: Session, project_id: str, run_id: str, owner_id: str, op
     format_recovery = _recoverable_native_format(session, run, project.revision)
     scope_recovery = _recoverable_scope_read(session, run, project.revision)
     material_recovery = _recoverable_material_revision(session, run, project.revision, settings)
+    image_selection_recovery = _recoverable_image_prompt_selection(session, run, project.revision)
+    material_json_recovery = _recoverable_material_json_format(session, run, project.revision)
+    structured_scene_recovery = None
+    if run.error_code == "AGENT_NATIVE_CORRECTION_LIMIT" and run.limits_json.get("providerProtocol") == MATERIAL_JSON_AGENT_PROTOCOL:
+        ordered_calls = list(session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)))
+        structured_scene_recovery = _recoverable_structured_scene_closure(session, run, project.revision, ordered_calls)
     if batch_recovery is not None:
         _reject_native_call(session, run, batch_recovery, AppError(422, "AGENT_NATIVE_BATCH_NOT_EXECUTED", "本轮多个操作均未执行，请每次只调用一个函数并等待结果"))
     elif plain_recovery is not None:
@@ -328,8 +342,21 @@ def resume_run(session: Session, project_id: str, run_id: str, owner_id: str, op
         plain_recovery.status = "ready"
         run.result_json = {key: value for key, value in (run.result_json or {}).items() if key != "nativeCorrection"}
     elif format_recovery is not None:
-        run.result_json = {**{key: value for key, value in (run.result_json or {}).items() if key != "nativeCorrection"},
-            "manualNativeRepairOf": format_recovery.id, "manualRepairOperationId": operation_id}
+        result = {key: value for key, value in (run.result_json or {}).items() if key not in {"nativeCorrection", "toolError"}}
+        if run.limits_json.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+            run.limits_json = {**run.limits_json, "providerProtocol": MATERIAL_JSON_AGENT_PROTOCOL}
+            run.result_json = {**result, "materialProtocolUpgrade": {"sourceProtocol": MATERIAL_NATIVE_AGENT_PROTOCOL,
+                "targetProtocol": MATERIAL_JSON_AGENT_PROTOCOL, "rejectedCallId": format_recovery.id, "operationId": operation_id}}
+        else:
+            run.result_json = {**result, "manualNativeRepairOf": format_recovery.id, "manualRepairOperationId": operation_id}
+    elif structured_scene_recovery is not None:
+        usage = structured_scene_recovery.usage_json
+        structured_scene_recovery.usage_json = {**{key: value for key, value in usage.items() if key != "toolError"},
+            "resolvedStructuredSceneSyntax": {**usage["toolError"], "operationId": operation_id}}
+        structured_scene_recovery.status = "response_received"
+        run.result_json = {key: value for key, value in (run.result_json or {}).items() if key not in {"nativeCorrection", "toolError"}}
+    elif material_json_recovery is not None:
+        _record_material_json_format_retry(run, material_json_recovery, operation_id)
     elif scope_recovery is not None:
         previous = scope_recovery.usage_json["toolFailure"]
         scope_recovery.usage_json = {**{key: value for key, value in scope_recovery.usage_json.items() if key != "toolFailure"}, "resolvedScopeFailure": previous}
@@ -340,12 +367,21 @@ def resume_run(session: Session, project_id: str, run_id: str, owner_id: str, op
         run.limits_json = {**run.limits_json, "materialContext": {**context, "revisionRequest": {
             key: revision[key] for key in ("reviewId", "stepId", "nodeId", "artifactHash", "operationId", "requestedAt", "answers", "requestedChanges")}}}
         session.get(AgentStep, material_recovery.step_id).result_json = None
-        if material_recovery.usage_json.get("toolError", {}).get("code") == "AGENT_ARTIFACT_PATCH_INVALID":
+        if run.limits_json.get("providerProtocol") == MATERIAL_JSON_AGENT_PROTOCOL:
+            run.result_json = {**run.result_json, "materialRevisionResume": {"reviewId": revision["reviewId"],
+                "revisionOperationId": revision["operationId"], "operationId": operation_id, "rejectedCallId": material_recovery.id}}
+        elif material_recovery.usage_json.get("toolError", {}).get("code") == "AGENT_ARTIFACT_PATCH_INVALID":
             run.result_json = {**run.result_json, "nativeCorrection": {"callId": material_recovery.id, "tool": "patch_artifact"},
                 "materialRevisionRecovery": {"callId": material_recovery.id, "operationId": operation_id,
                     "reason": "semantic_correction_labels", "businessReplayed": False}}
         else:
             _reject_native_call(session, run, material_recovery, _material_revision_error())
+    elif image_selection_recovery is not None:
+        previous = image_selection_recovery.usage_json["toolFailure"]
+        image_selection_recovery.usage_json = {key: value for key, value in image_selection_recovery.usage_json.items() if key != "toolFailure"}
+        image_selection_recovery.usage_json = {**image_selection_recovery.usage_json, "resolvedImagePromptSelection": previous}
+        _reject_native_call(session, run, image_selection_recovery, AppError(422, "AGENT_IMAGE_PROMPT_SELECTION_INVALID",
+            "保留原方案中用户选定的图片。对其余图片使用RFC6902的remove操作和原条目的下标路径，不需要重述任何图片内容。仅提交所需的remove操作。"))
     elif run.status == "conflict" and run.error_code == "AGENT_ARTIFACT_SOURCE_CHANGED" and run.limits_json.get("toolCatalogVersion") in MATERIAL_CATALOG_VERSIONS:
         last_call = session.scalar(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at.desc()).limit(1))
         if last_call is not None and last_call.status == "failed" and last_call.input_json["projectRevision"] == project.revision and (last_call.response_json or {}).get("tool") == "read_artifact" and last_call.usage_json.get("settled") and not last_call.usage_json.get("toolExecutionDone"):
@@ -388,7 +424,8 @@ def resume_run(session: Session, project_id: str, run_id: str, owner_id: str, op
     for step in session.scalars(select(AgentStep).where(AgentStep.run_id == run.id, AgentStep.status.in_(["running", "conflict", "stopped", "waiting_confirmation", "failed"]))):
         step.status = "queued"
     save_operation(session, owner_id, project_id, operation_id, "agent.resume", payload, {"runId": run_id})
-    session.commit()
+    if commit:
+        session.commit()
     return run
 
 
@@ -438,11 +475,13 @@ def extend_run_limit(session: Session, project_id: str, run_id: str, user: User,
     require_revision(project, body.expected_revision)
     if run.project_revision != project.revision:
         raise AppError(409, "REVISION_CONFLICT", "项目已有编辑，请核对当前产物后继续")
-    if run.executor != "platform" or run.limits_json.get("workspace") != "materials" or run.status != "failed" or run.error_code != "AGENT_STEP_LIMIT":
-        raise AppError(409, "AGENT_LIMIT_EXTENSION_UNAVAILABLE", "当前任务没有停在请求上限，不能增加执行次数")
-    count = session.scalar(select(func.count()).select_from(AgentCall).where(AgentCall.run_id == run.id))
-    if body.max_steps <= max(count, run.limits_json["maxSteps"]):
+    calls = list(session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)))
+    if not _material_limit_extension_available(session, run, project.revision, calls):
+        raise AppError(409, "AGENT_LIMIT_EXTENSION_UNAVAILABLE", "当前任务没有可增加请求次数的暂停记录")
+    if body.max_steps <= max(len(calls), run.limits_json["maxSteps"]):
         raise AppError(422, "AGENT_LIMIT_EXTENSION_INVALID", "确认的请求上限必须高于已执行次数及原上限")
+    if run.error_code == "AGENT_NATIVE_CORRECTION_LIMIT":
+        _record_material_json_format_retry(run, calls[-1], body.operation_id, with_extension=True)
     extension = {"operationId": body.operation_id, "previousMaxSteps": run.limits_json["maxSteps"], "maxSteps": body.max_steps, "payload": payload}
     run.limits_json = {**run.limits_json, "maxSteps": body.max_steps,
         "requestLimitExtensions": [*run.limits_json.get("requestLimitExtensions", []), extension]}
@@ -624,30 +663,161 @@ def _call_in_material_revision(call: AgentCall, revision: dict | None) -> bool:
     return operation == revision["operationId"] if operation else call.created_at >= revision["requestedAt"]
 
 
+def _recoverable_image_prompt_selection(session: Session, run: AgentRun, revision: int) -> AgentCall | None:
+    if (run.status != "failed" or run.error_code != "AGENT_ARTIFACT_PATCH_FORBIDDEN" or run.project_revision != revision
+            or run.limits_json.get("providerProtocol") != MATERIAL_JSON_AGENT_PROTOCOL or run.stop_requested):
+        return None
+    review = (run.result_json or {}).get("materialReview", {})
+    step_id = review.get("stepId")
+    request = _material_revision_request(run, step_id)
+    if request is None or not request["requiresArtifactWrite"] or review.get("role") not in {"character_designer", "scene_designer"}:
+        return None
+    calls = list(session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)))
+    if not calls or len(calls) >= run.limits_json["maxSteps"] or any("resolvedImagePromptSelection" in item.usage_json
+            and _call_in_material_revision(item, request) for item in calls):
+        return None
+    call = calls[-1]
+    decision = call.response_json or {}
+    if (call.status != "failed" or call.step_id != step_id or call.role != review["role"] or not _call_in_material_revision(call, request)
+            or call.input_json.get("protocol") != MATERIAL_JSON_AGENT_PROTOCOL or call.input_json.get("projectRevision") != revision
+            or decision.get("tool") != "patch_artifact" or not call.remote_request_id or not call.usage_json.get("settled")
+            or call.cost_micros is None or call.usage_json.get("toolExecutionDone")
+            or call.usage_json.get("toolFailure", {}).get("code") != "AGENT_ARTIFACT_PATCH_FORBIDDEN"
+            or _parameter_correction_count(run, step_id, calls) >= 2):
+        return None
+    arguments = decision["arguments"]
+    if arguments["targetId"] != request["nodeId"] or arguments["baseArtifactSha256"] != request["artifactHash"] or arguments["expectedRevision"] != revision:
+        return None
+    step = session.get(AgentStep, step_id)
+    if step is None or any(receipt["operationId"] == f"agent-{call.id}" for receipt in step.tool_results_json):
+        return None
+    selected_paths = {patch["path"] for patch in arguments["patches"] if patch["op"] == "replace" and isinstance(patch["value"], list)}
+    has_read = any(receipt["tool"] == "read_artifact" and receipt["revision"] == revision
+        and receipt["result"].get("baseArtifactSha256") == request["artifactHash"]
+        and receipt["result"].get("targetId") == request["nodeId"] and receipt["result"].get("imagePromptSubsetReviewId") == request["reviewId"]
+        and any(path.get("imagePromptSubset") is True and path["path"] in selected_paths for path in receipt["result"].get("patchablePaths", []))
+        for receipt in step.tool_results_json)
+    reservation = session.get(BudgetReservation, call.id)
+    if not has_read or reservation is None or reservation.status != "settled" or reservation.reserved_micros != 0 or reservation.cost_micros != call.cost_micros:
+        return None
+    return call
+
+
+def _recoverable_material_json_format(session: Session, run: AgentRun, revision: int) -> AgentCall | None:
+    if (run.status != "failed" or run.error_code != "AGENT_NATIVE_CORRECTION_LIMIT" or run.project_revision != revision
+            or run.limits_json.get("providerProtocol") != MATERIAL_JSON_AGENT_PROTOCOL or run.stop_requested):
+        return None
+    calls = list(session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)))
+    if not calls or len(calls) >= run.limits_json["maxSteps"]:
+        return None
+    call = calls[-1]
+    retry = (run.result_json or {}).get("materialJsonFormatRetries", {}).get(call.step_id)
+    if retry:
+        if call.role in MATERIAL_STRUCTURED_RECOVERY_ROLES:
+            if retry.get("materialArtifactOnly") or call.input_json.get("materialArtifactOnly"):
+                return None
+        elif call.role != "scene_designer" or retry.get("sceneArtifactOnly") or call.input_json.get("sceneArtifactOnly"):
+            return None
+    return _settled_material_json_rejection(session, run, revision, calls)
+
+
+def _settled_material_json_rejection(session: Session, run: AgentRun, revision: int, calls: list[AgentCall]) -> AgentCall | None:
+    if not calls or run.limits_json.get("providerProtocol") != MATERIAL_JSON_AGENT_PROTOCOL or run.stop_requested:
+        return None
+    call = calls[-1]
+    error = call.usage_json.get("toolError", {})
+    if (call.step_id is None
+            or call.status != "tool_rejected" or call.response_json is not None or not call.raw_output
+            or call.input_json.get("protocol") != MATERIAL_JSON_AGENT_PROTOCOL or call.input_json.get("projectRevision") != revision
+            or not call.remote_request_id or call.cost_micros is None or call.usage_json.get("toolExecutionDone")
+            or not call.usage_json.get("settled") or not _is_material_json_syntax_error(error)):
+        return None
+    step = session.get(AgentStep, call.step_id)
+    reservation = session.get(BudgetReservation, call.id)
+    if (step is None or step.run_id != run.id or step.role != call.role or step.status != "failed"
+            or any(receipt["operationId"] == f"agent-{call.id}" for receipt in step.tool_results_json)
+            or reservation is None or reservation.status != "settled" or reservation.reserved_micros != 0
+            or reservation.cost_micros != call.cost_micros):
+        return None
+    return call
+
+
+def _material_limit_extension_available(session: Session, run: AgentRun, revision: int, calls: list[AgentCall]) -> bool:
+    if (run.executor != "platform" or run.limits_json.get("workspace") != "materials" or run.status != "failed"
+            or run.project_revision != revision or max(len(calls), run.limits_json["maxSteps"]) >= 60
+            or any(call.status in {"submitting", "tool_executing", "tool_outcome_unknown"}
+                or call.status == "submission_unknown" and not _unknown_retry_authorized(session, run, call) for call in calls)):
+        return False
+    return run.error_code == "AGENT_STEP_LIMIT" or (run.error_code == "AGENT_NATIVE_CORRECTION_LIMIT"
+        and _settled_material_json_rejection(session, run, revision, calls) is not None)
+
+
+def _record_material_json_format_retry(run: AgentRun, call: AgentCall, operation_id: str, *, with_extension: bool = False) -> None:
+    result = {key: value for key, value in (run.result_json or {}).items() if key not in {"nativeCorrection", "toolError"}}
+    retries = result.get("materialJsonFormatRetries", {})
+    run.result_json = {**result, "materialJsonFormatRetries": {**retries, call.step_id: {
+        "rejectedCallId": call.id, "operationId": operation_id, "sceneArtifactOnly": call.role == "scene_designer",
+        "materialArtifactOnly": call.role in MATERIAL_STRUCTURED_RECOVERY_ROLES,
+        "withExtension": with_extension}}}
+
+
+def _is_structured_scene_call(call: AgentCall) -> bool:
+    request = call.input_json
+    return (request.get("protocol") == MATERIAL_JSON_AGENT_PROTOCOL and request.get("sceneArtifactOnly") is True
+        and request.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION and call.role == "scene_designer"
+        and request.get("providerEndpoint") == provider_endpoint(MATERIAL_JSON_AGENT_PROTOCOL, structured_response=True)
+        and request.get("requestBody", {}).get("text", {}).get("format", {}).get("type") == "json_schema"
+        and call.usage_json.get("providerFinishReason") == "stop")
+
+
+def _recoverable_structured_scene_closure(session: Session, run: AgentRun, revision: int, calls: list[AgentCall]) -> AgentCall | None:
+    if run.status != "failed" or run.error_code != "AGENT_NATIVE_CORRECTION_LIMIT" or run.project_revision != revision:
+        return None
+    call = _settled_material_json_rejection(session, run, revision, calls)
+    if call is None or not _is_structured_scene_call(call) or call.usage_json.get("resolvedStructuredSceneSyntax"):
+        return None
+    if any(item.status in {"submitting", "tool_executing", "tool_outcome_unknown"}
+            or item.status == "submission_unknown" and not _unknown_retry_authorized(session, run, item) for item in calls):
+        return None
+    return call if decode_structured_scene_closure(json.loads(call.raw_output)) is not None else None
+
+
+def _is_material_json_syntax_error(error: dict) -> bool:
+    return (error.get("code") == "AGENT_JSON_ARGUMENTS_INVALID" and error.get("businessExecuted") is False
+            and any(item.get("type") == "json_invalid" for item in error.get("details", [])))
+
+
 def _material_workflow_rejection(run: AgentRun, call: AgentCall, revision: dict | None) -> bool:
-    eligible = (revision is not None and run.limits_json.get("providerProtocol") == MATERIAL_NATIVE_AGENT_PROTOCOL
+    protocol = run.limits_json.get("providerProtocol")
+    tool_call_id = call.usage_json.get("toolCallId")
+    eligible = (revision is not None and protocol in {MATERIAL_NATIVE_AGENT_PROTOCOL, MATERIAL_JSON_AGENT_PROTOCOL}
         and call.run_id == run.id and call.step_id == revision["stepId"]
         and call.role == (run.result_json or {}).get("materialReview", {}).get("role")
-        and call.input_json.get("protocol") == MATERIAL_NATIVE_AGENT_PROTOCOL and _call_in_material_revision(call, revision)
+        and call.input_json.get("protocol") == protocol and _call_in_material_revision(call, revision)
         and call.status == "tool_rejected" and call.response_json is not None and call.response_json.get("action") == "complete"
         and call.usage_json.get("toolError", {}).get("code") == "MATERIAL_REVISION_REQUIRED"
         and call.usage_json["toolError"].get("businessExecuted") is False and not call.usage_json.get("toolExecutionDone")
         and call.usage_json.get("settled") and call.cost_micros is not None and call.total_tokens is not None
-        and call.remote_request_id and call.raw_output and call.usage_json.get("toolCallId")
+        and call.remote_request_id and call.raw_output
+        and (bool(tool_call_id) if protocol == MATERIAL_NATIVE_AGENT_PROTOCOL else tool_call_id is None)
         and call.input_json.get("toolCatalogVersion") == run.limits_json.get("toolCatalogVersion"))
     if not eligible:
         return False
     try:
         decoded, identifier = decode_platform_message(json.loads(call.raw_output), False, call.role,
-            MATERIAL_NATIVE_AGENT_PROTOCOL, run.limits_json["toolCatalogVersion"])
+            protocol, run.limits_json["toolCatalogVersion"])
     except (AppError, ValidationError, json.JSONDecodeError):
         return False
-    return decoded == call.response_json and identifier == call.usage_json["toolCallId"]
+    return decoded == call.response_json and identifier == tool_call_id
 
 
 def _parameter_correction_count(run: AgentRun, step_id: str | None, calls: list[AgentCall]) -> int:
     revision = _material_revision_request(run, step_id)
-    by_id = {call.id: call for call in calls if call.step_id == step_id}
+    protocol = run.limits_json.get("providerProtocol")
+    retry = (run.result_json or {}).get("materialJsonFormatRetries", {}).get(step_id, {})
+    by_id = {call.id: call for call in calls if call.step_id == step_id and
+             (protocol != MATERIAL_JSON_AGENT_PROTOCOL or call.input_json.get("protocol") == protocol)
+             and (not retry.get("withExtension") or call.input_json.get("limitExtensionOperationId") == retry["operationId"])}
     return sum(1 for call in by_id.values() if call.input_json.get("correctionOf") and _call_in_material_revision(call, revision)
         and not (call.input_json["correctionOf"] in by_id and _material_workflow_rejection(run, by_id[call.input_json["correctionOf"]], revision)))
 
@@ -676,16 +846,19 @@ def _material_patch_feedback(run: AgentRun, step: AgentStep | None, calls: list[
                 parent = JsonPointer.from_parts(JsonPointer(patch["path"]).parts[:-1]).path
             except JsonPointerException:
                 continue
-            if parent in allowed and isinstance(allowed[parent]["value"], list):
+            if isinstance(allowed.get(parent, {}).get("value"), list):
                 arrays.add(parent)
     return {"callId": call.id, "invalidPaths": invalid, "replaceWholeListPaths": sorted(arrays),
         "instruction": "不存在的路径不能replace。只使用实际read_artifact返回的patchablePaths；扩展标量数组时，replace已允许的完整数组路径并提供保留原值及新增项的完整数组。"}
 
 
 def _recoverable_material_revision(session: Session, run: AgentRun, revision: int, settings: Settings | None = None) -> AgentCall | None:
-    if (run.status != "failed" or run.error_code not in {"MATERIAL_CONFIRMATION_REQUIRED", "AGENT_NATIVE_CORRECTION_LIMIT"} or run.stop_requested
+    protocol = run.limits_json.get("providerProtocol")
+    json_resume = (protocol == MATERIAL_JSON_AGENT_PROTOCOL and run.error_code == "MATERIAL_REVISION_CORRECTION_LIMIT"
+                   and run.limits_json.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION)
+    native_resume = (protocol == MATERIAL_NATIVE_AGENT_PROTOCOL and run.error_code in {"MATERIAL_CONFIRMATION_REQUIRED", "AGENT_NATIVE_CORRECTION_LIMIT"})
+    if (run.status != "failed" or not (json_resume or native_resume) or run.stop_requested
             or run.project_revision != revision or run.executor != "platform"
-            or run.limits_json.get("providerProtocol") != MATERIAL_NATIVE_AGENT_PROTOCOL
             or run.limits_json.get("toolCatalogVersion") not in MATERIAL_CATALOG_VERSIONS):
         return None
     step = _next_step(session, run)
@@ -695,6 +868,8 @@ def _recoverable_material_revision(session: Session, run: AgentRun, revision: in
             or any(request.get(key) != review.get(key) for key in ("nodeId", "artifactHash"))
             or request["reviewId"] != review.get("id") or request["operationId"] != review.get("operationId")
             or request["requestedAt"] != review.get("answeredAt")):
+        return None
+    if json_resume and (run.result_json or {}).get("materialRevisionResume", {}).get("revisionOperationId") == request["operationId"]:
         return None
     calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
     if not calls or len(calls) >= run.limits_json["maxSteps"] or _parameter_correction_count(run, step.id, calls) >= 2:
@@ -710,16 +885,21 @@ def _recoverable_material_revision(session: Session, run: AgentRun, revision: in
     if sum(item.cost_micros for item in calls) >= run.limits_json["maxCostMicros"]:
         return None
     call = calls[-1]
-    workflow_recovery = run.error_code == "MATERIAL_CONFIRMATION_REQUIRED"
-    if (call.step_id != step.id or call.role != step.role or call.status != ("failed" if workflow_recovery else "tool_rejected") or not call.raw_output
-            or not call.remote_request_id or not call.usage_json.get("toolCallId") or call.usage_json.get("toolExecutionDone")
+    native_workflow_resume = run.error_code == "MATERIAL_CONFIRMATION_REQUIRED"
+    tool_call_id = call.usage_json.get("toolCallId")
+    if (call.step_id != step.id or call.role != step.role or call.status != ("failed" if native_workflow_resume else "tool_rejected") or not call.raw_output
+            or not call.remote_request_id or (tool_call_id is not None if json_resume else not tool_call_id) or call.usage_json.get("toolExecutionDone")
             or call.usage_json.get("controlResult") is not None
-            or call.input_json.get("planning") is not False or call.input_json.get("protocol") != MATERIAL_NATIVE_AGENT_PROTOCOL
+            or call.input_json.get("planning") is not False or call.input_json.get("protocol") != protocol
             or call.input_json.get("toolCatalogVersion") != run.limits_json["toolCatalogVersion"]
             or call.input_json.get("projectRevision") != revision or not _call_in_material_revision(call, request)
             or any(item["operationId"] == f"agent-{call.id}" for item in step.tool_results_json)):
         return None
-    if workflow_recovery:
+    if json_resume:
+        rejections = [item for item in calls if _material_workflow_rejection(run, item, request)]
+        if len(rejections) != 2 or rejections[-1].id != call.id:
+            return None
+    elif native_workflow_resume:
         if (call.usage_json.get("toolFailure", {}).get("code") != "MATERIAL_CONFIRMATION_REQUIRED"
                 or any(_material_workflow_rejection(run, item, request) for item in calls)):
             return None
@@ -762,17 +942,18 @@ def _recoverable_material_revision(session: Session, run: AgentRun, revision: in
     try:
         _validate_frozen_model(run, call)
         decision, identifier = decode_platform_message(json.loads(call.raw_output), False, step.role,
-            MATERIAL_NATIVE_AGENT_PROTOCOL, run.limits_json["toolCatalogVersion"])
-        if (decision != call.response_json or identifier != call.usage_json["toolCallId"]
-                or workflow_recovery and decision.get("action") != "complete"
-                or not workflow_recovery and decision.get("tool") != "patch_artifact"):
+            protocol, run.limits_json["toolCatalogVersion"])
+        workflow_resume = json_resume or native_workflow_resume
+        if (decision != call.response_json or identifier != tool_call_id
+                or workflow_resume and decision.get("action") != "complete"
+                or not workflow_resume and decision.get("tool") != "patch_artifact"):
             return None
         project = require_project(session, run.project_id, run.owner_id)
         actual_settings = settings or get_settings()
         baseline = _read_artifact(session, run, project, require_canvas(session, run, project), request["nodeId"], actual_settings)
         if baseline.get("artifactSha256") != request["artifactHash"] or baseline["artifact"]["role"] != step.role:
             return None
-        if not workflow_recovery and (decision["arguments"]["targetId"] != request["nodeId"]
+        if not workflow_resume and (decision["arguments"]["targetId"] != request["nodeId"]
                 or decision["arguments"]["expectedRevision"] != revision
                 or decision["arguments"]["baseArtifactSha256"] != baseline["artifactSha256"]):
             return None
@@ -821,14 +1002,26 @@ def _native_messages(run: AgentRun, step: AgentStep | None, role: str, context: 
     instruction = _protocol_instruction(run, step, context, calls, completed_steps)
     revision = instruction["materialRevision"]
     verification = step is not None and run.plan_json[step.index].get("kind", "produce") == "verify"
-    system = ("你负责当前步骤的只读核查。核对verificationResults中执行器已取得的真实结果，valid=true且没有内容问题时，调用complete_step提交简短结论。需要进一步核实时仅调用只读函数。当前步骤保持产物内容不变。"
-        if verification else native_agent_prompt(role, not run.plan_json, run.limits_json.get("deliveryMode", "legacy")))
-    if run.limits_json.get("toolCatalogVersion") in MATERIAL_CATALOG_VERSIONS:
+    version = run.limits_json.get("toolCatalogVersion")
+    if verification:
+        system = "你负责当前步骤的只读核查。核对verificationResults中执行器已取得的真实结果，valid=true且没有内容问题时，调用complete_step提交简短结论。需要进一步核实时仅调用只读函数。当前步骤保持产物内容不变。"
+    elif version == MATERIAL_SOP_TOOL_CATALOG_VERSION and step is None:
+        system = material_planning_prompt()
+    else:
+        system = native_agent_prompt(role, not run.plan_json, run.limits_json.get("deliveryMode", "legacy"),
+                                     version if version == MATERIAL_SOP_TOOL_CATALOG_VERSION else "R1")
+    if version in MATERIAL_CATALOG_VERSIONS:
         system += "\n" + run.limits_json.get("materialContext", {}).get("instructions", "")
-        if run.limits_json.get("materialContext", {}).get("scope") == "current_round":
+        if version != MATERIAL_SOP_TOOL_CATALOG_VERSION and run.limits_json.get("materialContext", {}).get("scope") == "current_round":
             system += "本轮范围以materialNodes、authorizedTargetIds和createdNodeIds为准。旧计划中超出该范围的历史对象及衔接要求已经取消，直接省略；只依据当前用户目标和本轮真实产物完成岗位交付，不读取或引用其他历史对象。"
         system += "普通文字节点通过read_project或retrieve_context读取正文；只有materialNodes中professionalRole有值的节点才可用read_artifact读取专业结构。每次只调用一个函数并等待真实结果。"
         if not verification and step is not None:
+            if version == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+                system += (
+                    "本步骤的真实输入列在context.adoptedHandoff。按节点标识用read_artifact读取；保存时在sources中以kind=artifact和实际nodeId引用已交接的产物。"
+                    "用户直接陈述的内容使用kind=user_requirement和referenceId:null。项目、场景、资产或文档没有已读真实标识就不要列为来源。只需要列出实际使用的来源。"
+                    '新建岗位成果的参数根对象固定为{"targetId":null,"title":null,"artifact":{…}}。标题只填写artifact.title，全用标准双引号字符串，根对象的title保持JSON字面量null。'
+                )
             system += "修订专业产物时，先read_artifact读取完整当前结构、revision、baseArtifactSha256及patchablePaths，再以patch_artifact逐字段replace并保留未涉及字段。读取上游产物不授予修改它的权限。"
             system += "patch只能使用实际返回的patchablePaths。新增标量数组元素时，replace已允许的完整数组路径并提供完整数组；不存在的数组下标不能replace。"
             write_schema = next(item["function"]["parameters"] for item in agent_tools(role, False,
@@ -863,8 +1056,18 @@ def _native_messages(run: AgentRun, step: AgentStep | None, role: str, context: 
         if not identifier:
             continue
         if call.input_json["protocol"] == MATERIAL_NATIVE_AGENT_PROTOCOL and call.usage_json.get("toolError", {}).get("code") == "AGENT_NATIVE_ARGUMENTS_INVALID":
-            messages.append({"role": "system", "content": json.dumps({"origin": "runtime_parameter_validation", "callId": call.id,
-                "requestId": call.remote_request_id, "error": call.usage_json["toolError"], "instruction": "该操作未执行。请按当前函数完整参数Schema重新生成，保留正确的artifact参数层级。"}, ensure_ascii=False)})
+            error = call.usage_json["toolError"]
+            feedback = {"origin": "runtime_parameter_validation", "callId": call.id, "requestId": call.remote_request_id,
+                        "error": error, "instruction": "该操作未执行。请按当前函数完整参数Schema重新生成，保留正确的artifact参数层级。"}
+            if version == MATERIAL_SOP_TOOL_CATALOG_VERSION and call.usage_json.get("nativeFunction") == "write_artifact":
+                if error["details"] and not any(detail["type"] == "json_invalid" for detail in error["details"]):
+                    raw = json.loads(call.raw_output)
+                    feedback["rejectedArguments"] = raw["tool_calls"][0]["function"]["arguments"]
+                feedback["instruction"] = (
+                    "此写入未执行。按已列出的确切字段错误修正，参考最近一份语法有效的rejectedArguments保留合格内容。"
+                    "无真实标识的额外引用请去掉，保留用户确认事项和已采用上游来源。新成果根字段title与targetId必须是null，所有正文只写在artifact内部。"
+                )
+            messages.append({"role": "system", "content": json.dumps(feedback, ensure_ascii=False)})
             continue
         receipt = receipts.get(f"agent-{call.id}")
         if call.usage_json.get("toolError") is not None:
@@ -882,7 +1085,7 @@ def _native_messages(run: AgentRun, step: AgentStep | None, role: str, context: 
     return messages
 
 
-def _json_messages(run: AgentRun, step: AgentStep | None, role: str, context: dict, calls: list[AgentCall], completed_steps: list[AgentStep]) -> list[dict]:
+def _json_messages(run: AgentRun, step: AgentStep | None, role: str, context: dict, calls: list[AgentCall], completed_steps: list[AgentStep], *, scene_artifact_only: bool = False, material_artifact_only: bool = False) -> list[dict]:
     planning = not run.plan_json
     protocol = run.limits_json.get("providerProtocol", JSON_AGENT_PROTOCOL)
     schema = agent_response_schema(planning, protocol=protocol)
@@ -897,6 +1100,12 @@ def _json_messages(run: AgentRun, step: AgentStep | None, role: str, context: di
             "需要进一步读取时，仅调用下列只读工具。保持产物内容不变。当前步骤不创作专业产物。"
             "只输出一个标准json对象。\n响应Schema：" + json.dumps(schema, ensure_ascii=False)
             + "\n只读工具Schema：" + json.dumps(business, ensure_ascii=False))
+    elif scene_artifact_only:
+        system = material_scene_artifact_prompt(artifact_model(role).model_json_schema(by_alias=True))
+    elif material_artifact_only:
+        system = material_structured_artifact_prompt(role, artifact_model(role, reusable_frames=True).model_json_schema(by_alias=True))
+    elif protocol == MATERIAL_JSON_AGENT_PROTOCOL:
+        system = material_json_agent_prompt(role, planning, schema, business)
     else:
         system = json_agent_prompt(role, business, planning, run.limits_json.get("deliveryMode", "legacy"), schema,
             catalog_version=TOOL_CATALOG_VERSION if catalog_version in MATERIAL_CATALOG_VERSIONS else catalog_version)
@@ -906,9 +1115,21 @@ def _json_messages(run: AgentRun, step: AgentStep | None, role: str, context: di
         {"role": "user", "content": json.dumps(_protocol_instruction(run, step, context, calls, completed_steps), ensure_ascii=False)}]
     steps = [*completed_steps, *([step] if step is not None else [])]
     receipts = {receipt["operationId"]: receipt for item in steps for receipt in item.tool_results_json}
+    if protocol == MATERIAL_JSON_AGENT_PROTOCOL and step is not None and (run.result_json or {}).get("materialProtocolUpgrade"):
+        accepted_reads = [receipts[f"agent-{call.id}"] for call in calls
+                          if call.step_id == step.id and call.input_json.get("protocol") == MATERIAL_NATIVE_AGENT_PROTOCOL
+                          and f"agent-{call.id}" in receipts and receipts[f"agent-{call.id}"]["tool"] == "read_artifact"]
+        if accepted_reads:
+            messages.append({"role": "user", "content": json.dumps({"alreadyRead": [_tool_observation(item) for item in accepted_reads]}, ensure_ascii=False)})
+    format_retry = (run.result_json or {}).get("materialJsonFormatRetries", {}).get(step.id) if step is not None else None
     latest_json_correction = None
     for call in calls:
         if call.input_json.get("protocol") != protocol or not call.raw_output:
+            continue
+        if protocol == MATERIAL_JSON_AGENT_PROTOCOL and (call.step_id != (step.id if step else None)
+                or not _call_in_material_revision(call, _material_revision_request(run, step.id if step else None))):
+            continue
+        if format_retry and _is_material_json_syntax_error(call.usage_json.get("toolError", {})):
             continue
         original = json.loads(call.raw_output)
         if not isinstance(original.get("content"), str) or original.get("tool_calls"):
@@ -946,6 +1167,8 @@ def _json_messages(run: AgentRun, step: AgentStep | None, role: str, context: di
             "authorizedTargetIds": run.target_ids_json}}, ensure_ascii=False)})
     if latest_json_correction is not None:
         messages.append({"role": "user", "content": json.dumps({"jsonCorrectionReminder": latest_json_correction}, ensure_ascii=False)})
+    if format_retry:
+        messages.append({"role": "user", "content": "之前的回复格式无效，没有保存。请按照当前岗位结构从已读取的真实输入重新输出一个完整JSON对象。先核对各层数组和对象的闭合，只输出本次所需操作。"})
     return messages
 
 
@@ -980,11 +1203,22 @@ def _native_tool_error(error: AppError) -> dict:
 
 
 def _recoverable_native_format(session: Session, run: AgentRun, revision: int) -> AgentCall | None:
-    if run.status != "failed" or run.error_code != "AGENT_NATIVE_CORRECTION_LIMIT" or run.project_revision != revision or run.limits_json.get("providerProtocol") != MATERIAL_NATIVE_AGENT_PROTOCOL or (run.result_json or {}).get("manualNativeRepairOf"):
+    if (run.status != "failed" or run.error_code != "AGENT_NATIVE_CORRECTION_LIMIT" or run.project_revision != revision
+            or run.limits_json.get("providerProtocol") != MATERIAL_NATIVE_AGENT_PROTOCOL):
+        return None
+    upgrade = run.limits_json.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION
+    if (run.result_json or {}).get("materialProtocolUpgrade" if upgrade else "manualNativeRepairOf"):
         return None
     call = session.scalar(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at.desc()).limit(1))
     if call is None or call.status != "tool_rejected" or call.usage_json.get("toolError", {}).get("code") != "AGENT_NATIVE_ARGUMENTS_INVALID" or not call.usage_json.get("toolCallId") or not call.remote_request_id or not call.usage_json.get("settled") or call.usage_json.get("toolExecutionDone"):
         return None
+    if upgrade:
+        reservation = session.get(BudgetReservation, call.id)
+        if (call.input_json.get("protocol") != MATERIAL_NATIVE_AGENT_PROTOCOL or call.input_json.get("projectRevision") != revision
+                or call.usage_json["toolError"].get("businessExecuted") is not False or call.cost_micros is None
+                or reservation is None or reservation.status != "settled" or reservation.reserved_micros != 0
+                or reservation.cost_micros != call.cost_micros):
+            return None
     count = session.scalar(select(func.count()).select_from(AgentCall).where(AgentCall.run_id == run.id))
     if count >= run.limits_json["maxSteps"]:
         return None
@@ -1059,6 +1293,8 @@ def _reject_native_call(session: Session, run: AgentRun, call: AgentCall, error:
 def _safe_native_rejection(error: AppError, tool_name: str | None) -> bool:
     if error.code == "MATERIAL_REVISION_REQUIRED":
         return error.status == 422 and tool_name == "complete_step"
+    if error.code == "AGENT_IMAGE_PROMPT_SELECTION_INVALID":
+        return error.status == 422 and tool_name == "patch_artifact"
     if error.status == 403 and error.code == "AGENT_TARGET_NOT_ALLOWED" and tool_name in {"read_artifact", "retrieve_context"}:
         return True
     if error.status == 422 and error.code == "AGENT_NATIVE_BATCH_NOT_EXECUTED":
@@ -1077,9 +1313,25 @@ def _native_not_executed(call: AgentCall, code: str, message: str) -> None:
     call.usage_json = {**call.usage_json, "toolError": {"code": code, "message": message, "details": [], "businessExecuted": False, "retryable": False}}
 
 
+def _complete_platform_step(session, run, step, summary, validation):
+    step.status, step.result_json = "completed", {"summary": summary, "verifiedToolCount": len(step.tool_results_json), "artifactValidation": validation}
+    session.flush()
+    run.status = "completed" if _next_step(session, run) is None else "queued"
+    run.result_json = {**(run.result_json or {}), "summary": summary, "lastStepId": step.id, "actualToolResults": step.tool_results_json}
+    if run.status == "completed":
+        run.finished_at = time.time()
+
+
 def _finish_native_action(session: Session, run: AgentRun, call: AgentCall, decision: AgentDecision, project: Project, settings: Settings) -> None:
     step = session.get(AgentStep, call.step_id) if call.step_id else None
     if call.input_json["planning"]:
+        if isinstance(decision, MaterialPlanningDecision):
+            run.result_json = {**(run.result_json or {}), "directorBrief": decision.director_brief.model_dump(by_alias=True)}
+            if decision.questions:
+                from app.services.material_review import pause_for_clarification
+                review_id = pause_for_clarification(run, [question.model_dump(by_alias=True) for question in decision.questions])
+                call.usage_json = {**call.usage_json, "controlResult": {"accepted": True, "status": "waiting_confirmation", "reviewId": review_id}}
+                return
         if decision.action != "plan" or not decision.plan:
             raise AppError(422, "AGENT_PLAN_INVALID", "角色计划缺少必要步骤")
         if run.role != "director" and any(item.role != run.role for item in decision.plan):
@@ -1093,20 +1345,19 @@ def _finish_native_action(session: Session, run: AgentRun, call: AgentCall, deci
                 raise AppError(422, "AGENT_PLAN_DEPENDENCY_INVALID", "计划依赖必须唯一且引用前面的步骤")
             if item.kind == "verify" and (not item.depends_on or any(decision.plan[dependency].kind != "produce" for dependency in item.depends_on)):
                 raise AppError(422, "AGENT_PLAN_DEPENDENCY_INVALID", "验证步骤必须依赖前面的产物步骤")
-        run.plan_json = [item.model_dump(by_alias=True) for item in decision.plan]
-        for index, item in enumerate(decision.plan):
-            session.add(AgentStep(run_id=run.id, index=index, role=item.role, title=item.title, instruction=item.instruction, status="queued", tool_results_json=[]))
+        plan = [item.model_dump(by_alias=True) for item in decision.plan]
+        if isinstance(decision, MaterialPlanningDecision):
+            from app.services.material_handoffs import material_plan
+            plan = material_plan(session, run, require_canvas(session, run, project), plan)
+        run.plan_json = plan
+        for index, item in enumerate(plan):
+            session.add(AgentStep(run_id=run.id, index=index, role=item["role"], title=item["title"], instruction=item["instruction"], status="queued", tool_results_json=[]))
         call.usage_json = {**call.usage_json, "controlResult": {"accepted": True, "plan": run.plan_json}}
         run.status = "queued"
     elif decision.action == "complete" and step is not None:
         validation = require_step_delivery(session, run, step, project, settings)
-        step.status, step.result_json = "completed", {"summary": decision.summary, "verifiedToolCount": len(step.tool_results_json), "artifactValidation": validation}
-        session.flush()
-        run.status = "completed" if _next_step(session, run) is None else "queued"
+        _complete_platform_step(session, run, step, decision.summary, validation)
         call.usage_json = {**call.usage_json, "controlResult": {"completed": True, "stepId": step.id, "summary": decision.summary, "artifactValidation": validation}}
-        run.result_json = {**(run.result_json or {}), "summary": decision.summary, "lastStepId": step.id, "actualToolResults": step.tool_results_json}
-        if run.status == "completed":
-            run.finished_at = time.time()
     else:
         raise AppError(422, "AGENT_DECISION_INVALID", "当前函数调用不符合规划或执行阶段")
 
@@ -1129,7 +1380,8 @@ def _apply_native_call(settings: Settings, factory: sessionmaker, run_id: str, c
             if call.usage_json.get("toolExecutionDone"):
                 session.commit()
                 return
-            decision = AgentDecision.model_validate(call.response_json)
+            schema = MaterialPlanningDecision if call.input_json["planning"] and run.limits_json.get("toolCatalogVersion") == MATERIAL_SOP_TOOL_CATALOG_VERSION else AgentDecision
+            decision = schema.model_validate(call.response_json)
             tool_name = "submit_plan" if call.input_json["planning"] else "complete_step" if decision.action == "complete" else decision.tool
             if tool_name in {"split_image", "join_videos", "adopt_asset", "submit_generation"}:
                 call.status = "tool_executing"
@@ -1212,11 +1464,17 @@ def _decode_native_saved_call(settings: Settings, factory: sessionmaker, run_id:
         protocol = call.input_json["protocol"]
         json_protocol = is_json_protocol(protocol)
         finish_reason = call.usage_json.get("providerFinishReason", call.usage_json.get("nativeFinishReason"))
+        closed_scene = decode_structured_scene_closure(message) if _is_structured_scene_call(call) else None
     try:
         if finish_reason != ("stop" if json_protocol else "tool_calls"):
             raise AppError(422, "AGENT_RESULT_INCOMPLETE", "模型回复未完整结束，实际回复和费用已保存")
-        decision, identifier = decode_platform_message(message, planning, role, protocol=protocol,
-            catalog_version=call.input_json.get("toolCatalogVersion", LEGACY_TOOL_CATALOG_VERSION))
+        if closed_scene is None:
+            decision, identifier = decode_platform_message(message, planning, role, protocol=protocol,
+                catalog_version=call.input_json.get("toolCatalogVersion", LEGACY_TOOL_CATALOG_VERSION),
+                scene_artifact_only=bool(call.input_json.get("sceneArtifactOnly")),
+                material_artifact_only=bool(call.input_json.get("materialArtifactOnly")))
+        else:
+            decision, identifier = closed_scene[0], None
     except AppError as error:
         with factory() as session:
             lock_write(session)
@@ -1240,6 +1498,8 @@ def _decode_native_saved_call(settings: Settings, factory: sessionmaker, run_id:
         lock_write(session)
         call = session.get(AgentCall, call_id)
         call.response_json, call.status = decision, "ready"
+        if closed_scene is not None:
+            call.usage_json = {**call.usage_json, "structuredSceneClosure": {"appended": closed_scene[1], "scope": "terminal_delimiters"}}
         if identifier is not None:
             call.usage_json = {**call.usage_json, "toolCallId": identifier}
         session.commit()
@@ -1297,22 +1557,26 @@ async def _execute_native_platform(settings: Settings, factory: sessionmaker, ru
             return
         role = run.role if planning else step.role
         protocol = run.limits_json["providerProtocol"]
+        catalog_version = run.limits_json.get("toolCatalogVersion", LEGACY_TOOL_CATALOG_VERSION)
         model = _run_model(run)
         if model != MODEL:
             raise AppError(403, "MODEL_NOT_AUTHORIZED", "当前仅授权deepseek-flash发起新请求；该任务的原模型、回复和费用记录继续保留")
+        review = (run.result_json or {}).get("materialReview") or {}
+        if (catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION and step is not None and step.role != "media_producer"
+                and review.get("stepId") == step.id and review.get("status") == "approved"):
+            validation = require_step_delivery(session, run, step, project, settings)
+            _complete_platform_step(session, run, step, "此岗位的成果已采用。", validation)
+            run.lease_owner, run.lease_expires_at, run.updated_at = None, None, time.time()
+            session.commit()
+            return
         if step is not None and run.plan_json[step.index].get("kind", "produce") == "verify":
             execute_tool(session, run, step.role, "validate_story" if run.limits_json.get("workspace") == "project" else "validate_artifacts", {}, f"agent-verify-{step.id}-{project.revision}", project.revision, settings, step,
                          manage_transaction=False, execution_origin="runtime")
             if run.limits_json.get("toolCatalogVersion") in MATERIAL_CATALOG_VERSIONS:
                 validation = require_step_delivery(session, run, step, project, settings)
                 summary = "已核对当前保存产物的专业结构、来源、内容哈希与版本。"
-                step.status, step.result_json = "completed", {"summary": summary, "verifiedToolCount": len(step.tool_results_json), "artifactValidation": validation}
-                session.flush()
-                run.status = "completed" if _next_step(session, run) is None else "queued"
-                run.result_json = {**(run.result_json or {}), "summary": summary, "lastStepId": step.id, "actualToolResults": step.tool_results_json}
+                _complete_platform_step(session, run, step, summary, validation)
                 run.lease_owner, run.lease_expires_at, run.updated_at = None, None, time.time()
-                if run.status == "completed":
-                    run.finished_at = time.time()
                 session.commit()
                 return
         if len(calls) >= run.limits_json["maxSteps"]:
@@ -1324,15 +1588,39 @@ async def _execute_native_platform(settings: Settings, factory: sessionmaker, ru
         completed = session.scalars(select(AgentStep).where(AgentStep.run_id == run.id, AgentStep.status == "completed").order_by(AgentStep.index)).all()
         current_round = run.limits_json.get("materialContext", {}).get("scope") == "current_round"
         context = retrieve_context(session, run.project_id, run.owner_id, run.scene_id, run.branch_id, _context_targets(session, run), 16000, material_only=current_round)
-        if run.limits_json.get("toolCatalogVersion") in MATERIAL_CATALOG_VERSIONS:
+        if catalog_version in MATERIAL_CATALOG_VERSIONS:
+            from app.services.materials import material_followups
+            followups = material_followups(session, run)
+            if followups:
+                context["conversationFollowups"] = followups
+            canvas = require_canvas(session, run, project)
             context["materialNodes"] = [{"id": node["id"], "type": node["type"], "title": node.get("title"),
-                "professionalRole": (node.get("metadata", {}).get("creativeArtifact") or {}).get("role")} for node in require_canvas(session, run, project).data_json["nodes"] if node["type"] != "agent" and (not current_round or node["id"] in {*run.target_ids_json, *run.created_ids_json})]
-        messages = _json_messages(run, step, role, context, calls, completed) if is_json_protocol(protocol) else _native_messages(run, step, role, context, calls, completed)
-        catalog_version = run.limits_json.get("toolCatalogVersion", LEGACY_TOOL_CATALOG_VERSION)
+                "professionalRole": (node.get("metadata", {}).get("creativeArtifact") or {}).get("role")} for node in canvas.data_json["nodes"] if node["type"] != "agent" and (not current_round or node["id"] in {*run.target_ids_json, *run.created_ids_json})]
+            if catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION:
+                from app.services.material_handoffs import adopted_material_inputs, prepare_material_handoff, read_material_handoff
+                context["adoptedHandoff"] = (prepare_material_handoff(session, run, step, canvas) if step is not None
+                    else adopted_material_inputs(session, run, canvas, run.target_ids_json))
+                if protocol == MATERIAL_JSON_AGENT_PROTOCOL and step is not None:
+                    context["adoptedHandoffArtifacts"] = read_material_handoff(session, run, step, project,
+                        context["adoptedHandoff"], settings)
+        direct_artifact_allowed = (protocol == MATERIAL_JSON_AGENT_PROTOCOL and step is not None
+            and bool(context.get("adoptedHandoffArtifacts"))
+            and run.plan_json[step.index].get("kind", "produce") == "produce" and _material_revision_request(run, step.id) is None
+            and not any(receipt["tool"] in {"write_artifact", "patch_artifact"} for receipt in step.tool_results_json))
+        scene_artifact_only = direct_artifact_allowed and role == "scene_designer"
+        format_retry = (run.result_json or {}).get("materialJsonFormatRetries", {}).get(step.id, {}) if step is not None else {}
+        material_artifact_only = (direct_artifact_allowed and role in MATERIAL_STRUCTURED_RECOVERY_ROLES
+            and format_retry.get("materialArtifactOnly") is True)
+        messages = (_json_messages(run, step, role, context, calls, completed, scene_artifact_only=scene_artifact_only,
+            material_artifact_only=material_artifact_only)
+            if is_json_protocol(protocol) else _native_messages(run, step, role, context, calls, completed))
         tools = agent_tools(role, planning, protocol=protocol, model=model, catalog_version=catalog_version)
         business_tools = agent_business_tools(role, planning, catalog_version=catalog_version)
         maximum = run.limits_json["maxTokens"]
-        request_body = agent_request_body(messages, maximum, tools, planning, settings, protocol=protocol, model=model, catalog_version=catalog_version)
+        structured_schema = (artifact_model(role, reusable_frames=True).model_json_schema(by_alias=True)
+            if scene_artifact_only or material_artifact_only else None)
+        request_body = agent_request_body(messages, maximum, tools, planning, settings, protocol=protocol, model=model,
+            catalog_version=catalog_version, structured_response_schema=structured_schema)
         input_upper = len(json.dumps(request_body, ensure_ascii=False, separators=(",", ":")).encode()) + 2048
         upper = cost_micros(0, input_upper, maximum, peak_price(model=model))
         reserved = session.scalar(select(func.coalesce(func.sum(BudgetReservation.reserved_micros), 0)).where(BudgetReservation.id.in_([call.id for call in calls])))
@@ -1340,11 +1628,15 @@ async def _execute_native_platform(settings: Settings, factory: sessionmaker, ru
             raise AppError(402, "AGENT_COST_LIMIT", "本次请求将超过已确认费用限制")
         _reserve(session, upper, settings)
         call = AgentCall(id=new_id(), run_id=run.id, step_id=step.id if step else None, role=role, provider="deepseek", model=model,
-            status="submitting", input_json={"protocol": protocol, "toolCatalogVersion": catalog_version, "providerEndpoint": provider_endpoint(protocol), "businessTools": business_tools,
+            status="submitting", input_json={"protocol": protocol, "toolCatalogVersion": catalog_version,
+                "providerEndpoint": provider_endpoint(protocol, structured_response=structured_schema is not None), "businessTools": business_tools,
                 "messages": messages, "tools": tools, "planning": planning, "model": model,
-                **({"responseSchema": agent_response_schema(planning, protocol=protocol)} if is_json_protocol(protocol) else {}),
+                **({"responseSchema": structured_schema} if structured_schema is not None
+                    else {"responseSchema": agent_response_schema(planning, protocol=protocol)} if is_json_protocol(protocol) else {}),
+                **({"sceneArtifactOnly": True} if scene_artifact_only else {}),
+                **({"materialArtifactOnly": True} if material_artifact_only else {}),
                 "requestBody": request_body,
-                **({"requestTimeoutSeconds": settings.text_timeout} if protocol == THINKING_JSON_AGENT_PROTOCOL else {}),
+                **({"requestTimeoutSeconds": settings.text_timeout} if protocol in THINKING_JSON_PROTOCOLS else {}),
                 "maxTokens": maximum, "inputTokenUpperBound": input_upper, "price": current_price(time.time(), model=model),
                 "projectRevision": project.revision, "sceneId": run.scene_id, "providerRevision": provider.updated_at,
                 "promptVersion": PROMPT_VERSION,
@@ -1362,7 +1654,8 @@ async def _execute_native_platform(settings: Settings, factory: sessionmaker, ru
         key, call_id = decode_secret(provider.api_key_encrypted, settings), call.id
         session.commit()
     try:
-        response = await complete_agent(key, messages, maximum, tools, planning, settings, protocol=protocol, model=model, catalog_version=catalog_version)
+        response = await complete_agent(key, messages, maximum, tools, planning, settings, protocol=protocol, model=model,
+            catalog_version=catalog_version, structured_response_schema=structured_schema)
     except TextProviderFailure as error:
         with factory() as session:
             lock_write(session)

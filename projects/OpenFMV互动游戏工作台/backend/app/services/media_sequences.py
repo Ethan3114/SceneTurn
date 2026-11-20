@@ -64,10 +64,11 @@ def create_sequence(session, project_id, scene_id, owner_id, body, settings):
     if replay:
         return require_sequence(session, project_id, replay["sequenceId"], owner_id)
     require_revision(project, body.expected_revision)
-    conversation = None
+    run = None
     if body.conversation_id:
-        from app.services.materials import require_material
+        from app.services.materials import active_production, require_material
         conversation = require_material(session, project_id, scene_id, body.conversation_id, owner_id)
+        run, _ = active_production(session, conversation)
     frames = [checked_frame(session, identifier, owner_id, project_id, settings) for identifier in body.frame_asset_ids]
     canvas = session.scalar(select(Canvas).where(Canvas.project_id == project_id, Canvas.scene_id == scene_id, Canvas.owner_id == owner_id))
     if canvas is None:
@@ -94,7 +95,7 @@ def create_sequence(session, project_id, scene_id, owner_id, body, settings):
         ])
         snapshot["connections"].append({"id": new_id(), "fromNodeId": source_id, "toNodeId": output_id, "fromHandle": "right", "toHandle": "left"})
     frozen = {"schemaVersion": 1, "title": body.title, "frames": frames, "segments": segments,
-        "conversationId": body.conversation_id, "runId": conversation.active_run_id if conversation else None}
+        "conversationId": body.conversation_id, "runId": run.id if run else None}
     sequence = MediaSequence(id=sequence_id, owner_id=owner_id, project_id=project_id, scene_id=scene_id,
         input_json=frozen, input_sha256=payload_digest(frozen))
     session.add(sequence)

@@ -1,5 +1,4 @@
 import json
-import sqlite3
 import uuid
 from pathlib import Path
 
@@ -27,13 +26,12 @@ UNKNOWN_SNAPSHOT = DATABASE.parent.parent / ".intermediate/material-recovery/eaf
 
 
 @pytest.fixture
-def unknown_database(tmp_path, request):
+def unknown_database(writable_snapshot, request):
     snapshot = UNKNOWN_SNAPSHOT.with_name(request.param) if hasattr(request, "param") else UNKNOWN_SNAPSHOT
-    with sqlite3.connect(f"{snapshot.resolve().as_uri()}?mode=ro", uri=True) as source, sqlite3.connect(tmp_path / "openfmv.sqlite3") as destination:
-        source.backup(destination)
-    engine = create_engine(f"sqlite:///{tmp_path / 'openfmv.sqlite3'}")
-    yield engine, tmp_path
-    engine.dispose()
+    database = writable_snapshot(snapshot)
+    engine = create_engine(f"sqlite:///{database}")
+    request.addfinalizer(engine.dispose)
+    return engine, database.parent
 
 
 def test_real_provider_batch_is_rejected_with_genuine_call_ids():

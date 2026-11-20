@@ -45,6 +45,7 @@ export type CanvasNodeText = {
 };
 
 export type CanvasNodeMetadata = {
+    publicMaterialRole?: string;
     creativeArtifact?: Record<string, unknown>;
     agentWorkspace?: "project" | "scene";
     agentRole?: string;

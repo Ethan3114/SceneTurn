@@ -1,9 +1,10 @@
 import copy
 import json
-import sqlite3
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from pydantic import ValidationError
@@ -11,18 +12,20 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.agent_models import AgentRun, AgentStep
+from app.core.config import Settings
 from app.core.errors import AppError
+from app.core.security import hash_password
 from app.creative_artifacts import image_prompt_items, render_artifact, validate_artifact
 from app.image_models import ImageAccount, ImageJob
 from app.material_models import MaterialConversation, MaterialMessage
 from app.material_schemas import MaterialAnswer
-from app.models import Project
+from app.models import Base, Project, User, new_id
 from app.services.agent import require_step_delivery, resume_run
 from app.services.agent_provider import MATERIAL_NATIVE_AGENT_PROTOCOL, agent_request_body, agent_tools
-from app.core.config import Settings
-from app.services.image_queue import claim_job, recover_jobs
+from app.services.image_queue import _finish_failure, claim_job, recover_jobs
 from app.services.material_review import answer_review, pause_for_review, public_review
 from app.services.materials import view
+from app.services.projects import create_project_record, payload_digest
 from app.tools.project_tools import execute_tool, require_canvas
 
 
@@ -31,13 +34,11 @@ RUN_ID = "eafe14be-35fd-4bf6-97c3-613133121dcd"
 
 
 @pytest.fixture
-def actual_database(tmp_path):
-    database = tmp_path / "openfmv.sqlite3"
-    with sqlite3.connect(f"{(ROOT / 'data/openfmv.sqlite3').resolve().as_uri()}?mode=ro", uri=True) as source, sqlite3.connect(database) as destination:
-        source.backup(destination)
+def actual_database(writable_snapshot, request):
+    database = writable_snapshot(ROOT / "data/openfmv.sqlite3")
     engine = create_engine(f"sqlite:///{database}", connect_args={"timeout": 10})
-    yield engine
-    engine.dispose()
+    request.addfinalizer(engine.dispose)
+    return engine
 
 
 def actual_role(session, role):
@@ -140,42 +141,201 @@ def test_custom_answer_requires_real_revision_before_handoff(actual_database):
         assert failure.value.code == "MATERIAL_REVISION_REQUIRED"
 
 
-def test_concurrent_claims_respect_all_three_real_accounts_and_keep_unknown_occupied(actual_database):
-    with Session(actual_database) as session:
-        accounts = session.scalars(select(ImageAccount)).all()
-        preserved = {account.id: account.active_job_id for account in accounts if account.active_job_id}
-        available = sum(account.status == "available" and account.active_job_id is None for account in accounts)
-        assert len(accounts) == 3
-        run, step, node, _ = actual_role(session, "character_designer")
-        pause_for_review(session, run, step, node, node["metadata"]["creativeArtifact"])
-        jobs = session.scalars(select(ImageJob).where(ImageJob.run_id == run.id)).all()
-        assert jobs
-        original = jobs[0]
-        while len(jobs) < 4:
-            job = ImageJob(owner_id=original.owner_id, project_id=original.project_id, scene_id=original.scene_id,
-                run_id=original.run_id, node_id=original.node_id, artifact_hash=original.artifact_hash,
-                operation_id=str(uuid.uuid4()), label=original.label, status="queued", request_json=original.request_json,
-                reference_asset_ids=[], dependency_ids=[])
-            session.add(job)
-            jobs.append(job)
-        for job in jobs:
-            job.status = "queued"
+@pytest.fixture
+def serial_image_queue(tmp_path, request):
+    engine = create_engine(f"sqlite:///{tmp_path / 'image-queue.sqlite3'}", connect_args={"timeout": 10})
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        for account_count in getattr(request, "param", (2, 1)):
+            user = User(email=f"{new_id()}@queue.invalid", password_hash=hash_password(new_id()))
+            session.add(user)
+            session.flush()
+            project = create_project_record(session, user.id, "独立图片队列验证")
+            scene_id = next(node["id"] for node in project.data_json["graphData"]["nodes"] if node["type"] == "scene")
+            run = AgentRun(owner_id=user.id, project_id=project.id, scene_id=scene_id, operation_id=new_id(),
+                role="storyboarder", executor="platform", goal="验证单张图片领取", limits_json={}, plan_json=[],
+                initial_revision=project.revision, project_revision=project.revision, status="waiting_confirmation")
+            session.add(run)
+            session.flush()
+            for slot in range(1, account_count + 1):
+                session.add(ImageAccount(owner_id=user.id, slot=slot, credential_hash=payload_digest({"slot": slot, "owner": user.id}),
+                    api_key_encrypted="", status="available"))
+            for label in ("静物首帧", "静物尾帧"):
+                session.add(ImageJob(owner_id=user.id, project_id=project.id, scene_id=scene_id, run_id=run.id,
+                    node_id=new_id(), artifact_hash=payload_digest({"title": label}), operation_id=new_id(), label=label,
+                    status="queued", confirmed_at=time.time(), request_json={"width": 2048, "height": 1152, "prompt": label}))
         session.commit()
+    yield engine
+    engine.dispose()
+
+
+def test_parallel_claims_allow_one_image_across_accounts_and_users(serial_image_queue):
+    start = Barrier(4)
+
     def claim():
-        with Session(actual_database) as session:
+        with Session(serial_image_queue) as session:
+            start.wait(timeout=10)
             return claim_job(session)
+
     with ThreadPoolExecutor(max_workers=4) as executor:
-        identifiers = list(executor.map(lambda _: claim(), range(4)))
-    assert len([identifier for identifier in identifiers if identifier]) == available
-    assert len(set(identifier for identifier in identifiers if identifier)) == available
-    with Session(actual_database) as session:
-        occupied = session.scalars(select(ImageAccount).where(ImageAccount.active_job_id.is_not(None))).all()
-        assert len(occupied) == 3 and len({account.slot for account in occupied}) == 3
-        assert session.scalar(select(ImageJob).where(ImageJob.status == "queued")) is not None
+        attempts = [executor.submit(claim) for _ in range(4)]
+        claimed = [attempt.result() for attempt in attempts]
+    identifiers = [identifier for identifier in claimed if identifier]
+    assert len(identifiers) == 1
+    with Session(serial_image_queue) as session:
+        accounts = session.scalars(select(ImageAccount)).all()
+        assert len(accounts) == 3 and len({account.owner_id for account in accounts}) == 2
+        assert [account.active_job_id for account in accounts if account.active_job_id] == identifiers
+        assert len(session.scalars(select(ImageJob).where(ImageJob.status == "queued")).all()) == 3
         recover_jobs(session)
-    with Session(actual_database) as session:
-        assert {account.id: account.active_job_id for account in session.scalars(select(ImageAccount)) if account.active_job_id} == preserved
-        assert not session.scalars(select(ImageJob).where(ImageJob.status == "claimed")).all()
+    with Session(serial_image_queue) as session:
+        assert claim_job(session) == identifiers[0]
+
+
+@pytest.mark.parametrize("outcome", ["ready", "failed", "connection_requeued"])
+def test_five_second_gap_uses_persisted_provider_completion(serial_image_queue, outcome):
+    with Session(serial_image_queue) as session:
+        identifier = claim_job(session)
+        job = session.get(ImageJob, identifier)
+        account = session.get(ImageAccount, job.account_id)
+        job.status, job.attempt_count, job.submitted_at = "submitting", 1, time.time() - 30
+        if outcome == "failed":
+            _finish_failure(session, job, "IMAGE_PROVIDER_REJECTED")
+            released_at = job.finished_at
+        else:
+            released_at = time.time()
+            job.updated_at = released_at
+            account.active_job_id = None
+            if outcome == "ready":
+                job.status, job.finished_at = "ready", released_at
+            else:
+                job.status, job.account_id = "queued", None
+            session.commit()
+    serial_image_queue.dispose()
+    with Session(serial_image_queue) as session:
+        assert claim_job(session) is None
+    time.sleep(max(0, released_at + 5.02 - time.time()))
+    with Session(serial_image_queue) as session:
+        next_id = claim_job(session)
+        assert next_id
+        assert session.get(ImageJob, next_id).updated_at >= released_at + 5
+
+
+def test_unknown_submission_keeps_even_other_users_blocked_after_reopening(serial_image_queue):
+    with Session(serial_image_queue) as session:
+        identifier = claim_job(session)
+        job = session.get(ImageJob, identifier)
+        account_id = job.account_id
+        job.status, job.attempt_count, job.submitted_at = "submitting", 1, time.time() - 60
+        session.commit()
+    serial_image_queue.dispose()
+    with Session(serial_image_queue) as session:
+        recover_jobs(session)
+        assert claim_job(session) is None
+        job = session.get(ImageJob, identifier)
+        account = session.get(ImageAccount, account_id)
+        assert job.status == "submission_unknown" and job.finished_at is None
+        assert account.status == "quarantined" and account.active_job_id == identifier
+        assert len(session.scalars(select(ImageAccount).where(ImageAccount.active_job_id.is_(None))).all()) == 2
+    serial_image_queue.dispose()
+    with Session(serial_image_queue) as session:
+        recover_jobs(session)
+        assert claim_job(session) is None
+        assert session.get(ImageAccount, account_id).active_job_id == identifier
+
+
+def test_receipt_deadline_survives_restart_and_rotates_original_job_with_dependency(serial_image_queue):
+    with Session(serial_image_queue) as session:
+        identifier = claim_job(session)
+        job = session.get(ImageJob, identifier)
+        follower = session.scalar(select(ImageJob).where(ImageJob.run_id == job.run_id, ImageJob.id != identifier))
+        follower.dependency_ids = [identifier]
+        follower_id, project_id, account_id = follower.id, job.project_id, job.account_id
+        submitted_at = time.time() - 179
+        job.status, job.attempt_count, job.submitted_at = "submitting", 1, submitted_at
+        session.commit()
+    serial_image_queue.dispose()
+    with Session(serial_image_queue) as session:
+        recover_jobs(session)
+        assert claim_job(session) is None
+        assert session.get(ImageAccount, account_id).active_job_id == identifier
+        assert session.get(ImageJob, identifier).status == "submission_unknown"
+    time.sleep(max(0, submitted_at + 180.02 - time.time()))
+    serial_image_queue.dispose()
+    with Session(serial_image_queue) as session:
+        recover_jobs(session)
+        assert claim_job(session) is None
+        job = session.get(ImageJob, identifier)
+        account = session.get(ImageAccount, account_id)
+        assert job.status == "queued" and job.submitted_at == submitted_at and job.attempt_count == 1
+        assert account.status == "available" and account.active_job_id is None
+        released_at = job.updated_at
+        assert released_at >= submitted_at + 180
+        assert job.request_json["expiredAttempts"] == [{"accountId": account_id, "attempt": 1,
+            "submittedAt": submitted_at, "releasedAt": released_at, "errorCode": "IMAGE_SUBMISSION_UNKNOWN"}]
+        assert session.get(ImageJob, follower_id).dependency_ids == [identifier]
+    time.sleep(max(0, released_at + 5.02 - time.time()))
+    with Session(serial_image_queue) as session:
+        assert claim_job(session) == identifier
+        job = session.get(ImageJob, identifier)
+        assert job.project_id == project_id and job.account_id != account_id and job.attempt_count == 1
+        assert session.get(ImageAccount, job.account_id).owner_id == job.owner_id
+        assert job.updated_at >= released_at + 5
+        follower = session.get(ImageJob, follower_id)
+        assert follower.status == "queued" and follower.dependency_ids == [identifier]
+
+
+@pytest.mark.parametrize("serial_image_queue", [(3,)], indirect=True)
+def test_three_expired_accounts_finish_original_job_as_timeout(serial_image_queue):
+    with Session(serial_image_queue) as session:
+        identifier = claim_job(session)
+        job = session.get(ImageJob, identifier)
+        follower = session.scalar(select(ImageJob).where(ImageJob.run_id == job.run_id, ImageJob.id != identifier))
+        follower.dependency_ids = [identifier]
+        session.commit()
+    accounts = []
+    for attempt in range(1, 4):
+        with Session(serial_image_queue) as session:
+            job = session.get(ImageJob, identifier)
+            assert job.status == "claimed" and job.account_id not in accounts
+            accounts.append(job.account_id)
+            job.status, job.attempt_count, job.submitted_at = "submitting", attempt, time.time() - 181
+            _finish_failure(session, job, "IMAGE_RESPONSE_TIMEOUT", unknown=True)
+            assert claim_job(session) is None
+            released_at = session.get(ImageJob, identifier).updated_at
+        time.sleep(max(0, released_at + 5.02 - time.time()))
+        with Session(serial_image_queue) as session:
+            assert claim_job(session) == (identifier if attempt < 3 else None)
+    with Session(serial_image_queue) as session:
+        job = session.get(ImageJob, identifier)
+        assert job.status == "failed" and job.error_code == "IMAGE_RESPONSE_TIMEOUT"
+        assert job.finished_at >= released_at and job.attempt_count == 3
+        attempts = job.request_json["expiredAttempts"]
+        assert [item["accountId"] for item in attempts] == accounts and len(set(accounts)) == 3
+        assert [item["attempt"] for item in attempts] == [1, 2, 3]
+        assert all(account.active_job_id is None for account in session.scalars(select(ImageAccount)))
+
+
+@pytest.mark.parametrize("run_status,stop_requested,expected", [
+    ("stopping", 1, "cancelled"), ("stopped", 0, "cancelled"),
+    ("completed", 0, "failed"), ("failed", 0, "failed"),
+])
+def test_expired_closed_run_only_releases_its_account(serial_image_queue, run_status, stop_requested, expected):
+    with Session(serial_image_queue) as session:
+        identifier = claim_job(session)
+        job = session.get(ImageJob, identifier)
+        account_id = job.account_id
+        run = session.get(AgentRun, job.run_id)
+        run.status, run.stop_requested = run_status, stop_requested
+        job.status, job.attempt_count, job.submitted_at = "submitting", 1, time.time() - 181
+        _finish_failure(session, job, "IMAGE_RESPONSE_TIMEOUT", unknown=True)
+    with Session(serial_image_queue) as session:
+        assert claim_job(session) is None
+        job = session.get(ImageJob, identifier)
+        assert job.status == expected and job.finished_at is not None and job.attempt_count == 1
+        assert job.request_json["expiredAttempts"][0]["accountId"] == account_id
+        account = session.get(ImageAccount, account_id)
+        assert account.status == "available" and account.active_job_id is None
 
 
 def test_new_storyboard_contract_reuses_boundary_keys_and_preserves_legacy_artifacts(actual_database):
@@ -223,14 +383,17 @@ def test_actual_sensetime_responses_match_saved_images_and_dimensions():
     engine.dispose()
 
 
-@pytest.mark.parametrize("statuses,expected", [
-    (["ready"] * 5 + ["submission_unknown"], "图片已完成5/6张，1张请求结果待核实。请先核对未完成的图片。"),
-    (["ready", "ready", "submission_unknown", "failed", "cancelled", "queued"], "图片已完成2/6张，1张请求结果待核实，1张生成失败，1张已取消。另有1张仍在排队或处理中。"),
-    (["ready"] * 4 + ["failed", "cancelled"], "图片已完成4/6张，1张生成失败，1张已取消。请先核对未完成的图片。"),
-    (["ready"] * 5 + ["submitting"], "图片生成中，完成后请确认图片成果。"),
-    (["ready"] * 6, "图片已生成，请查看画布并确认后继续。"),
+@pytest.mark.parametrize("statuses,queue_blocked,expected", [
+    (["ready"] * 5 + ["submission_unknown"], True, "图片已完成5/6张，1张请求结果待核实。回执最多等待3分钟，超时后尝试换账号。"),
+    (["ready", "ready", "submission_unknown", "failed", "cancelled", "queued"], True, "图片已完成2/6张，1张请求结果待核实，1张生成失败，1张已取消。另有1张仍在排队或处理中。回执最多等待3分钟，超时后尝试换账号。"),
+    (["ready"] * 4 + ["failed", "cancelled"], False, "图片已完成4/6张，1张生成失败，1张已取消。请先核对未完成的图片。"),
+    (["ready"] * 5 + ["timed_out"], False, "图片已完成5/6张，1张等待回执超时。请先核对未完成的图片。"),
+    (["ready"] * 5 + ["submitting"], False, "图片生成中，完成后请确认图片成果。"),
+    (["ready"] * 5 + ["queued"], False, "图片正在排队，上一单结束后至少间隔5秒再提交。"),
+    (["ready"] * 5 + ["queued"], True, "上一单回执待返回，超时后队列会继续。"),
+    (["ready"] * 6, False, "图片已生成，请查看画布并确认后继续。"),
 ])
-def test_image_review_message_uses_isolated_confirmed_workflow(actual_database, statuses, expected):
+def test_image_review_message_uses_isolated_confirmed_workflow(actual_database, statuses, queue_blocked, expected):
     with Session(actual_database) as session:
         run, step, node, conversation = actual_role(session, "character_designer")
         run.status, run.stop_requested, step.status = "running", 0, "running"
@@ -253,14 +416,27 @@ def test_image_review_message_uses_isolated_confirmed_workflow(actual_database, 
         jobs = [session.get(ImageJob, identifier) for identifier in review["imageJobIds"]]
         assert len(jobs) == 6 and all(job.run_id == run.id and job.status == "queued" for job in jobs)
         for job, status in zip(jobs, statuses, strict=True):
-            job.status = status
+            job.status = "failed" if status == "timed_out" else status
+            job.error_code = "IMAGE_RESPONSE_TIMEOUT" if status == "timed_out" else None
+        accounts = session.scalars(select(ImageAccount).where(ImageAccount.owner_id == run.owner_id)).all()
+        for account in accounts:
+            account.status, account.active_job_id = "available", None
+        if queue_blocked:
+            account = accounts[0]
+            waiting = ImageJob(owner_id=run.owner_id, project_id=run.project_id, scene_id=run.scene_id,
+                run_id=run.id, node_id=node["id"], artifact_hash=review["artifactHash"], operation_id=new_id(),
+                label="另一笔待核实的商汤请求", status="submission_unknown", request_json=jobs[0].request_json,
+                account_id=account.id, submitted_at=time.time() - 60, attempt_count=1)
+            session.add(waiting)
+            session.flush()
+            account.status, account.active_job_id = "quarantined", waiting.id
         review["status"] = "generating"
         run.result_json = {**run.result_json, "materialReview": review}
         session.flush()
         before_review = copy.deepcopy(run.result_json)
         before_limits = copy.deepcopy(run.limits_json)
-        before_jobs = [(job.id, job.status, job.account_id, job.submitted_at, job.finished_at, job.attempt_count) for job in jobs]
-        before_accounts = [(account.id, account.status, account.active_job_id) for account in session.scalars(select(ImageAccount).where(ImageAccount.owner_id == run.owner_id))]
+        before_jobs = [(job.id, job.status, job.error_code, job.account_id, job.submitted_at, job.finished_at, job.attempt_count) for job in jobs]
+        before_accounts = [(account.id, account.status, account.active_job_id) for account in accounts]
         result = public_review(session, run)
         assert result["message"] == expected
         assert result["canConfirm"] is all(status == "ready" for status in statuses)
@@ -268,7 +444,7 @@ def test_image_review_message_uses_isolated_confirmed_workflow(actual_database, 
         session.flush()
         session.expire_all()
         assert run.result_json == before_review and run.limits_json == before_limits
-        assert [(job.id, job.status, job.account_id, job.submitted_at, job.finished_at, job.attempt_count) for job in jobs] == before_jobs
+        assert [(job.id, job.status, job.error_code, job.account_id, job.submitted_at, job.finished_at, job.attempt_count) for job in jobs] == before_jobs
         assert [(account.id, account.status, account.active_job_id) for account in session.scalars(select(ImageAccount).where(ImageAccount.owner_id == run.owner_id))] == before_accounts
 
 

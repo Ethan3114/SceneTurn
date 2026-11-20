@@ -14,15 +14,60 @@ from app.services.projects import payload_digest
 from app.services.material_references import reusable_boundary_frames
 
 
-def freeze_boundaries(session, run, storyboard_node_id, shot_key, settings):
+def _approved_review(run, storyboard_node_id, artifact_hash):
+    reviews = [*(run.result_json or {}).get("materialReviewHistory", []), (run.result_json or {}).get("materialReview", {})]
+    return next((review for review in reversed(reviews) if review.get("nodeId") == storyboard_node_id and review.get("artifactHash") == artifact_hash and review.get("status") == "approved"), None)
+
+
+def _storyboard_artifact(session, run, storyboard_node_id):
     canvas = session.scalar(select(Canvas).where(Canvas.project_id == run.project_id, Canvas.scene_id == run.scene_id, Canvas.owner_id == run.owner_id))
     node = next((item for item in canvas.data_json["nodes"] if item["id"] == storyboard_node_id), None) if canvas else None
     artifact = node.get("metadata", {}).get("creativeArtifact") if node else None
     if not artifact or artifact.get("role") != "storyboarder" or artifact.get("schemaVersion") not in {2, 3}:
         raise AppError(422, "VIDEO_BOUNDARIES_REQUIRED", "请先完成连续首尾帧分镜")
+    return artifact
+
+
+def approved_storyboard_source(session, run, storyboard_node_id, artifact_hash):
+    approved = _approved_review(run, storyboard_node_id, artifact_hash)
+    if approved:
+        return run, approved
+    previous = session.scalars(select(AgentRun).where(AgentRun.owner_id == run.owner_id,
+        AgentRun.project_id == run.project_id, AgentRun.scene_id == run.scene_id, AgentRun.id != run.id)
+        .order_by(AgentRun.created_at.desc(), AgentRun.id.desc()))
+    for source in previous:
+        approved = _approved_review(source, storyboard_node_id, artifact_hash)
+        if approved:
+            return source, approved
+    return None, None
+
+
+def approved_video_segments(session, run, storyboard_node_id, artifact):
+    digest = payload_digest(artifact)
+    source, approved = approved_storyboard_source(session, run, storyboard_node_id, digest)
+    if source is None:
+        return []
+    assets = {frame["frameKey"]: frame["assetId"] for frame in approved.get("reusedFrames", [])}
+    jobs = session.scalars(select(ImageJob).where(ImageJob.run_id == source.id, ImageJob.owner_id == run.owner_id,
+        ImageJob.node_id == storyboard_node_id, ImageJob.artifact_hash == digest, ImageJob.status == "ready"))
+    assets.update((job.frame_key, job.asset_id) for job in jobs if job.asset_id)
+    return [{"storyboardNodeId": storyboard_node_id, "shotKey": shot["key"], "durationSeconds": shot["durationSeconds"],
+        "firstFrameAssetId": assets[shot["firstFrameKey"]], "lastFrameAssetId": assets[shot["lastFrameKey"]]}
+        for shot in artifact["shots"] if shot["firstFrameKey"] in assets and shot["lastFrameKey"] in assets]
+
+
+def freeze_adopted_boundaries(session, run, storyboard_node_id, shot_key, settings):
+    artifact = _storyboard_artifact(session, run, storyboard_node_id)
+    source, _ = approved_storyboard_source(session, run, storyboard_node_id, payload_digest(artifact))
+    if source is None:
+        raise AppError(409, "VIDEO_FRAMES_UNCONFIRMED", "请先确认当前分镜图片成果")
+    return freeze_boundaries(session, source, storyboard_node_id, shot_key, settings)
+
+
+def freeze_boundaries(session, run, storyboard_node_id, shot_key, settings):
+    artifact = _storyboard_artifact(session, run, storyboard_node_id)
     artifact_hash = payload_digest(artifact)
-    reviews = [*(run.result_json or {}).get("materialReviewHistory", []), (run.result_json or {}).get("materialReview", {})]
-    approved = next((review for review in reversed(reviews) if review.get("nodeId") == storyboard_node_id and review.get("artifactHash") == artifact_hash and review.get("status") == "approved"), None)
+    approved = _approved_review(run, storyboard_node_id, artifact_hash)
     if approved is None:
         raise AppError(409, "VIDEO_FRAMES_UNCONFIRMED", "请先确认当前分镜图片成果")
     reused = reusable_boundary_frames(session, run, artifact, settings)

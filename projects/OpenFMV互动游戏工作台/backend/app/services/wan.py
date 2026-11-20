@@ -76,6 +76,7 @@ class WanClient:
         self.base_url = endpoint(workspace_id, region)
         self.api_key = api_key
         self.timeout = settings.request_timeout
+        self.submit_timeout = httpx.Timeout(self.timeout, write=settings.wan_submit_timeout, read=settings.wan_submit_timeout)
 
     async def submit(self, frozen_input: dict) -> WanResponse:
         if frozen_input["model"] != MODEL:
@@ -97,7 +98,7 @@ class WanClient:
             if [item["type"] for item in media] != ["first_frame", "last_frame"]:
                 raise AppError(422, "WAN_BOUNDARIES_INVALID", "首尾帧视频必须同时提供已确认的首帧和尾帧")
             payload["input"]["media"] = media
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=self.submit_timeout, trust_env=False, follow_redirects=False) as client:
             try:
                 response = await client.post(
                     f"{self.base_url}/api/v1/services/aigc/video-generation/video-synthesis",
@@ -109,7 +110,7 @@ class WanClient:
                     json=payload,
                 )
             except httpx.TransportError as exc:
-                raise WanFailure("WAN_SUBMISSION_UNKNOWN", "提交连接中断，原任务状态待核实，费用预留继续保留", True) from exc
+                raise WanFailure("WAN_SUBMISSION_UNKNOWN", f"提交连接中断（{type(exc).__name__}），原任务状态待核实，费用预留继续保留", True) from exc
         if 400 <= response.status_code < 500 and response.status_code != 408:
             raise WanFailure("WAN_SUBMISSION_REJECTED", "阿里云拒绝了生成请求，请检查Key、模型权限和输入参数")
         if response.status_code >= 300:

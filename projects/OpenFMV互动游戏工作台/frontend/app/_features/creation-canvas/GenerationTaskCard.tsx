@@ -23,7 +23,7 @@ type Props = {
 export function GenerationTaskCard({ task, revision, inputDirty, busy, sceneTitle, sourceAvailable, onConfirm, onRequote, onAdopt, onResume, onFocusOutput }: Props) {
   const expired = task.status === 'awaiting_confirmation' && task.projectRevision !== revision;
   const requoteLabel = inputDirty ? '保存当前输入并重新核对' : '按当前输入重新核对';
-  const maximumExceeded = task.quotedCents > Number(task.input.maxAllowedCents);
+  const maximumExceeded = task.quotedCents !== undefined && task.quotedCents > Number(task.input.maxAllowedCents);
   const localJoin = task.input.provider === 'local-ffmpeg';
   return <article className="fmv-node-task" data-testid="generation-task" data-task-id={task.id} data-quote-state={expired ? 'expired' : inputDirty && task.status === 'awaiting_confirmation' ? 'unsaved' : task.status}>
     <h3>{expired ? '生成输入需要重新核对' : localJoin && task.status === 'ready' ? '成片已保存' : taskLabels[task.status] || task.status}</h3>

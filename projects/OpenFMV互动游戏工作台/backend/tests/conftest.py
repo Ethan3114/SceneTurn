@@ -3,8 +3,11 @@ import socket
 import subprocess
 import sys
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+from sqlite3 import connect
+from tempfile import TemporaryDirectory
 
 import httpx
 import pytest
@@ -12,6 +15,20 @@ import pytest
 
 PRODUCT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_ORIGIN = "http://127.0.0.1:3210"
+
+
+@pytest.fixture
+def writable_snapshot(tmp_path):
+    with TemporaryDirectory(dir=tmp_path) as directory:
+        destination = Path(directory) / "openfmv.sqlite3"
+
+        def copy(source: Path) -> Path:
+            with closing(connect(f"{source.resolve().as_uri()}?mode=ro", uri=True)) as original:
+                with closing(connect(destination)) as snapshot:
+                    original.backup(snapshot)
+            return destination
+
+        yield copy
 
 
 @dataclass(frozen=True)

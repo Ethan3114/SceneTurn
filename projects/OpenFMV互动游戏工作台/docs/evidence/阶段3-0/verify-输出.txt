@@ -1,0 +1,143 @@
+verify.sh 自检  2026-11-20 22:14:29  产品：OpenFMV互动游戏工作台（/Users/ethan/Documents/idea-to-launch/projects/OpenFMV互动游戏工作台）
+
+================ 1. 自动化测试 ================
+
+ RUN  v1.6.0 /Users/ethan/Documents/idea-to-launch/projects/OpenFMV互动游戏工作台/frontend
+
+ ✓ tests/real/agent-branches.test.ts  (2 tests) 3ms
+ ✓ __tests__/unit/nodeTimeline.test.ts  (93 tests) 41ms
+ ✓ tests/real/story-merge.test.ts  (1 test) 254ms
+ ✓ tests/real/project-session-display.test.ts  (8 tests) 8ms
+ ✓ tests/real/media-time-precision.test.ts  (1 test) 246ms
+ ✓ tests/real/canvas-merge.test.ts  (4 tests) 516ms
+ ✓ tests/real/runtime-contract.test.ts  (3 tests) 371ms
+
+ Test Files  7 passed (7)
+      Tests  112 passed (112)
+   Start at  22:14:30
+   Duration  848ms (transform 494ms, setup 0ms, collect 1.36s, tests 1.44s, environment 1ms, prepare 423ms)
+
+结果：N/A（无代码阶段）；前端测试通过
+
+================ 2. 真实模型冒烟记录（docs/evidence/<阶段>/冒烟记录.md，须由冒烟脚本写入，格式见通用手册第十节） ================
+结果：N/A（无代码阶段）
+
+================ 3. 密钥排除（扫描整个仓库会进 git 的文件，以及本产品的构建产物） ================
+通过：没有 .env 文件被 git 跟踪。
+通过：会进仓库的文件中未发现密钥样式字符串。
+通过：构建产物 projects/OpenFMV互动游戏工作台/frontend/.next 未发现密钥样式字符串。
+结果：通过
+
+================ 4. 数据重启恢复（verify.sh 自己起服务、写随机标记、杀进程、再起、读回；钩子 scripts/restart-check.sh 只提供 start/write/read/stop） ================
+结果：N/A（无代码阶段）
+
+================ 5. 前端类型检查 / Lint / 生产构建 ================
+
+> openfmv@0.0.4 lint
+> eslint app electron i18n scripts shared __tests__ tests proxy.ts next.config.mjs postcss.config.js tailwind.config.js vitest.config.mts vitest.real.config.mts
+
+
+> openfmv@0.0.4 build
+> npm run ipc:build && node scripts/build.js
+
+
+> openfmv@0.0.4 ipc:build
+> node scripts/build-ipc-contract.js
+
+▲ Next.js 16.2.7 (Turbopack)
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: 1074790400
+  · proxyTimeout: 300000
+  · serverActions
+
+  Creating an optimized production build ...
+Browserslist: browsers data (caniuse-lite) is 9 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Turbopack build encountered 1 warnings:
+./next.config.mjs
+Encountered unexpected file in NFT list
+A file was traced that indicates that the whole project was traced unintentionally. Somewhere in the import trace below, there are:
+- filesystem operations (like path.join, path.resolve or fs.readFile), or
+- very dynamic requires (like require('./' + foo)).
+To resolve this, you can
+- remove them if possible, or
+- only use them in development, or
+- make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
+- add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar)
+
+Import trace:
+  App Route:
+    ./next.config.mjs
+    ./app/api/local-asset/route.ts
+
+
+✓ Compiled successfully in 8.4s
+  Running TypeScript ...
+  Finished TypeScript in 4.8s ...
+  Collecting page data using 9 workers ...
+  Generating static pages using 9 workers (0/68) ...
+  Generating static pages using 9 workers (17/68) 
+  Generating static pages using 9 workers (34/68) 
+  Generating static pages using 9 workers (51/68) 
+✓ Generating static pages using 9 workers (68/68) in 152ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ƒ /_not-found
+├ ƒ /[locale]
+├ ƒ /[locale]/account
+├ ƒ /[locale]/ai-debug
+├ ƒ /[locale]/asset-studio
+├ ƒ /[locale]/assets
+├ ƒ /[locale]/editor
+├ ƒ /[locale]/nodes
+├ ƒ /[locale]/play/[id]
+├ ƒ /[locale]/privacy
+├ ƒ /[locale]/projects
+├ ƒ /[locale]/settings/text
+├ ƒ /[locale]/settings/wan
+├ ƒ /[locale]/studio
+├ ƒ /[locale]/terms
+├ ƒ /account
+├ ƒ /ai-debug
+├ ƒ /api/ai-settings/agents
+├ ƒ /api/ai-settings/agents/[id]/test
+├ ƒ /api/local-asset
+├ ƒ /asset-studio
+├ ƒ /assets
+├ ƒ /editor
+├ ƒ /nodes
+├ ƒ /play/[id]
+├ ƒ /privacy
+├ ƒ /projects
+├ ƒ /settings/text
+├ ƒ /settings/wan
+├ ƒ /studio
+└ ƒ /terms
+
+
+ƒ Proxy (Middleware)
+
+ƒ  (Dynamic)  server-rendered on demand
+
+Prepared Next standalone assets.
+结果：通过
+
+================ 6. 文件齐全与位置（AGENTS.md 第 7 节的产出清单；根目录不放产品文件；前面阶段有没有被跳过） ================
+通过：根目录没有放错位置的文件。
+有：docs/阶段文档/前端适配声明.md
+有：docs/evidence/阶段3-0/是否表.md
+有：docs/项目状态.md
+通过：前面阶段（阶段0 阶段1 阶段2-1）的产物都在。
+结果：通过
+
+================ 汇总（抄进是否表的就是这六行） ================
+是否表第 2 项  自动化测试：     N/A（无代码阶段）；前端测试通过
+是否表第 3 项  真实模型冒烟：   N/A（无代码阶段）
+是否表第 4 项  前端检查与构建： 通过
+是否表第 5 项  密钥排除：       通过
+是否表第 6 项  重启后数据恢复： N/A（无代码阶段）
+是否表第 10 项 文件齐全与位置： 通过
+总判定：六项全部通过或不适用。
