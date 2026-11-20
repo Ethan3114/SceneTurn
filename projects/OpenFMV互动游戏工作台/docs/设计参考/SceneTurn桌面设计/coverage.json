@@ -1,0 +1,338 @@
+{
+  "pages": 4,
+  "boards": 41,
+  "textLayers": 1110,
+  "imageAssets": 4,
+  "gradients": 53,
+  "links": 0,
+  "frames": [
+    {
+      "id": "home-exhibition",
+      "title": "首页 · 作品首映",
+      "node": "1:2",
+      "w": 1440,
+      "h": 1625,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "gallery",
+      "title": "作品馆 · 浏览成品",
+      "node": "1:76",
+      "w": 1440,
+      "h": 1234,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "film-details",
+      "title": "作品详情 · 潮汐尽头",
+      "node": "1:140",
+      "w": 1440,
+      "h": 1246,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "cinema-open",
+      "title": "影院 · 正片开场",
+      "node": "1:185",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "cinema-choice",
+      "title": "影院 · 选择分支",
+      "node": "1:206",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "cinema-qte",
+      "title": "影院 · 限时互动",
+      "node": "1:238",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "cinema-beacon",
+      "title": "影院 · 信标结局",
+      "node": "1:268",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "cinema-gate",
+      "title": "影院 · 闸门结局",
+      "node": "1:297",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "cinema-access",
+      "title": "影院 · 作品暂不可访问",
+      "node": "1:326",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "cinema-trailer",
+      "title": "影院 · 潮汐尽头预告片",
+      "node": "1:351",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "cinema-character",
+      "title": "影院 · 与角色交谈",
+      "node": "1:380",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首映、作品馆与影院"
+    },
+    {
+      "id": "hf-projects",
+      "title": "项目工作台",
+      "node": "1:425",
+      "w": 1440,
+      "h": 900,
+      "page": "02 项目、剧情与剪辑"
+    },
+    {
+      "id": "hf-project-import",
+      "title": "完整项目导入",
+      "node": "1:519",
+      "w": 1440,
+      "h": 900,
+      "page": "02 项目、剧情与剪辑"
+    },
+    {
+      "id": "hf-story",
+      "title": "剧情总画布",
+      "node": "1:595",
+      "w": 1440,
+      "h": 900,
+      "page": "02 项目、剧情与剪辑"
+    },
+    {
+      "id": "hf-story-codex",
+      "title": "剧情画布与 Codex",
+      "node": "1:710",
+      "w": 1440,
+      "h": 900,
+      "page": "02 项目、剧情与剪辑"
+    },
+    {
+      "id": "hf-timeline",
+      "title": "节点时间线",
+      "node": "1:828",
+      "w": 1440,
+      "h": 900,
+      "page": "02 项目、剧情与剪辑"
+    },
+    {
+      "id": "hf-timeline-qte",
+      "title": "时间线 · QTE",
+      "node": "1:945",
+      "w": 1280,
+      "h": 900,
+      "page": "02 项目、剧情与剪辑"
+    },
+    {
+      "id": "hf-delivery",
+      "title": "固定版本与发布",
+      "node": "1:1067",
+      "w": 1440,
+      "h": 900,
+      "page": "02 项目、剧情与剪辑"
+    },
+    {
+      "id": "hf-login",
+      "title": "登录 SceneTurn",
+      "node": "1:1156",
+      "w": 1440,
+      "h": 900,
+      "page": "02 项目、剧情与剪辑"
+    },
+    {
+      "id": "hf-register",
+      "title": "创建 SceneTurn 账号",
+      "node": "1:1191",
+      "w": 1440,
+      "h": 900,
+      "page": "02 项目、剧情与剪辑"
+    },
+    {
+      "id": "library-project",
+      "title": "项目素材",
+      "node": "1:1227",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "library-all-projects",
+      "title": "全部项目素材",
+      "node": "1:1332",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "media-inspector",
+      "title": "单素材详情 · 视频",
+      "node": "1:1437",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "material-workspace-cinematic",
+      "title": "素材制作 · 岗位工作区",
+      "node": "1:1504",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "material-storyboard-frames",
+      "title": "分镜师 · 有序边界帧",
+      "node": "1:1615",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "material-confirm-segment",
+      "title": "视频师 · 单段生成确认",
+      "node": "1:1710",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "material-candidates-reel",
+      "title": "视频候选 · 对比与采用",
+      "node": "1:1780",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "material-adopt-candidate",
+      "title": "确认采用候选",
+      "node": "1:1841",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "material-generation-recovery",
+      "title": "视频任务 · 等待核实",
+      "node": "1:1902",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "material-node-editor",
+      "title": "手动素材节点画布",
+      "node": "1:1982",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "material-image-slice",
+      "title": "图片切片",
+      "node": "1:2885",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "material-video-stitch",
+      "title": "按顺序拼接视频",
+      "node": "1:2951",
+      "w": 1440,
+      "h": 900,
+      "page": "03 素材制作"
+    },
+    {
+      "id": "hf-text-settings",
+      "title": "文字生成设置",
+      "node": "1:3012",
+      "w": 1440,
+      "h": 900,
+      "page": "04 设置与文档"
+    },
+    {
+      "id": "hf-wan-settings",
+      "title": "视频生成设置",
+      "node": "1:3074",
+      "w": 1440,
+      "h": 900,
+      "page": "04 设置与文档"
+    },
+    {
+      "id": "account-profile",
+      "title": "账户与语言",
+      "node": "1:3140",
+      "w": 1440,
+      "h": 900,
+      "page": "04 设置与文档"
+    },
+    {
+      "id": "codex-connection",
+      "title": "连接本人 Codex",
+      "node": "1:3180",
+      "w": 1440,
+      "h": 900,
+      "page": "04 设置与文档"
+    },
+    {
+      "id": "image-settings",
+      "title": "图片生成配置",
+      "node": "1:3228",
+      "w": 1440,
+      "h": 900,
+      "page": "04 设置与文档"
+    },
+    {
+      "id": "usage-records",
+      "title": "生成用量",
+      "node": "1:3280",
+      "w": 1440,
+      "h": 900,
+      "page": "04 设置与文档"
+    },
+    {
+      "id": "developer-records",
+      "title": "开发记录",
+      "node": "1:3333",
+      "w": 1440,
+      "h": 900,
+      "page": "04 设置与文档"
+    },
+    {
+      "id": "legal-privacy",
+      "title": "隐私政策",
+      "node": "1:3381",
+      "w": 1440,
+      "h": 900,
+      "page": "04 设置与文档"
+    },
+    {
+      "id": "legal-terms",
+      "title": "使用条款",
+      "node": "1:3405",
+      "w": 1440,
+      "h": 900,
+      "page": "04 设置与文档"
+    }
+  ]
+}
