@@ -39,6 +39,8 @@ interface EditorState {
   setAutoSaveEnabled: (enabled: boolean) => void;
   isAssetPickerOpen: boolean;
   setAssetPickerOpen: (isOpen: boolean) => void;
+  assetWorkspaceView: 'library' | 'generate';
+  setAssetWorkspaceView: (view: EditorState['assetWorkspaceView']) => void;
   targetNodeIdForAsset: string | null;
   setTargetNodeIdForAsset: (id: string | null) => void;
   edgeCurveStyle: EdgeCurveStyle;
@@ -52,17 +54,20 @@ export const useEditorStore = create<EditorState>()(
       selectedNodeId: null,
       autoSaveEnabled: DEFAULT_AUTO_SAVE_ENABLED,
       isAssetPickerOpen: false,
+      assetWorkspaceView: 'library',
       targetNodeIdForAsset: null,
       edgeCurveStyle: 'bezier',
 
       setSelectedNodeId: (id) => set({ selectedNodeId: id }),
       setAutoSaveEnabled: (enabled) => set({ autoSaveEnabled: enabled }),
-      setAssetPickerOpen: (isOpen) => set({ isAssetPickerOpen: isOpen }),
+      setAssetPickerOpen: (isOpen) => set(isOpen ? { isAssetPickerOpen: true } : { isAssetPickerOpen: false, assetWorkspaceView: 'library' }),
+      setAssetWorkspaceView: (assetWorkspaceView) => set({ assetWorkspaceView }),
       setTargetNodeIdForAsset: (id) => set({ targetNodeIdForAsset: id }),
       setEdgeCurveStyle: (style) => set({ edgeCurveStyle: style }),
       reset: () => set({
         selectedNodeId: null,
         isAssetPickerOpen: false,
+        assetWorkspaceView: 'library',
         targetNodeIdForAsset: null,
       }),
     }),
@@ -86,8 +91,11 @@ export const useEditorStore = create<EditorState>()(
         ...(persistedState as Partial<EditorState>),
         selectedNodeId: null,
         isAssetPickerOpen: false,
+        assetWorkspaceView: 'library',
         targetNodeIdForAsset: null,
       }),
     }
   )
 );
+
+export const isAssetWorkspaceOpen = (state: EditorState) => state.isAssetPickerOpen && !state.targetNodeIdForAsset;

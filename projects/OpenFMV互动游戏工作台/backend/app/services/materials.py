@@ -6,11 +6,13 @@ from sqlalchemy import and_, func, inspect, or_, select
 from app.agent_models import AgentRun, AgentStep
 from app.agent_schemas import RunCreate
 from app.core.errors import AppError
+from app.core.config import get_settings
 from app.material_models import MaterialConversation, MaterialMessage
 from app.material_schemas import material_request_payload
 from app.image_models import ImageAccount, ImageJob
 from app.media_models import MediaSequence
-from app.models import Canvas, Generation, Operation, ProviderSettings, TextProviderSettings
+from app.models import Canvas, Generation, Operation, ProviderSettings, TextProviderSettings, User
+from app.services.providers import LEGACY_DEFAULTS, project_defaults, registry_view
 from app.services.projects import get_operation, iso_timestamp, lock_write, payload_digest, require_project, require_revision, require_scene, save_operation
 from app.services.image_queue import public_job
 from app.services.material_delivery import public_director_brief, public_material_error, public_node, public_run
@@ -31,7 +33,7 @@ MATERIAL_INSTRUCTIONS = (
     "分镜师基于剧本及采用的定妆、场景图设计镜头、动作、时长和边界帧，编写分镜生图提示词。视频师使用已经采用的真实首尾帧，交付运动与运镜要求、输出规格和生成确认。"
     "用户选中的references是本轮修订对象，包含准确节点与内容版本；先read_artifact，再使用patch_artifact或write_artifact保存完整有效的新版本。"
     "只安排本轮必要步骤。用户只要脚本就由编剧交付脚本；用户要求修改某一产物时只安排相关岗位。"
-    "角色、场景和分镜的详细生图提示词保存在开发记录，由商汤sensenova-u1.5-fast生成真实图片，用户只看图片成果。"
+    "角色、场景和分镜的详细生图提示词保存在开发记录，由本轮冻结选择的图片模型生成真实图片，用户查看图片成果。"
     "每次write_artifact后执行器会暂停，向用户询问全部confirmationNeeded事项，并等待成果确认；不得自行答复或越过确认。"
     "humanAnswers是用户对准确成果版本的真实答复，必须执行其中修改要求，重新保存成果后等待再次确认。"
     "分镜使用schemaVersion=3：n段视频对应按时间排序的n+1个keyframes；每段firstFrameKey和lastFrameKey依次引用相邻边界帧。"
@@ -74,12 +76,23 @@ def node_hash(node):
     return hashlib.sha256(str(node.get("metadata", {}).get("content", "")).encode()).hexdigest()
 
 
-def capabilities(session, owner_id):
-    text = session.get(TextProviderSettings, "platform")
-    video = session.get(ProviderSettings, owner_id)
-    accounts = session.scalars(select(ImageAccount).where(ImageAccount.owner_id == owner_id)).all() if inspect(session.get_bind()).has_table("image_accounts") else []
-    return {"text": bool(text and text.api_key_encrypted), "textModel": "DeepSeek Flash", "image": len(accounts) == 3,
-            "video": bool(video and video.api_key_encrypted), "videoModel": video.model if video else "wan3.0-video"}
+def capabilities(session, owner_id, project_id=None, settings=None, selection=None):
+    settings = settings or get_settings()
+    user = session.get(User, owner_id)
+    chosen = {**(project_defaults(require_project(session, project_id, owner_id)) if project_id else LEGACY_DEFAULTS), **(selection or {})}
+    if chosen == LEGACY_DEFAULTS:
+        text = session.get(TextProviderSettings, "platform")
+        video = session.get(ProviderSettings, owner_id)
+        accounts = session.scalars(select(ImageAccount).where(ImageAccount.owner_id == owner_id)).all() if inspect(session.get_bind()).has_table("image_accounts") else []
+        authorized = bool(settings.text_admin_email) and user.email.casefold() == settings.text_admin_email.strip().casefold()
+        return {"text": bool(text and text.api_key_encrypted and authorized), "textModel": "deepseek-flash", "image": len(accounts) == 3,
+            "imageModel": "sensenova-u1.5-fast", "video": bool(video and video.api_key_encrypted),
+            "videoModel": video.model if video else "wan3.0-video", "modelSelection": chosen}
+    catalog = registry_view(session, user, settings, project_id)
+    chosen = {**catalog["defaults"], **(selection or {})}
+    models = {item["id"]: item for item in catalog["models"]}
+    return {**{kind: bool(models[chosen[kind]]["available"]) for kind in LEGACY_DEFAULTS},
+        **{f"{kind}Model": models[chosen[kind]]["model"] for kind in LEGACY_DEFAULTS}, "modelSelection": chosen}
 
 
 def message_records(session, conversation):
@@ -268,7 +281,8 @@ def view(session, value):
             "run": run_views[run.id], "createdAt": iso_timestamp(item.created_at), "kind": kind, "reply": receipt.get("reply"),
             "referenceAssets": receipt.get("referenceAssets") or (run.limits_json.get("materialContext", {}).get("referenceAssets", []) if kind == "production" else []),
             "directorBrief": public_director_brief(run.result_json) if kind == "production" else None})
-    return {**summary(value), "revision": project.revision, "capabilities": capabilities(session, value.owner_id),
+    selection = {**LEGACY_DEFAULTS, **current.limits_json.get("modelSelection", {})} if current else None
+    return {**summary(value), "revision": project.revision, "capabilities": capabilities(session, value.owner_id, project.id, selection=selection),
         "activeRunId": current.id if current else None,
         "canStartProduction": can_start_production(current, current_videos),
         "directorBrief": public_director_brief(current.result_json) if current else None,
@@ -314,6 +328,10 @@ def send(session, project_id, scene_id, conversation_id, user, body, settings):
     followup = body.intent == "followup" or (active is not None and body.intent is None)
     if followup and active is None:
         raise AppError(409, "MATERIAL_FOLLOWUP_NEEDS_PRODUCTION", "请先说明要制作的素材")
+    if followup and body.model_selection is not None:
+        frozen_selection = {**LEGACY_DEFAULTS, **active.limits_json.get("modelSelection", {})}
+        if any(frozen_selection[kind] != identifier for kind, identifier in body.model_selection.model_dump(exclude_none=True).items()):
+            raise AppError(409, "MATERIAL_MODEL_SELECTION_FROZEN", "当前任务已固定模型，请在新建素材任务时选择其他模型")
     if not followup and not can_start_production(active, videos):
         raise AppError(409, "MATERIAL_CONVERSATION_BUSY", "已有素材任务需要处理，请在原对话继续")
     project = require_project(session, project_id, user.id)
@@ -359,6 +377,7 @@ def send(session, project_id, scene_id, conversation_id, user, body, settings):
                 "contentHash": node_hash(node), "revision": project.revision})
             selected.append(identifier)
     run = create_run(session, project_id, user, RunCreate(operation_id=f"material-{body.operation_id}", expected_revision=body.expected_revision,
+        model_selection=body.model_selection,
         scene_id=scene_id, workspace="materials", role="director", executor="platform", delivery_mode="professional", goal=body.content,
         target_ids=selected, limits={"maxSteps": 24, "maxTokens": 32768, "maxCostMicros": 10000000}), settings, commit=False)
     run.limits_json = {**run.limits_json, "materialConversationId": conversation_id, "materialContext": {
@@ -366,7 +385,7 @@ def send(session, project_id, scene_id, conversation_id, user, body, settings):
         "requireHumanReview": True,
         "referenceAssets": reference_assets, "referenceAssetsRevision": project.revision,
         "references": references, "scope": "current_round", "readableNodeIds": selected, "carriedNodeIds": carried,
-        "capabilities": capabilities(session, user.id), "history": history}}
+        "capabilities": capabilities(session, user.id, project.id, settings, run.limits_json.get("modelSelection")), "history": history}}
     conversation.active_run_id = run.id
     return save_message(session, conversation, body, payload, run, references,
         {"kind": "production", "referenceAssets": reference_assets})
@@ -377,7 +396,7 @@ def save_message(session, conversation, body, payload, run, references, receipt)
     session.add(MaterialMessage(owner_id=conversation.owner_id, conversation_id=conversation.id, operation_id=body.operation_id, sequence=sequence,
         content=body.content, references_json=references, run_id=run.id))
     conversation.updated_at = time.time()
-    if sequence == 1:
+    if sequence == 1 and conversation.title == "素材创作":
         conversation.title = body.content.strip()[:60]
     save_operation(session, conversation.owner_id, conversation.project_id, body.operation_id, "materials.send", payload,
         {"runId": run.id, **receipt})

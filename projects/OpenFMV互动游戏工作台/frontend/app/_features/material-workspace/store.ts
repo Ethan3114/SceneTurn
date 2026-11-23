@@ -1,22 +1,29 @@
 import { create } from 'zustand';
 import { createMaterialConversation, getMaterialConversation, listMaterialConversations, type MaterialConversation, type MaterialReference } from '@/app/_utils/materialApi';
+import type { ModelDefaults } from '@/app/_utils/providerApi';
+import type { GenerationView } from '@/app/_utils/cloudApi';
 
 type Scope = { projectId: string; sceneId: string };
 type State = {
   scope: Scope | null; chatOpen: boolean; conversation: MaterialConversation | null;
   references: MaterialReference[]; referenceAssetIds: string[]; draft: string; error: string; loading: boolean;
+  modelDraft: { conversationId: string; selection: Partial<ModelDefaults> } | null;
+  videoReviewRequest: number;
+  videoReviewTaskId: string | null;
+  videoResults: { runId: string; tasks: GenerationView[] } | null;
   open: (scope: Scope) => Promise<void>; close: () => void; refresh: () => Promise<void>;
   select: (reference: MaterialReference) => void; remove: (id: string) => void;
   setConversation: (value: MaterialConversation) => void;
+  openVideoReview: (id: string) => void;
   savePending: () => Promise<void>;
 };
 
 export const useMaterialWorkspace = create<State>((set, get) => ({
-  scope: null, chatOpen: false, conversation: null, references: [], referenceAssetIds: [], draft: '', error: '', loading: false,
+  scope: null, chatOpen: false, conversation: null, references: [], referenceAssetIds: [], draft: '', error: '', loading: false, modelDraft: null, videoReviewRequest: 0, videoReviewTaskId: null, videoResults: null,
   savePending: async () => {},
   open: async (scope) => {
     if (get().scope?.projectId === scope.projectId && get().scope?.sceneId === scope.sceneId) { set({ chatOpen: true }); return; }
-    set({ scope, chatOpen: true, loading: true, error: '', conversation: null, references: [], referenceAssetIds: [], draft: '' });
+    set({ scope, chatOpen: true, loading: true, error: '', conversation: null, references: [], referenceAssetIds: [], draft: '', modelDraft: null, videoReviewRequest: 0, videoReviewTaskId: null, videoResults: null });
     try {
       const items = await listMaterialConversations(scope.projectId, scope.sceneId);
       if (get().scope !== scope) return;
@@ -24,7 +31,7 @@ export const useMaterialWorkspace = create<State>((set, get) => ({
       if (get().scope === scope) set({ conversation: value, loading: false });
     } catch (error) { if (get().scope === scope) set({ error: error instanceof Error ? error.message : '素材对话读取失败', loading: false }); }
   },
-  close: () => set({ scope: null, chatOpen: false, conversation: null, references: [], referenceAssetIds: [], draft: '' }),
+  close: () => set({ scope: null, chatOpen: false, conversation: null, references: [], referenceAssetIds: [], draft: '', modelDraft: null, videoReviewRequest: 0, videoReviewTaskId: null, videoResults: null }),
   refresh: async () => {
     const value = get().conversation;
     if (!value) return;
@@ -33,7 +40,10 @@ export const useMaterialWorkspace = create<State>((set, get) => ({
   },
   select: (reference) => set((state) => ({ chatOpen: true, references: [...state.references.filter((item) => item.nodeId !== reference.nodeId), reference].slice(-20) })),
   remove: (id) => set((state) => ({ references: state.references.filter((item) => item.nodeId !== id) })),
-  setConversation: (conversation) => set({ conversation, error: '' }),
+  setConversation: (conversation) => set((current) => current.conversation?.id === conversation.id ? { conversation, error: '' } : {
+    conversation, error: '', videoReviewRequest: 0, videoReviewTaskId: null, videoResults: null,
+  }),
+  openVideoReview: (id) => set((state) => ({ chatOpen: true, videoReviewTaskId: id, videoReviewRequest: state.videoReviewRequest + 1 })),
 }));
 
 export const materialRoles = [

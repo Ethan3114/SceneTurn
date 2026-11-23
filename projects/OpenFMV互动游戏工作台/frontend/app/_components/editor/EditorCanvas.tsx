@@ -485,7 +485,8 @@ const EditorContent = ({ projectId }: { projectId?: string | null }) => {
   const showCanvasPrompt = nodes.length === 0;
 
   return (
-    <div className="openfmv-infinite-canvas relative h-full w-full" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+    <div className="openfmv-infinite-canvas relative h-full w-full">
+      <div className="absolute inset-0" inert={isAssetPickerOpen && !targetNodeIdForAsset} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       <ReactFlow
         nodes={nodes}
         edges={displayEdges}
@@ -546,13 +547,6 @@ const EditorContent = ({ projectId }: { projectId?: string | null }) => {
         />
       )}
       
-      <AssetPicker 
-        isOpen={isAssetPickerOpen} 
-        onClose={() => setAssetPickerOpen(false)}
-        onSelect={handleAssetSelect}
-        importBehavior={targetNodeIdForAsset ? 'select' : 'library'}
-      />
-      
       {pendingConnectMenu && (
         <PendingConnectMenu
           menu={pendingConnectMenu}
@@ -560,6 +554,13 @@ const EditorContent = ({ projectId }: { projectId?: string | null }) => {
           onCancel={() => setPendingConnectMenu(null)}
         />
       )}
+      </div>
+      <AssetPicker
+        isOpen={isAssetPickerOpen}
+        onClose={() => setAssetPickerOpen(false)}
+        onSelect={handleAssetSelect}
+        importBehavior={targetNodeIdForAsset ? 'select' : 'library'}
+      />
     </div>
   );
 };

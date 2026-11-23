@@ -15,6 +15,7 @@ from app.services.projects import get_operation, iso_timestamp, lock_write, requ
 
 
 SUPPORTED_CODEX_VERSION = "0.168.0"
+ONLINE_WINDOW_SECONDS = 30
 
 
 def pairing_code(identifier: str) -> str:
@@ -25,11 +26,28 @@ def pairing_code(identifier: str) -> str:
 
 def connection_view(connection: CodexConnection) -> dict:
     now = time.time()
-    status = "revoked" if connection.revoked_at is not None else "expired" if connection.expires_at <= now else "online" if now - connection.last_seen_at <= 30 else "offline"
+    status = "revoked" if connection.revoked_at is not None else "expired" if connection.expires_at <= now else "online" if now - connection.last_seen_at <= ONLINE_WINDOW_SECONDS else "offline"
     return {"id": connection.id, "projectId": connection.project_id, "tools": connection.tools_json,
+            "canGenerateImages": "native_image_v1" in connection.capabilities_json,
             "clientVersion": connection.client_version, "status": status,
             "expiresAt": iso_timestamp(connection.expires_at), "lastSeenAt": iso_timestamp(connection.last_seen_at),
             "createdAt": iso_timestamp(connection.created_at)}
+
+
+def active_image_connection(session: Session, owner_id: str, project_id: str) -> CodexConnection | None:
+    now = time.time()
+    candidates = session.scalars(select(CodexConnection).where(CodexConnection.owner_id == owner_id,
+        CodexConnection.project_id == project_id, CodexConnection.revoked_at.is_(None),
+        CodexConnection.expires_at > now, CodexConnection.last_seen_at >= now - ONLINE_WINDOW_SECONDS)
+        .order_by(CodexConnection.last_seen_at.desc(), CodexConnection.id))
+    return next((candidate for candidate in candidates if "native_image_v1" in candidate.capabilities_json), None)
+
+
+def require_image_connection(session: Session, owner_id: str, project_id: str) -> CodexConnection:
+    connection = active_image_connection(session, owner_id, project_id)
+    if connection is None:
+        raise AppError(409, "CODEX_IMAGE_CONNECTION_UNAVAILABLE", "请在「问问 AI」连接支持图片生成的个人 Codex")
+    return connection
 
 
 def create_pairing(session: Session, owner_id: str, project_id: str, payload: dict) -> dict:
@@ -125,13 +143,15 @@ def revoke_connection(session: Session, owner_id: str, project_id: str, identifi
     return result
 
 
-def heartbeat(session: Session, connection: CodexConnection) -> dict:
+def heartbeat(session: Session, connection: CodexConnection, capabilities: list[str] | None = None) -> dict:
     from app.agent_models import AgentRun
 
     lock_write(session)
     session.refresh(connection)
     assert_connection_active(connection)
     now = time.time()
+    if capabilities is not None:
+        connection.capabilities_json = capabilities
     connection.last_seen_at = now
     runs = session.scalars(select(AgentRun).where(AgentRun.owner_id == connection.owner_id, AgentRun.project_id == connection.project_id,
                                                 AgentRun.lease_owner == connection.id, AgentRun.status.not_in(["completed", "failed", "stopped"]))).all()

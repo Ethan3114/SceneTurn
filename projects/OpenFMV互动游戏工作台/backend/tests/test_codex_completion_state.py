@@ -1,7 +1,12 @@
 import copy
 import hashlib
 import json
+import os
+import sqlite3
+import subprocess
+import sys
 import uuid
+from contextlib import closing
 
 import pytest
 from sqlalchemy import create_engine, delete, select
@@ -22,6 +27,12 @@ SOURCE = PRODUCT_ROOT / ".intermediate" / "codex-smoke" / "e02f90df-3044-441e-a8
 RUN_ID = "1e52a75c-7840-4c95-81fd-83c7be57cdfa"
 
 
+def actual_calls_digest(database):
+    with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
+        rows = connection.execute("SELECT * FROM agent_calls ORDER BY id").fetchall()
+    return hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode()).hexdigest()
+
+
 @pytest.fixture
 def genuine_pending_completion(writable_snapshot, request):
     original = SOURCE / "data" / "openfmv.sqlite3"
@@ -31,6 +42,11 @@ def genuine_pending_completion(writable_snapshot, request):
     proof_hash = hashlib.sha256((SOURCE / "proof.json").read_bytes()).hexdigest()
     destination = writable_snapshot(original)
     destination.chmod(0o600)
+    calls_hash = actual_calls_digest(destination)
+    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=PRODUCT_ROOT / "backend", env={**os.environ, "OPENFMV_DATA_DIR": str(destination.parent)},
+        check=True, capture_output=True)
+    assert actual_calls_digest(destination) == calls_hash
     engine = create_engine(f"sqlite:///{destination}", connect_args={"timeout": 10})
     request.addfinalizer(engine.dispose)
     with Session(engine, expire_on_commit=False) as session:

@@ -1,18 +1,22 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
+
 import { answerMaterialReview, type MaterialConversation } from '@/app/_utils/materialApi';
 import { assetContentUrl, operationId } from '@/app/_utils/cloudApi';
 import { useMaterialWorkspace } from './store';
 import MaterialReferenceImages, { requireProjectReferenceImages } from './MaterialReferenceImages';
 
 export default function MaterialReview({ value }: { value: MaterialConversation }) {
+  const t = useTranslations('materialModels');
   const review = value.pendingReview;
   const clarification = review?.kind === 'clarification';
   const [answers, setAnswers] = useState<Record<string, string>>(() => clarification ? {} : Object.fromEntries((review?.questions || []).map((item) => [item.id, item.suggestedAnswer])));
   const [changes, setChanges] = useState('');
   const [referenceAssetIds, setReferenceAssetIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [personalAccountConfirmed, setPersonalAccountConfirmed] = useState(false);
   const requestRef = useRef<{ payload: string; operation: string } | null>(null);
   const frozenIds = new Set(value.selectedReferenceAssets.map((asset) => asset.assetId));
   const addedReferenceAssetIds = referenceAssetIds.filter((id) => !frozenIds.has(id));
@@ -21,13 +25,14 @@ export default function MaterialReview({ value }: { value: MaterialConversation 
   const hasModifiedAnswer = review.questions.some((item) => answers[item.id]?.trim() !== item.suggestedAnswer.trim());
   const hasUnansweredQuestion = review.questions.some((item) => !answers[item.id]?.trim());
   const willRevise = addedReferenceAssetIds.length > 0 || !!changes.trim() || hasModifiedAnswer;
+  const needsAccountConfirmation = review.requiresPersonalAccountConfirmation && !willRevise;
   const confirmLabel = review.remainingQuestions > review.questions.length ? '确认并继续核对' :
     review.status === 'pending' && review.imageCount ? '确认内容并生成图片' : '确认成果，继续制作';
   const actionLabel = clarification ? '提交答复' : willRevise ? '提交修改要求' : confirmLabel;
 
   async function submit() {
     const current = useMaterialWorkspace.getState();
-    if (!review || busy || !review.canConfirm || hasUnansweredQuestion || current.loading || current.conversation?.id !== value.id) return;
+    if (!review || busy || !review.canConfirm || hasUnansweredQuestion || (needsAccountConfirmation && !personalAccountConfirmed) || current.loading || current.conversation?.id !== value.id) return;
     if (needsReferenceChanges) {
       useMaterialWorkspace.setState({ error: '请填写成果修改要求，说明如何使用新增参考图片。' });
       return;
@@ -35,13 +40,15 @@ export default function MaterialReview({ value }: { value: MaterialConversation 
     setBusy(true);
     try {
       requireProjectReferenceImages(value.projectId, addedReferenceAssetIds);
-      const payload = JSON.stringify({ reviewId: review.id, answers, changes, referenceAssetIds: addedReferenceAssetIds, revision: value.revision });
+      const accountUsageConfirmed = needsAccountConfirmation && personalAccountConfirmed ? true : undefined;
+      const payload = JSON.stringify({ reviewId: review.id, answers, changes, referenceAssetIds: addedReferenceAssetIds, revision: value.revision, accountUsageConfirmed });
       const request = requestRef.current?.payload === payload ? requestRef.current : { payload, operation: operationId() };
       requestRef.current = request;
-      const updated = await answerMaterialReview(value, review.id, answers, changes, value.revision, request.operation, addedReferenceAssetIds);
+      const updated = await answerMaterialReview(value, review.id, answers, changes, value.revision, request.operation, addedReferenceAssetIds, accountUsageConfirmed);
       if (useMaterialWorkspace.getState().conversation?.id === value.id && !useMaterialWorkspace.getState().loading) useMaterialWorkspace.setState({ conversation: updated, error: '' });
       setReferenceAssetIds([]);
       setChanges('');
+      setPersonalAccountConfirmed(false);
     } catch (problem) {
       useMaterialWorkspace.setState({ error: problem instanceof Error ? problem.message : '确认失败' });
     } finally { setBusy(false); }
@@ -57,7 +64,9 @@ export default function MaterialReview({ value }: { value: MaterialConversation 
         <button type="button" disabled={busy || !review.canConfirm} onClick={() => setAnswers({ ...answers, [item.id]: item.suggestedAnswer })}>采用建议</button>
       </div>}
     </div>)}
-    {review.status === 'pending' && (review.imageCount > 0 || review.reusedImages.length > 0) && <div><p>确认后新生成 {review.imageCount} 张图片：</p>{review.imageCount > 0 && <ul>{review.images.map((image, index) => <li key={index}>{image.label} · {image.width} × {image.height}</li>)}</ul>}</div>}
+    {review.status === 'pending' && (review.imageCount > 0 || review.reusedImages.length > 0) && <div><p>确认后新生成 {review.imageCount} 张图片。</p>{review.imageCount > 0 && <ul>{review.images.map((image, index) => <li key={index}>{image.label} · {image.width} × {image.height}{image.model ? ` · ${image.model}` : ''}</li>)}</ul>}
+      {review.usesProjectQuota && <p className="material-subtle">确认后将使用项目生成额度。</p>}
+    </div>}
     {review.reusedImages.length > 0 && <div><p>复用 {review.reusedImages.length} 张原图：</p><div className="material-video-boundaries">{review.reusedImages.map((image) => <figure key={image.frameKey}>
       <img src={assetContentUrl(image.assetId)} alt={image.label} width={image.width} height={image.height} loading="lazy" />
       <figcaption>{image.label} · 复用原图 · {image.width} × {image.height}</figcaption>
@@ -65,7 +74,8 @@ export default function MaterialReview({ value }: { value: MaterialConversation 
     {review.canConfirm && !clarification && <><label><span>{addedReferenceAssetIds.length ? '需要调整的内容（新增参考图片后必填）' : '需要调整的内容（选填）'}</span><textarea aria-label="成果修改要求" value={changes} onChange={(event) => setChanges(event.target.value)} required={addedReferenceAssetIds.length > 0} maxLength={12000} rows={2} disabled={busy} /></label>
       {needsReferenceChanges && <p className="material-subtle" role="status">请说明如何根据新增参考图片调整成果，再提交修改要求。</p>}
     </>}
-    {review.canConfirm && <button className="material-primary" disabled={busy || needsReferenceChanges || hasUnansweredQuestion} type="submit">{actionLabel}</button>}
+    {review.canConfirm && needsAccountConfirmation && <label className="material-account-confirmation"><input type="checkbox" checked={personalAccountConfirmed} disabled={busy} onChange={(event) => setPersonalAccountConfirmed(event.target.checked)} />{t('confirmPersonalUsage')}</label>}
+    {review.canConfirm && <button className="material-primary" disabled={busy || needsReferenceChanges || hasUnansweredQuestion || Boolean(needsAccountConfirmation && !personalAccountConfirmed)} type="submit">{actionLabel}</button>}
     {!review.canConfirm && <p role="status">任务状态保存在项目中，可以稍后回来继续查看。</p>}
   </form>;
 }

@@ -15,3 +15,16 @@
 .fmv-transfer-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .fmv-transfer-dialog > header button { padding: 8px 14px; border: 1px solid #514b41; border-radius: 9px; }
 @media (max-width: 600px) { .fmv-transfer-dialog { padding: 16px; } .fmv-transfer-job { padding: 12px; } }
+.fmv-publication-controls { margin-top: 10px; }
+.fmv-publication-controls form { display: grid; gap: 12px; }
+.fmv-publication-controls label { display: grid; gap: 6px; }
+.fmv-publication-controls input,
+.fmv-publication-controls textarea,
+.fmv-publication-controls select {
+  width: 100%;
+  border: 1px solid #3b3b4e;
+  background: #13131e;
+  color: #f7f7fa;
+  border-radius: 8px;
+  padding: 8px 10px;
+}

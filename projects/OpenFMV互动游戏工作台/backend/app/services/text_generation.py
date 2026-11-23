@@ -1,8 +1,13 @@
 import asyncio
+import base64
 import copy
+import io
+import json
 import time
 import uuid
+from collections import Counter
 
+from PIL import Image, ImageOps
 from pydantic import ValidationError
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
@@ -10,11 +15,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.security import decode_secret
-from app.models import Budget, Canvas, Operation, Project, TextGeneration, TextProviderSettings, TextUsageLedger, User
-from app.services.generation import _canvas_composition, digest
+from app.models import Asset, Budget, Canvas, Operation, Project, TextGeneration, TextProviderSettings, TextUsageLedger, User
+from app.services.material_references import validate_reference_assets
+from app.services.media import resolve_asset_path
+from app.services.generation import COMPOSER_REFERENCE, _canvas_composition, digest
 from app.services.projects import iso_timestamp, lock_write, record_project_version, require_project
 from app.services.prompts.text import PROMPT_VERSION
 from app.services.text_provider import MODEL, RESULTS, TITLES, Completion, TextProviderFailure, complete_text, cost_micros, current_price, task_instructions
+from app.services.providers import connection as model_connection, freeze_selection, frozen_key, project_defaults
+from app.services.qwen import complete_qwen, endpoint as qwen_endpoint, request_body as qwen_request_body
 
 
 def is_text_admin(user: User, settings: Settings) -> bool:
@@ -84,6 +93,8 @@ def create_text_job(session: Session, project_id: str, user: User, payload: dict
     require_text_admin(user, settings)
     lock_write(session)
     project = require_project(session, project_id, user.id)
+    if payload.get("modelProfileId") is None:
+        payload = {key: value for key, value in payload.items() if key != "modelProfileId"}
     operation = session.scalar(select(Operation).where(Operation.owner_id == user.id, Operation.project_id == project_id, Operation.operation_id == payload["operationId"]))
     if operation is not None:
         if operation.kind != "text.generate" or operation.payload_hash != digest(payload):
@@ -91,21 +102,34 @@ def create_text_job(session: Session, project_id: str, user: User, payload: dict
         return require_text_job(session, operation.response_json["textGenerationId"], user.id)
     if project.revision != payload["expectedRevision"]:
         raise AppError(409, "PROJECT_REVISION_CONFLICT", "项目已有新编辑，请保存并重新提交文本任务")
-    provider = session.get(TextProviderSettings, "platform")
+    selection = freeze_selection(session, user.id, project, "text", payload.get("modelProfileId"))
+    qwen = selection["providerId"] == "aliyun-qwen"
+    provider = model_connection(session, user.id, "aliyun-qwen") if qwen else session.get(TextProviderSettings, "platform")
     if provider is None or not provider.api_key_encrypted:
         raise AppError(503, "TEXT_NOT_CONFIGURED", "平台管理员尚未配置DeepSeek API Key")
-    _, source_digest, composition = _canvas_composition(session, project, payload["sceneId"], payload["sourceNodeId"], payload["prompt"], payload["outputNodeId"], generation_mode="text", output_type="text")
+    translating = payload["task"] == "translate"
+    source, source_digest, composition = _canvas_composition(session, project, payload["sceneId"], payload["sourceNodeId"], payload["prompt"], payload["outputNodeId"], generation_mode="text", output_type="text", text_image_input=qwen or translating)
+    reference_ids = [item.get("storageKey") or item.get("assetId") for item in composition["inputs"] if item["type"] == "image"]
+    references = validate_reference_assets(session, project, reference_ids, settings) if reference_ids and not translating else []
     maximum = payload.get("maxTokens") or settings.text_max_output_tokens
     if maximum > settings.text_max_output_tokens:
         raise AppError(422, "TEXT_OUTPUT_LIMIT", "本次输出Token上限超过平台配置")
-    messages = [{"role": "system", "content": task_instructions(payload["task"])}, {"role": "user", "content": composition["prompt"]}]
+    instruction = task_instructions(payload["task"])
+    if source.get("metadata", {}).get("generationMode") == "text" and (source["type"] == "text" or source.get("metadata", {}).get("scriptVersion") == "legacy") and payload["task"] == "text":
+        instruction = '根据用户指令和参考素材完成写作或翻译。仅返回形如 {"text":"正文"} 的 JSON 对象，正文保留要求的结构。'
+    messages = [{"role": "system", "content": instruction}, {"role": "user", "content": payload["prompt"] if translating else composition["prompt"]}]
     input_upper_bound = sum(len(item["content"].encode("utf-8")) for item in messages) + 1024
-    upper_price = {"cacheHitMicrosPerMillion": 40000, "cacheMissMicrosPerMillion": 2000000, "outputMicrosPerMillion": 8000000}
+    qwen_body = qwen_request_body(messages, maximum) if qwen else None
+    if qwen:
+        input_upper_bound = len(json.dumps(qwen_body, ensure_ascii=False).encode("utf-8")) + 2048 + 4096 * len(references)
+    if references:
+        composition["imageReferences"] = references
+    upper_price = selection["price"] if qwen else {"cacheHitMicrosPerMillion": 40000, "cacheMissMicrosPerMillion": 2000000, "outputMicrosPerMillion": 8000000}
     reserved = cost_micros(0, input_upper_bound, maximum, upper_price)
     if reserved > settings.max_generation_cents * 10000:
         raise AppError(422, "TEXT_COST_LIMIT", "本次文本费用上界超过单次最高费用")
     _reserve(session, reserved, settings)
-    job = TextGeneration(owner_id=user.id, project_id=project_id, scene_id=payload["sceneId"], source_node_id=payload["sourceNodeId"], output_node_id=payload["outputNodeId"], operation_id=payload["operationId"], task=payload["task"], project_revision=project.revision, source_digest=source_digest, input_json={**composition, "request": payload, "messages": messages, "maxTokens": maximum, "maxAttempts": 1, "promptVersion": PROMPT_VERSION, "inputTokenUpperBound": input_upper_bound, "providerRevision": provider.updated_at, "price": current_price(time.time())}, provider="deepseek", model=MODEL, reserved_cost_micros=reserved, status="queued", usage_json={}, events_json=[])
+    job = TextGeneration(owner_id=user.id, project_id=project_id, scene_id=payload["sceneId"], source_node_id=payload["sourceNodeId"], output_node_id=payload["outputNodeId"], operation_id=payload["operationId"], task=payload["task"], project_revision=project.revision, source_digest=source_digest, input_json={**composition, "request": payload, "messages": messages, "maxTokens": maximum, "maxAttempts": 1, "promptVersion": PROMPT_VERSION, "inputTokenUpperBound": input_upper_bound, "providerRevision": provider.updated_at, "price": selection["price"] if qwen else current_price(time.time()), **({"textProviderSnapshot": selection, "requestBody": qwen_body, "providerEndpoint": qwen_endpoint(selection["workspaceId"], selection["region"])} if qwen else {})}, provider="aliyun-qwen" if qwen else "deepseek", model=selection["model"], reserved_cost_micros=reserved, status="queued", usage_json={}, events_json=[])
     session.add(job)
     session.flush()
     session.add(Operation(owner_id=user.id, project_id=project_id, operation_id=payload["operationId"], kind="text.generate", payload_hash=digest(payload), response_json={"textGenerationId": job.id}))
@@ -122,6 +146,13 @@ def _apply_output(session: Session, job: TextGeneration, project: Project) -> No
     if target is None or target["id"] == job.source_node_id:
         raise AppError(409, "TEXT_OUTPUT_MISSING", "原文字结果节点已移除或类型已变化，文本结果继续保留")
     target["metadata"] = {**target.get("metadata", {}), "content": job.output_text, "status": "success", "pendingResult": False, "textGenerationId": job.id, "result": job.result_json}
+    if job.task == "translate":
+        source = next((node for node in data["nodes"] if node["id"] == job.source_node_id), None)
+        if source and source.get("metadata", {}).get("composerContent") == job.input_json["sourcePrompt"]:
+            source["metadata"]["composerContent"] = job.output_text
+    if job.task == "plot" and isinstance(job.result_json, dict):
+        target["metadata"]["scriptVersion"] = "current"
+        target["metadata"]["scriptRows"] = [{"id": str(uuid.uuid4()), "duration": None, "title": "", "visual": shot["text"], "action": "", "dialogue": ""} for shot in job.result_json["shots"]]
     canvas.data_json = data
     canvas.updated_at = time.time()
     project.revision += 1
@@ -201,6 +232,9 @@ def _save_completion(session: Session, job: TextGeneration, response: Completion
     except ValidationError:
         job.status, job.error_code, job.error_message = "failed", "TEXT_RESULT_INVALID", "真实文本结果未通过结构校验，原始输出及Token费用继续保留"
         return
+    if job.task == "translate" and Counter(COMPOSER_REFERENCE.findall(result["text"])) != Counter(COMPOSER_REFERENCE.findall(job.input_json["sourcePrompt"])):
+        job.status, job.error_code, job.error_message = "failed", "TEXT_REFERENCE_CHANGED", "译文中的素材引用发生变化，已保留原提示词"
+        return
     job.result_json, job.output_text = result, _format_result(job.task, result)
     if job.task == "plot" and (len(result["shots"]) != 3 or [shot["no"] for shot in result["shots"]] != [1, 2, 3]):
         job.usage_json = {**job.usage_json, "qualityIssues": [f"本次返回{len(result['shots'])}个镜头，请核对数量和编号是否符合本次要求；完整分镜均已保留"]}
@@ -231,14 +265,16 @@ async def _run_text(settings: Settings, factory: sessionmaker, worker_id: str, i
             session.commit()
             return
         project = require_project(session, job.project_id, job.owner_id)
-        provider = session.get(TextProviderSettings, "platform")
+        snapshot = job.input_json.get("textProviderSnapshot")
+        qwen = bool(snapshot and snapshot["providerId"] == "aliyun-qwen")
+        provider = model_connection(session, job.owner_id, "aliyun-qwen") if qwen else session.get(TextProviderSettings, "platform")
         if provider is None or provider.updated_at != job.input_json["providerRevision"] or project.revision != job.project_revision:
             _settle(session, job, 0)
             job.status, job.error_code, job.error_message = "interrupted", "TEXT_INPUT_CHANGED", "提交前项目或平台模型配置已变化，请重新提交当前输入"
             job.finished_at = time.time()
             session.commit()
             return
-        _, source_digest, _ = _canvas_composition(session, project, job.scene_id, job.source_node_id, job.input_json["sourcePrompt"], job.output_node_id, generation_mode="text", output_type="text")
+        _, source_digest, _ = _canvas_composition(session, project, job.scene_id, job.source_node_id, job.input_json["sourcePrompt"], job.output_node_id, generation_mode="text", output_type="text", text_image_input=qwen or job.task == "translate")
         if source_digest != job.source_digest:
             _settle(session, job, 0)
             job.status, job.error_code, job.error_message = "interrupted", "TEXT_INPUT_CHANGED", "提交前来源或引用已变化，请重新提交当前输入"
@@ -246,12 +282,26 @@ async def _run_text(settings: Settings, factory: sessionmaker, worker_id: str, i
             return
         job.status, job.lease_owner, job.lease_expires_at = "submitting", worker_id, time.time() + settings.text_timeout + 60
         job.started_at, job.updated_at = time.time(), time.time()
-        job.input_json = {**job.input_json, "price": current_price(time.time()), "submittedAt": iso_timestamp(time.time())}
-        key = decode_secret(provider.api_key_encrypted, settings)
+        job.input_json = {**job.input_json, "price": snapshot["price"] if qwen else current_price(time.time()), "submittedAt": iso_timestamp(time.time())}
+        key = frozen_key(session, job.owner_id, snapshot, settings) if qwen else decode_secret(provider.api_key_encrypted, settings)
         messages, maximum = job.input_json["messages"], job.input_json["maxTokens"]
+        references = job.input_json.get("imageReferences", [])
+        if references:
+            validate_reference_assets(session, project, [item["assetId"] for item in references], settings, references)
+            parts = [{"type": "text", "text": messages[-1]["content"]}]
+            for ref in references:
+                asset = session.get(Asset, ref["assetId"])
+                with Image.open(resolve_asset_path(settings, asset.relpath)) as original:
+                    picture = ImageOps.exif_transpose(original).convert("RGB")
+                    picture.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                    encoded = io.BytesIO()
+                    picture.save(encoded, format="JPEG", quality=88)
+                url = "data:image/jpeg;base64," + base64.b64encode(encoded.getvalue()).decode("ascii")
+                parts.append({"type": "image_url", "image_url": {"url": url}})
+            messages = [*messages[:-1], {"role": "user", "content": parts}]
         session.commit()
     try:
-        response = await complete_text(key, messages, maximum, settings)
+        response = await complete_qwen(key, snapshot["workspaceId"], snapshot["region"], messages, maximum, settings) if qwen else await complete_text(key, messages, maximum, settings)
     except TextProviderFailure as error:
         with factory() as session:
             lock_write(session)

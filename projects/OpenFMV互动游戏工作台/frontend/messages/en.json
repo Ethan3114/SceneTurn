@@ -2,6 +2,145 @@
   "app": {
     "description": "A local-first interactive movie editor"
   },
+  "home": {
+    "nav": {
+      "product": "Product",
+      "features": "Features",
+      "menu": "Menu",
+      "studio": "Open Studio",
+      "github": "GitHub",
+      "close": "Close",
+      "label": "Homepage navigation"
+    },
+    "hero": {
+      "headlineFirst": "Viewers choose",
+      "headlineSecond": "the next scene",
+      "description": "A studio for interactive films. Generate assets with AI, arrange branching stories, and publish films your audience can steer.",
+      "githubAccess": "The GitHub repository currently requires access.",
+      "explore": "Explore SceneTurn",
+      "artAlt": "The coastal defense station in The Last Tide"
+    },
+    "product": {
+      "title": "From what you shoot to what viewers choose",
+      "description": "Generate assets, lay out the story and add interactions with your local Codex CLI, then publish a playable film for the web.",
+      "trialLink": "Try making a choice",
+      "material": {
+        "title": "Create assets with AI",
+        "description": "Describe your idea to make scripts, character images, storyboards, and video.",
+        "caption": "Asset generation · Describe what you need",
+        "alt": "The asset workspace shows a generation request with a coastal station reference image selected"
+      },
+      "codex": {
+        "title": "Story and interactions with Codex CLI",
+        "description": "Use a sentence to arrange scenes, adjust shots, and add choices or timed interactions.",
+        "caption": "Ask AI · Connect your local Codex",
+        "alt": "The story canvas and a chat panel awaiting a local Codex connection, with a draft request to add branching interactions"
+      }
+    },
+    "trial": {
+      "heading": "Play The Last Tide",
+      "introduction": "The port has enough backup power for one task. Will you light the beacon or close the floodgate?",
+      "storyTitle": "The Last Tide",
+      "startPrompt": "Decide where the port's last supply of power goes.",
+      "startLabel": "Start demo",
+      "replayHint": "Two branches. You can choose again.",
+      "decisionTitle": "The last reserve of power",
+      "decisionPrompt": "Seawater washes over the console. There is only enough backup power for one task. The beacon can guide the rescue boat in, or the floodgate can protect the low-lying neighborhood.",
+      "signalLabel": "Light the beacon",
+      "signalHint": "Guide the rescue boat safely into the harbor.",
+      "gateLabel": "Close the floodgate",
+      "gateHint": "Protect the stranded neighborhood first.",
+      "signalTitle": "The light returns",
+      "signalOutcome": "The rescue boat followed the beacon into the harbor. The floodgate stayed open too long, and the low-lying neighborhood must evacuate overnight.",
+      "gateTitle": "The floodgate closes",
+      "gateOutcome": "The low-lying neighborhood escaped the surge. Without the beacon, the rescue boat has to wait for daylight to dock.",
+      "retryLabel": "Choose again",
+      "backLabel": "Exit trial"
+    },
+    "features": {
+      "title": "One project, four views of the studio",
+      "description": "Switch between features to see how The Last Tide was made in SceneTurn.",
+      "previewLabel": "SceneTurn workspace",
+      "blueprint": {
+        "title": "Story canvas",
+        "description": "Arrange openings, branches, and endings with nodes and connections.",
+        "previewTitle": "Blueprint · Backup power and two paths",
+        "imageAlt": "The story canvas connects the opening scene to two branches and two endings"
+      },
+      "timeline": {
+        "title": "Scenes and interactions",
+        "description": "Arrange shots, choice buttons, and timed actions on the timeline.",
+        "previewTitle": "Timeline · Set choices and when they appear",
+        "imageAlt": "The Light the beacon button is selected on the timeline, with its interaction settings shown alongside"
+      },
+      "player": {
+        "title": "Play in the browser",
+        "description": "Play through different branches and check where each choice takes the viewer.",
+        "previewTitle": "Web player · Paused at the power decision",
+        "imageAlt": "The web player offers choices to light the beacon or close the floodgate"
+      },
+      "assets": {
+        "title": "Projects and assets",
+        "description": "Manage the project's shots and audio and find assets from other projects.",
+        "previewTitle": "Media library · Images and audio for this project",
+        "imageAlt": "The media library lists reference images of the coastal station, beacon, and floodgate"
+      }
+    },
+    "workflow": {
+      "title": "From assets to a film you can share",
+      "description": "Prepare assets, edit, add interactions, and test your film in one project.",
+      "material": {
+        "title": "Prepare assets",
+        "description": "Import existing clips or use AI to create scripts and footage."
+      },
+      "story": {
+        "title": "Arrange the story",
+        "description": "Connect the opening, scenes, and endings on the canvas or with local Codex."
+      },
+      "interaction": {
+        "title": "Add interactions",
+        "description": "Place choice buttons and timed actions on the timeline."
+      },
+      "publish": {
+        "title": "Test and publish",
+        "description": "Play through the branches, then publish the version you choose."
+      }
+    },
+    "faq": {
+      "title": "Frequently asked questions",
+      "description": "Learn about assets, connecting Codex, and publishing before you start.",
+      "settingsLabel": "View model settings",
+      "materials": {
+        "question": "Can I start with assets I already have?",
+        "answer": "Yes. Import existing text, images, audio, and video. You can also make scripts, character images, storyboards, and video under Assets → Generate assets."
+      },
+      "models": {
+        "question": "What do I need to set up before generating assets?",
+        "answer": "Check Model settings for the models available to your account and configure your chosen service. Before submitting a video job, you can review the first and last frames and the generation settings."
+      },
+      "codex": {
+        "question": "How can local Codex arrange my story?",
+        "answer": "Open Ask AI → Connect your Codex in the project. Sign in to Codex CLI on your computer and pair it. Codex can edit the scenes, timeline, and interactions you authorize, and you can keep making edits manually."
+      },
+      "play": {
+        "question": "Do viewers have to sign in or install anything?",
+        "answer": "Viewers can open a published film directly from its link in a browser. Sign in to create and manage your own projects."
+      },
+      "publish": {
+        "question": "What becomes public when I publish?",
+        "answer": "You choose the fixed version, cover, and trailer to publish. Drafts, conversations, and credentials stay in the project. You can take down a published film."
+      }
+    },
+    "footer": {
+      "title": "Start creating your interactive film",
+      "works": "Gallery"
+    },
+    "premiere": {
+      "label": "SceneTurn Premiere",
+      "trailer": "Watch the trailer",
+      "detail": "Film details"
+    }
+  },
   "navigation": {
     "askAi": "Ask AI",
     "minimize": "Minimize",
@@ -675,47 +814,75 @@
     "inputPlaceholder": "Type a message, Ctrl/⌘ + Enter to send",
     "send": "Send"
   },
+  "materialModels": {
+    "title": "Models for the next run",
+    "description": "Choose models for the next run. The current run keeps its submitted models.",
+    "choose": "Choose a {model} model",
+    "projectDescription": "Choose the project default. You can select another model in Generate Assets for the next run.",
+    "text": "Text",
+    "image": "Image",
+    "video": "Video",
+    "textModel": "Text model",
+    "imageModel": "Image model",
+    "videoModel": "Video model",
+    "currentModels": "Current run",
+    "nextModels": "Next run",
+    "personalCodex": "Personal Codex",
+    "localConnected": "Local connection · Connected",
+    "localDisconnected": "Waiting for a local connection that supports image generation",
+    "connect": "Connect personal Codex",
+    "qwen": "Alibaba Cloud Model Studio · Qwen",
+    "sensetime": "SenseTime",
+    "ark": "Volcano Engine · Ark",
+    "wan": "Alibaba Cloud Model Studio",
+    "bothFrames": "First and last frames",
+    "firstFrame": "First frame",
+    "requiresBothFrames": "This workflow requires first- and last-frame support",
+    "unavailable": "Currently unavailable",
+    "usesDefaults": "Initial selections follow the project defaults.",
+    "resetDefault": "Restore project default",
+    "loading": "Loading models and connection status…",
+    "loadError": "Unable to load models and connection status.",
+    "retry": "Reload",
+    "cancel": "Cancel",
+    "apply": "Apply to next run",
+    "applyDefault": "Choose model",
+    "confirmPersonalUsage": "I confirm using the connected personal Codex account allowance to generate these images."
+  },
   "legal": {
+    "backHome": "Back to home",
+    "navigation": "Privacy and terms",
+    "skip": "Skip to main content",
     "privacy": {
-      "eyebrow": "OpenFMV local editor",
-      "title": "Privacy",
-      "description": "OpenFMV is currently a local-first desktop app with no accounts, cloud sync, or hosted backend.",
-      "localData": {
-        "title": "Local data",
-        "body": "Projects, settings, and asset indexes are saved on your device by default."
+      "title": "Privacy policy",
+      "description": "How SceneTurn uses data when you sign in, create a project, and share it for public playback.",
+      "account": {
+        "title": "Accounts and project data",
+        "body": "Your email address is used to register and sign in. The workspace stores projects, assets, task status, and project history. Account permissions control access."
       },
-      "assets": {
-        "title": "Asset files",
-        "body": "Imported assets are copied into local project folders or browser local storage."
+      "generation": {
+        "title": "Generation services and personal Codex",
+        "body": "Prompts and reference assets needed to generate media are sent to the selected service. A personal Codex connection is scoped to the paired project. Codex sign-in credentials remain on your device."
       },
-      "ai": {
-        "title": "AI settings",
-        "body": "AI chat runs through the local CLI selected in settings."
-      },
-      "updates": {
-        "title": "Changes",
-        "body": "If network features are added later, this privacy note should be updated with them."
+      "publication": {
+        "title": "Public works",
+        "body": "Once you publish a fixed version, visitors can access its playback content and the selected cover and trailer. Removing the publication blocks new public access requests."
       }
     },
     "terms": {
-      "eyebrow": "OpenFMV local editor",
-      "title": "Terms",
-      "description": "These terms describe the current local version's operating boundaries.",
-      "localFirst": {
-        "title": "Local first",
-        "body": "OpenFMV is built for local creative workflows and does not include accounts or cloud sync."
-      },
+      "title": "Terms of use",
+      "description": "Review assets, generated results, and publication settings when creating and releasing interactive works in SceneTurn.",
       "content": {
-        "title": "Creative content",
-        "body": "You are responsible for the rights, storage, and backups of imported assets and generated content."
+        "title": "Works and assets",
+        "body": "Check that you have permission to use the assets you upload. Review generated results before adopting them or publishing a work."
       },
-      "exports": {
-        "title": "Exports",
-        "body": "Exported story packages are written to the local directory you select."
+      "generation": {
+        "title": "Generation and confirmation",
+        "body": "Before generating video, check the shot, first and last frames, and settings. Once results are in the asset library, you can preview them and select the version to use."
       },
-      "responsibility": {
-        "title": "Responsibility",
-        "body": "Test interactive flows, asset paths, and exported builds before publishing."
+      "publication": {
+        "title": "Publishing and unpublishing",
+        "body": "Play through the story branches before publishing. The gallery plays the fixed version you confirm for release. You can remove a publication from its version settings."
       }
     }
   },

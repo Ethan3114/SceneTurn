@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { enterManualStudio } from './manual-studio';
+import { addCanvasNode, createProjectFromList, enterManualStudio, restoreLegacyCanvasAssistant } from './manual-studio';
 
 test.use({ viewport: { width: 1440, height: 1000 }, actionTimeout: 15000 });
 
@@ -12,8 +12,8 @@ async function createProject(page: Page) {
   await page.getByTestId('auth-email').fill(`agent-browser-${crypto.randomUUID()}@example.com`);
   await page.getByTestId('auth-password').fill(crypto.randomUUID()); await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill('角色任务与项目记忆验证'); await page.getByTestId('project-create').click();
-  await enterManualStudio(page); await expect(page.getByTestId('canvas-add-agent')).toBeEnabled();
+  await createProjectFromList(page, '角色任务与项目记忆验证');
+  await enterManualStudio(page);
   const id = new URL(page.url()).searchParams.get('id'); if (!id) throw new Error('真实项目没有标识'); return id;
 }
 async function save(page: Page) { await page.getByTestId('canvas-save').click(); await expect(page.getByTestId('save-status')).toContainText('已保存'); }
@@ -39,11 +39,11 @@ test('画布内角色任务、停止恢复、项目记忆与三种宽度可持�
   test.setTimeout(120000);
   const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
   const id = await createProject(page);
-  await page.getByTestId('canvas-add-text').click();
+  await addCanvasNode(page, 'text');
   const text = page.getByTestId('canvas-node').last();
   const textId = await text.getAttribute('data-node-id'); if (!textId) throw new Error('真实文字节点没有标识');
   await text.getByTestId('canvas-node-body').dblclick(); await text.getByTestId('canvas-text').fill('角色林岚是一名修表师，随身携带一枚银色怀表。'); await save(page);
-  await page.getByTestId('canvas-add-agent').click();
+  await restoreLegacyCanvasAssistant(page);
   const agent = page.locator('[data-agent-node]'); await expect(agent).toHaveCount(1);
   await expect(agent.getByTestId('agent-role').locator('option')).toHaveCount(6);
   await expect(agent.getByTestId('agent-delivery-mode')).toHaveValue('professional');
@@ -89,7 +89,7 @@ test('画布内角色任务、停止恢复、项目记忆与三种宽度可持�
   expect(runs[0].deliveryMode).toBe('professional');
   page.once('dialog', async (dialog) => { expect(dialog.type()).toBe('confirm'); await dialog.accept(); });
   await page.locator('[data-agent-node]').getByTestId('canvas-node-delete').click(); await save(page);
-  await page.getByTestId('canvas-add-agent').click();
+  await restoreLegacyCanvasAssistant(page);
   await expect(page.getByTestId('agent-status')).toHaveText('已停止');
   await page.getByTestId('agent-resume').click(); await expect(page.getByTestId('agent-status')).toHaveText('等待本人Codex连接');
   await page.getByTestId('agent-stop').click(); await expect(page.getByTestId('agent-status')).toHaveText('已停止');

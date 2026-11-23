@@ -27,6 +27,7 @@ class CodexConnection(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     tools_json: Mapped[list] = mapped_column(JSON)
     client_version: Mapped[str] = mapped_column(String(100))
+    capabilities_json: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     expires_at: Mapped[float] = mapped_column(Float)
     last_seen_at: Mapped[float] = mapped_column(Float)
     revoked_at: Mapped[float | None] = mapped_column(Float, nullable=True)

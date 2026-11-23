@@ -1,0 +1,480 @@
+.canvas-config-card {
+  --config-surface: #1f1f1f;
+  --config-field: #242424;
+  --config-divider: #363636;
+  --config-border: rgb(255 255 255 / 8%);
+  --config-text: #f7f7f7;
+  --config-muted: #919191;
+  --config-focus: #a9baff;
+  --config-warning: #edc58e;
+  display: flex;
+  box-sizing: border-box;
+  width: 660px;
+  min-height: 174px;
+  flex-direction: column;
+  border: 1px solid var(--config-border);
+  border-radius: 20px;
+  background: var(--config-surface);
+  color: var(--config-text);
+  color-scheme: dark;
+  cursor: default;
+}
+
+.canvas-config-card[data-kind='video'][data-with-references='true'] {
+  min-height: 244.8px;
+}
+
+.canvas-config-layout {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.canvas-config-main {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  padding: 16px 16px 0;
+}
+
+.canvas-config-card[data-with-references='true'] .canvas-config-main {
+  gap: 22.8px;
+  padding: 8px 12px 0;
+}
+
+.canvas-config-card[data-with-references='true'] .canvas-config-prompt {
+  margin-inline: 4px;
+}
+
+.canvas-config-reference-strip {
+  display: flex;
+  min-width: 0;
+  min-height: 48px;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.canvas-config-card:not([data-with-references='true']) .canvas-config-reference-strip {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  min-height: 0;
+}
+
+.canvas-config-reference-slot,
+.canvas-config-reference-thumbnail {
+  position: relative;
+  display: grid;
+  width: 48px;
+  height: 48px;
+  flex: none;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--config-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--config-muted);
+}
+
+.canvas-config-card:not([data-with-references='true']) .canvas-config-reference-slot {
+  width: 32px;
+  height: 32px;
+}
+
+.canvas-config-reference-slot:is(:hover, [aria-expanded='true']) {
+  border-color: #535353;
+  background: #2c2c2c;
+  color: var(--config-text);
+}
+
+.canvas-config-reference-slot > span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding-block: 1px;
+  background: rgb(0 0 0 / 65%);
+  color: var(--config-text);
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+}
+
+.canvas-config-reference-slot img,
+.canvas-config-reference-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.canvas-config-control {
+  position: relative;
+  flex: none;
+}
+
+.canvas-config-menu-trigger {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding-inline: 8px;
+  border: 1px solid var(--config-border);
+  border-radius: 8px;
+  color: var(--config-text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.canvas-config-menu-trigger > span {
+  max-width: 166px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvas-config-menu-trigger:is(:hover, [aria-expanded='true']) {
+  background: #2c2c2c;
+}
+
+.canvas-config-menu-trigger svg {
+  color: var(--config-muted);
+}
+
+.canvas-config-popover {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: max-content;
+  min-width: 146px;
+  max-width: 380px;
+  max-height: 290px;
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid var(--config-border);
+  border-radius: 12px;
+  background: #262626;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 35%);
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.canvas-config-popover[data-width='wide'] {
+  width: 310px;
+  padding: 8px;
+}
+
+.canvas-config-popover[data-slot] {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
+.canvas-config-card:not([data-with-references='true']) .canvas-config-popover[data-slot] {
+  right: 0;
+  left: auto;
+}
+
+.canvas-config-option {
+  display: flex;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  padding-inline: 8px;
+  border-radius: 6px;
+  color: var(--config-text);
+  font-size: 12px;
+  text-align: start;
+  white-space: nowrap;
+}
+
+.canvas-config-option:is(:hover:enabled, [aria-selected='true']) {
+  background: #363636;
+}
+
+.canvas-config-option:disabled {
+  color: var(--config-muted);
+  cursor: default;
+}
+
+.canvas-config-field {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  color: var(--config-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.canvas-config-field::after {
+  position: absolute;
+  right: 10px;
+  bottom: 13px;
+  width: 6px;
+  height: 6px;
+  transform: rotate(45deg);
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  content: '';
+  pointer-events: none;
+}
+
+.canvas-config-field select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  appearance: none;
+  border: 1px solid var(--config-border);
+  border-radius: 7px;
+  background: var(--config-field);
+  padding: 0 22px 0 8px;
+  overflow: hidden;
+  color: var(--config-text);
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.canvas-config-field select:disabled {
+  cursor: default;
+  opacity: .7;
+}
+
+.canvas-config-controls {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.canvas-config-controls--video {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.1fr);
+}
+
+.canvas-config-controls--pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.canvas-config-composer {
+  min-width: 0;
+}
+
+.canvas-config-card .canvas-config-prompt-heading,
+.canvas-config-card .canvas-config-references {
+  display: none;
+}
+
+.canvas-config-prompt {
+  position: relative;
+  min-width: 0;
+}
+
+.canvas-config-editor,
+.canvas-config-placeholder {
+  padding-right: 6px;
+  font-size: 14px;
+  line-height: 23px;
+  overflow-wrap: anywhere;
+}
+
+.canvas-config-editor {
+  height: 100.75px;
+  overflow-y: auto;
+  outline: none;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.canvas-config-card:not([data-with-references='true']) :is(.canvas-config-editor, .canvas-config-placeholder) {
+  padding-right: 36px;
+}
+
+.canvas-config-card[data-kind='video'][data-with-references='true'] .canvas-config-editor {
+  height: 80px;
+}
+
+.canvas-config-placeholder {
+  position: absolute;
+  inset: 0;
+  color: var(--config-muted);
+  pointer-events: none;
+}
+
+.canvas-config-video-references {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.canvas-config-video-reference-heading {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: -4px;
+  color: var(--config-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.canvas-config-video-reference-count {
+  color: var(--config-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.canvas-config-video-reference-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.canvas-config-video-reference {
+  position: relative;
+  display: grid;
+  grid-template-columns: min(42%, 61px) minmax(0, 1fr);
+  grid-template-rows: 22px 20px;
+  align-items: start;
+  min-width: 0;
+  min-height: 62px;
+  column-gap: 7px;
+  border: 1px solid var(--config-border);
+  border-radius: 7px;
+  background: var(--config-field);
+  padding: 5px 4px 8px;
+  cursor: pointer;
+}
+
+.canvas-config-video-reference[data-selected='true'] {
+  border-color: var(--config-focus);
+}
+
+.canvas-config-video-reference img {
+  grid-area: 1 / 1 / 3 / 2;
+  width: 100%;
+  aspect-ratio: 61 / 34;
+  border-radius: 5px;
+  object-fit: cover;
+}
+
+.canvas-config-video-reference-title {
+  grid-area: 1 / 2;
+  padding-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  line-height: 15px;
+  white-space: nowrap;
+}
+
+.canvas-config-video-reference-number {
+  grid-area: 2 / 2;
+  padding-right: 14px;
+  color: var(--config-muted);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.canvas-config-video-reference input {
+  position: absolute;
+  right: 5px;
+  bottom: 9px;
+  display: grid;
+  width: 13px;
+  height: 13px;
+  appearance: none;
+  place-content: center;
+  border: 1px solid var(--config-border);
+  border-radius: 3px;
+  background: var(--config-field);
+  cursor: pointer;
+}
+
+.canvas-config-video-reference input:checked {
+  background: var(--config-focus);
+}
+
+.canvas-config-video-reference input:checked::after {
+  width: 6px;
+  height: 4px;
+  transform: translateY(-1px) rotate(-45deg);
+  border-bottom: 1.5px solid #080809;
+  border-left: 1.5px solid #080809;
+  content: '';
+}
+
+.canvas-config-video-reference-connect {
+  display: inline-flex;
+  justify-self: start;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  border-radius: 7px;
+  padding-inline: 7px;
+  color: var(--config-muted);
+}
+
+.canvas-config-video-reference-connect:hover {
+  background: var(--config-divider);
+  color: var(--config-text);
+}
+
+.canvas-config-note {
+  color: var(--config-muted);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.canvas-config-note a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.canvas-config-note--warning {
+  color: var(--config-warning);
+}
+
+.canvas-config-footer {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 8px;
+}
+
+.canvas-config-action {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  place-items: center;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #f7f7f7;
+  color: #1f1f1f;
+}
+
+.canvas-config-action:hover:enabled {
+  background: #e4e9ff;
+}
+
+.canvas-config-card .canvas-config-action:disabled {
+  background: #393939;
+  color: #919191;
+  opacity: 1;
+}
+
+.canvas-config-card :is(button, select, summary, input):focus-visible {
+  outline: 2px solid var(--config-focus);
+  outline-offset: 2px;
+}
+

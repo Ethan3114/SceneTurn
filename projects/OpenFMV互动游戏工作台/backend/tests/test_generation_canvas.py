@@ -1,3 +1,4 @@
+import base64
 import json
 import sqlite3
 import sys
@@ -6,7 +7,13 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
+from app.core.config import Settings
+from app.models import Generation
+from app.services.canvas_video_inputs import media_payload
+from app.services.wan import video_request
 from test_api import create_project, error_code, registered_client, scene_id
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
@@ -110,6 +117,212 @@ def test_empty_config_uses_connected_text_without_prompt_fallback(live_service):
         assert generation["input"]["sourcePrompt"] == ""
         assert generation["input"]["prompt"] == "【文本1】\n清晨的车站，乘客走进大厅。"
         assert generation["input"]["inputs"] == [{"nodeId": "text-a", "type": "text", "title": "剧情文字", "text": "清晨的车站，乘客走进大厅。", "label": "文本1"}]
+
+
+def test_film_guidance_preserves_script_and_source_prompt_in_real_quote(live_service):
+    client, _ = registered_client(live_service)
+    with closing(client):
+        source = node("source", "config", "视频节点", generationMode="video", composerContent="镜头推进。", generateAudio="false",
+            filmGuidance={"palette": "月光蓝色调", "camera": "Auto", "focal": "35mm"})
+        envelope = save_canvas(client, create_project(client), [source, node("text", "text", "镜头剧本", content="角色走入画面。")], [connection("text", "source")])
+        generated = accepted_quote(quote(client, envelope, "source", "镜头推进。"), live_service)["input"]
+        assert generated["sourcePrompt"] == "镜头推进。"
+        assert generated["prompt"] == "镜头推进。\n\n【文本1】\n角色走入画面。\n\n配色：月光蓝色调\n焦距：35mm"
+        assert generated["audio"] is False
+        assert generated["inputs"][0]["nodeId"] == "text"
+
+
+def test_invalid_film_guidance_rejected_before_creating_task(live_service):
+    client, _ = registered_client(live_service)
+    with closing(client):
+        source = node("source", "config", "视频节点", generationMode="video", composerContent="镜头推进。", filmGuidance={"lens": ["55mm"]})
+        envelope = save_canvas(client, create_project(client), [source])
+        rejected_quote(client, envelope, quote(client, envelope, "source", "镜头推进。"), "FILM_GUIDANCE_INVALID")
+
+
+def test_canvas_quotes_fixed_frames_in_saved_order(live_service, sample_input_media):
+    client, _ = registered_client(live_service)
+    with closing(client):
+        envelope, image = upload_input(client, create_project(client), sample_input_media["image"])
+        prompt = "固定摄像机，路人缓慢走向画面边缘。"
+        nodes = [node("source", "config", "图生视频", generationMode="video", composerContent=prompt),
+            node("first", "image", "开头", storageKey=image["id"]), node("last", "image", "结尾", storageKey=image["id"]),
+            node("out", "video", "生成结果")]
+        edges = [connection("last", "source"), connection("first", "source"), connection("source", "out")]
+        envelope = save_canvas(client, envelope, nodes, edges)
+        path = f"/projects/{envelope['project']['id']}/generations/quote"
+        body = {"sceneId": scene_id(envelope), "sourceNodeId": "source", "outputNodeId": "out", "prompt": prompt,
+            "duration": 5, "resolution": "720P", "ratio": "9:16", "operationId": str(uuid.uuid4())}
+        first = accepted_quote(client.post(path, json={**body, "firstFrameNodeId": "first"}), live_service)
+        assert first["input"]["ratio"] == "9:16" and first["quotedCents"] == 300
+        assert first["input"]["canvasMedia"] == [{"nodeId": "first", "type": "first_frame", "assetId": image["id"]}]
+        both = accepted_quote(client.post(path, json={**body, "operationId": str(uuid.uuid4()),
+            "firstFrameNodeId": "first", "lastFrameNodeId": "last"}), live_service)
+        assert [item["type"] for item in both["input"]["canvasMedia"]] == ["first_frame", "last_frame"]
+        assert {item["title"] for item in both["input"]["inputs"]} == {"开头", "结尾"}
+        assert all("url" not in item for item in both["input"]["inputs"])
+        engine = create_engine(f"sqlite+pysqlite:///file:{live_service.data_dir / 'openfmv.sqlite3'}?mode=ro&uri=true")
+        with Session(engine) as session:
+            generation = session.get(Generation, both["id"])
+            media = media_payload(session, generation, Settings(data_dir=live_service.data_dir))
+            request = video_request({**generation.input_json, "media": media})
+        engine.dispose()
+        assert request["parameters"]["ratio"] == "9:16"
+        assert [part["type"] for part in request["input"]["media"]] == ["first_frame", "last_frame"]
+        assert all(base64.b64decode(part["url"].partition(",")[2], validate=True) == sample_input_media["image"][0].read_bytes() for part in media)
+        assert error_code(client.post(path, json={**body, "operationId": str(uuid.uuid4()), "lastFrameNodeId": "last"}), 422) == "VIDEO_FIRST_FRAME_REQUIRED"
+        assert error_code(client.post(path, json={**body, "operationId": str(uuid.uuid4()), "firstFrameNodeId": "not-connected"}), 422) == "VIDEO_MEDIA_INPUT_NOT_READY"
+
+
+def test_video_uses_the_saved_result_of_its_linked_image_generator(live_service, sample_input_media):
+    client, _ = registered_client(live_service)
+    with closing(client):
+        envelope, image = upload_input(client, create_project(client), sample_input_media["image"])
+        prompt = "根据首帧缓慢向前推进。"
+        nodes = [
+            node("image-generator", "config", "图片节点", generationMode="image", outputNodeId="image-result"),
+            node("image-result", "image", "图片结果", storageKey=image["id"]),
+            node("video-generator", "config", "视频节点", generationMode="video", composerContent=prompt, firstFrameNodeId="image-generator"),
+            node("video-result", "video", "视频结果"),
+        ]
+        links = [
+            connection("image-generator", "video-generator"),
+            connection("video-generator", "video-result"),
+        ]
+        envelope = save_canvas(client, envelope, nodes, links)
+        path = f"/projects/{envelope['project']['id']}/generations/quote"
+        body = {"sceneId": scene_id(envelope), "sourceNodeId": "video-generator", "outputNodeId": "video-result",
+            "firstFrameNodeId": "image-generator", "prompt": prompt, "duration": 5, "resolution": "720P"}
+        rejected_quote(client, envelope, client.post(path, json={**body, "operationId": str(uuid.uuid4())}), "VIDEO_MEDIA_INPUT_NOT_READY")
+
+        envelope = save_canvas(client, envelope, nodes, [*links, connection("image-generator", "image-result")])
+        generation = accepted_quote(client.post(path, json={**body, "operationId": str(uuid.uuid4())}), live_service)
+        assert generation["input"]["canvasMedia"] == [{"nodeId": "image-generator", "type": "first_frame", "assetId": image["id"]}]
+        assert generation["input"]["inputs"][0]["title"] == "图片节点"
+
+
+def test_wan_freezes_project_video_and_reference_image_without_using_external_node_url(live_service, sample_input_media):
+    client, _ = registered_client(live_service)
+    with closing(client):
+        envelope, video = upload_input(client, create_project(client), sample_input_media["video"])
+        envelope, image = upload_input(client, envelope, sample_input_media["image"])
+        prompt = "沿用@[node:reference]中的动作，参考@[node:flower]中的花瓣。"
+        nodes = [node("source", "config", "视频生成", generationMode="video", composerContent=prompt),
+            node("reference", "video", "导入视频", storageKey=video["id"], content="https://example.com/video.mp4"),
+            node("untrusted", "video", "外部链接", content="https://example.com/video.mp4"),
+            node("flower", "image", "花瓣", storageKey=image["id"]),
+            node("script", "text", "分镜剧本", content="沿着花瓣从右向左运动。")]
+        envelope = save_canvas(client, envelope, nodes, [connection(name, "source") for name in ("reference", "untrusted", "flower", "script")])
+        path = f"/projects/{envelope['project']['id']}/generations/quote"
+        body = {"sceneId": scene_id(envelope), "sourceNodeId": "source", "prompt": prompt, "duration": 4,
+            "resolution": "720P", "referenceVideoNodeId": "reference", "referenceImageNodeIds": ["flower"], "videoInputMode": "extend"}
+        assert error_code(client.post(path, json={**body, "operationId": str(uuid.uuid4()), "ratio": "16:9"}), 422) == "MODEL_VIDEO_RATIO_ADAPTIVE_REQUIRED"
+        assert error_code(client.post(path, json={**body, "operationId": str(uuid.uuid4()), "duration": 26}), 422) == "VIDEO_REFERENCE_DURATION_INVALID"
+        quote = accepted_quote(client.post(path, json={**body, "operationId": str(uuid.uuid4())}), live_service)
+        assert quote["quotedCents"] == (4 + (video["durationMs"] + 999) // 1000) * 60
+        assert quote["input"]["ratio"] == "adaptive"
+        assert quote["input"]["prompt"] == "沿用【视频1】中的动作，参考【图1】中的花瓣。\n\n【文本1】\n沿着花瓣从右向左运动。"
+        assert quote["input"]["canvasMedia"] == [
+            {"nodeId": "reference", "type": "reference_video", "assetId": video["id"]},
+            {"nodeId": "flower", "type": "reference_image", "assetId": image["id"]},
+        ]
+        assert all("url" not in item for item in quote["input"]["inputs"])
+        edit = accepted_quote(client.post(path, json={**body, "operationId": str(uuid.uuid4()), "videoInputMode": "edit", "ratio": "16:9"}), live_service)
+        assert edit["input"]["canvasMedia"] == quote["input"]["canvasMedia"]
+        engine = create_engine(f"sqlite+pysqlite:///file:{live_service.data_dir / 'openfmv.sqlite3'}?mode=ro&uri=true")
+        with Session(engine) as session:
+            generation = session.get(Generation, quote["id"])
+            media = media_payload(session, generation, Settings(data_dir=live_service.data_dir))
+        engine.dispose()
+        assert media[0]["type"] == "reference_video" and "url" not in media[0]
+        assert media[0]["path"].is_relative_to(live_service.data_dir / "media")
+        assert media[0]["path"].read_bytes() == sample_input_media["video"][0].read_bytes()
+        assert media[1]["type"] == "reference_image" and "path" not in media[1]
+        assert base64.b64decode(media[1]["url"].partition(",")[2], validate=True) == sample_input_media["image"][0].read_bytes()
+
+        original_path = media[0]["path"]
+        away = original_path.rename(original_path.with_suffix(".moved"))
+        try:
+            missing = client.post(path, json={**body, "operationId": str(uuid.uuid4())})
+            assert error_code(missing, 409) == "VIDEO_REFERENCE_CHANGED"
+            assert "重新导入或选择其他视频" in missing.json()["error"]["message"]
+        finally:
+            away.rename(original_path)
+
+        nodes[0]["metadata"]["composerContent"] = "采用@[node:untrusted]。"
+        envelope = save_canvas(client, envelope, nodes, [connection(name, "source") for name in ("reference", "untrusted", "flower", "script")])
+        assert error_code(client.post(path, json={**body, "operationId": str(uuid.uuid4()), "prompt": "采用@[node:untrusted]。",
+            "referenceVideoNodeId": "untrusted"}), 422) == "VIDEO_MEDIA_INPUT_NOT_READY"
+
+
+def test_wan_uses_connected_image_references_in_selected_order(live_service, sample_input_media):
+    client, _ = registered_client(live_service)
+    with closing(client):
+        envelope, image = upload_input(client, create_project(client), sample_input_media["image"])
+        prompt = "保留@[node:wide]的构图，让@[node:close]中的花进入画面。@[node:script]"
+        nodes = [node("source", "config", "参考生视频", generationMode="video", composerContent=prompt),
+            node("wide", "image", "构图", storageKey=image["id"]), node("close", "image", "花朵", storageKey=image["id"]),
+            node("script", "text", "本段剧本", content="露水顺着花瓣滑下。"),
+            node("notes", "text", "导演笔记", content="风声比鸟鸣更近。")]
+        envelope = save_canvas(client, envelope, nodes, [connection(key, "source") for key in ("close", "notes", "script", "wide")])
+        path = f"/projects/{envelope['project']['id']}/generations/quote"
+        body = {"sceneId": scene_id(envelope), "sourceNodeId": "source", "prompt": prompt, "duration": 2,
+            "resolution": "720P", "videoInputMode": "reference", "referenceImageNodeIds": ["wide", "close"], "operationId": str(uuid.uuid4())}
+        quote = accepted_quote(client.post(path, json=body), live_service)
+        assert quote["quotedCents"] == 120
+        assert quote["input"]["prompt"] == "保留【图1】的构图，让【图2】中的花进入画面。【文本1】\n\n【文本1】\n露水顺着花瓣滑下。\n\n【文本2】\n风声比鸟鸣更近。"
+        assert quote["input"]["canvasMedia"] == [{"nodeId": key, "type": "reference_image", "assetId": image["id"]} for key in ("wide", "close")]
+        assert [(item["nodeId"], item["label"]) for item in quote["input"]["inputs"]] == [("wide", "图1"), ("close", "图2"), ("script", "文本1"), ("notes", "文本2")]
+        assert all("url" not in item for item in quote["input"]["inputs"])
+        assert accepted_quote(client.post(path, json=body), live_service)["id"] == quote["id"]
+        invalid_inputs = [({"firstFrameNodeId": "wide"}, "VIDEO_MEDIA_COMBINATION_INVALID"),
+            ({"videoInputMode": "edit"}, "VIDEO_REFERENCE_VIDEO_REQUIRED"),
+            ({"videoInputMode": "extend"}, "VIDEO_REFERENCE_VIDEO_REQUIRED"),
+            ({"referenceImageNodeIds": []}, "VIDEO_REFERENCE_MEDIA_REQUIRED"),
+            ({"referenceImageNodeIds": ["wide", "wide"]}, "VIDEO_REFERENCE_IMAGES_INVALID"),
+            ({"referenceImageNodeIds": ["wide", "close", "missing"]}, "VIDEO_MEDIA_INPUT_NOT_READY")]
+        for settings, failure in invalid_inputs:
+            assert error_code(client.post(path, json={**body, **settings, "operationId": str(uuid.uuid4())}), 422) == failure
+
+        engine = create_engine(f"sqlite+pysqlite:///file:{live_service.data_dir / 'openfmv.sqlite3'}?mode=ro&uri=true")
+        with Session(engine) as session:
+            generation = session.get(Generation, quote["id"])
+            media = media_payload(session, generation, Settings(data_dir=live_service.data_dir))
+            frozen_input = dict(generation.input_json)
+        engine.dispose()
+        assert video_request({**frozen_input, "media": media})["input"]["media"] == media
+        assert all(base64.b64decode(part["url"].partition(",")[2], validate=True) == sample_input_media["image"][0].read_bytes() for part in media)
+
+        original = {"type": "reference_video", "url": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20260402/ldnfdf/wan2.7-videoedit-style-change.mp4"}
+        for mode in ("reference", "edit", "extend"):
+            body = video_request({**frozen_input, "media": [original, *media], "videoInputMode": mode, "ratio": "adaptive"})
+            assert body["input"]["media"] == [original, *media]
+            assert "视频1" in body["input"]["prompt"]
+            assert "【图1】" in body["input"]["prompt"]
+            assert "露水顺着花瓣滑下。" in body["input"]["prompt"]
+
+
+def test_explicit_text_video_mode_keeps_unassigned_media_connected(live_service, sample_input_media):
+    client, _ = registered_client(live_service)
+    with closing(client):
+        envelope, image = upload_input(client, create_project(client), sample_input_media["image"])
+        nodes = [node("source", "config", "文字生成视频", generationMode="video", composerContent="转换为慢镜头。"),
+            node("picture", "image", "参考画面", storageKey=image["id"]),
+            node("script", "text", "镜头安排", content="露水顺着花瓣滑下。")]
+        edges = [connection("picture", "source"), connection("script", "source")]
+        envelope = save_canvas(client, envelope, nodes, edges)
+        path = f"/projects/{envelope['project']['id']}/generations/quote"
+        body = {"sceneId": scene_id(envelope), "sourceNodeId": "source", "prompt": "转换为慢镜头。", "duration": 2,
+            "resolution": "720P", "videoInputMode": "text", "operationId": str(uuid.uuid4())}
+        quote = accepted_quote(client.post(path, json=body), live_service)
+        assert quote["input"]["prompt"] == "转换为慢镜头。\n\n【文本1】\n露水顺着花瓣滑下。"
+        assert [item["nodeId"] for item in quote["input"]["inputs"]] == ["script"]
+        assert "canvasMedia" not in quote["input"]
+        assert error_code(client.post(path, json={**body, "firstFrameNodeId": "picture", "operationId": str(uuid.uuid4())}), 422) == "VIDEO_MEDIA_COMBINATION_INVALID"
+        nodes[0]["metadata"]["composerContent"] = "转换为慢镜头。@[node:picture]"
+        save_canvas(client, envelope, nodes, edges)
+        response = client.post(path, json={**body, "prompt": "转换为慢镜头。@[node:picture]", "operationId": str(uuid.uuid4())})
+        assert error_code(response, 422) == "GENERATION_MEDIA_INPUT_UNSUPPORTED"
 
 
 def test_connected_text_keeps_connection_array_order_and_deduplicates(live_service):

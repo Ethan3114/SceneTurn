@@ -1,0 +1,101 @@
+.fmv-video-review-dialog.ant-modal .ant-modal-container,
+.fmv-video-review-dialog.ant-modal .ant-modal-header {
+  background: #191919;
+  color: #f7f7f7;
+}
+
+.fmv-video-review-dialog.ant-modal .ant-modal-container {
+  overflow: hidden;
+  border: 1px solid #353535;
+  border-radius: 16px;
+}
+
+.fmv-video-review-dialog.ant-modal .ant-modal-title,
+.fmv-video-review-dialog.ant-modal .ant-modal-close {
+  color: #f7f7f7;
+}
+
+.fmv-video-review {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+
+.fmv-video-review-inputs {
+  display: grid;
+  gap: 12px;
+  max-height: min(62dvh, 555px);
+  overflow: auto;
+  padding: 14px 24px 20px;
+}
+
+.fmv-video-review-specs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c7c7c7;
+}
+
+.fmv-video-review-inputs ul {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fmv-video-review-inputs ul[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.fmv-video-review-inputs ul[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fmv-video-review-inputs li { min-width: 0; }
+.fmv-video-review-inputs li span { display: block; margin-top: 5px; overflow-wrap: anywhere; color: #c7c7c7; }
+.fmv-video-review-inputs :is(img, video) {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 228px;
+  border-radius: 8px;
+  background: #0d0d0d;
+  object-fit: contain;
+}
+
+.fmv-video-review-inputs h3 { margin: 0; font-size: 14px; font-weight: 650; }
+.fmv-video-review-inputs pre {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #353535;
+  border-radius: 8px;
+  background: #111;
+  color: #f7f7f7;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fmv-video-review-inputs [role="alert"] { color: #efb1b4; }
+.fmv-video-review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 24px 20px;
+  border-top: 1px solid #353535;
+}
+
+.fmv-video-review-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid #353535;
+  border-radius: 8px;
+  background: #292929;
+  font-weight: 600;
+  color: #f7f7f7;
+}
+
+.fmv-video-review-actions .fmv-video-review-primary { border-color: #fff; background: #fff; color: #161616; }
+.fmv-video-review-actions button:focus-visible { outline: 2px solid #f7f7f7; outline-offset: 3px; }
+.fmv-video-review-actions button:disabled { opacity: .5; }

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { addCanvasNode, createProjectFromList } from './manual-studio';
 
 test('素材岗位仅展示本轮产物，历史素材在手动画布中保持保存', async ({ page }) => {
   test.setTimeout(120000);
@@ -13,8 +14,7 @@ test('素材岗位仅展示本轮产物，历史素材在手动画布中保持�
   await page.getByTestId('auth-password').fill(crypto.randomUUID());
   await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill('素材岗位展示与引用验证');
-  await page.getByTestId('project-create').click();
+  await createProjectFromList(page, '素材岗位展示与引用验证');
   await expect(page).toHaveURL(/\/editor\?id=/);
   const id = new URL(page.url()).searchParams.get('id');
   const before = await (await page.request.get(`/api/v1/projects/${id}`)).json();
@@ -52,8 +52,8 @@ test('素材岗位仅展示本轮产物，历史素材在手动画布中保持�
   await chat.getByRole('button', { name: '关闭素材对话' }).click();
   await workspace.getByRole('button', { name: '手动编辑画布' }).click();
   await expect(page.getByTestId('embedded-material-canvas').locator(`[data-testid="canvas-node"][data-node-id="${source.nodes[0].id}"]`)).toBeVisible();
-  await expect(page.getByTestId('canvas-add-text')).toBeEnabled();
-  await page.getByTestId('canvas-add-text').click();
+  await expect(page.getByTestId('canvas-add-node')).toBeEnabled();
+  await addCanvasNode(page, 'text');
   await workspace.getByRole('button', { name: '返回岗位展示' }).click();
   await expect(page.getByTestId('embedded-material-canvas')).toHaveCount(0);
   await expect(workspace.getByTestId('material-artifact')).toHaveCount(0);

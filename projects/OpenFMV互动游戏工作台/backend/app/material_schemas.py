@@ -4,6 +4,7 @@ from pydantic import Field, field_validator
 
 from app.agent_schemas import RoleId, RunStatus
 from app.schemas import WireModel
+from app.provider_schemas import ModelSelection
 
 
 class MaterialCreate(WireModel):
@@ -17,6 +18,7 @@ class MaterialReference(WireModel):
 
 
 class MaterialSend(WireModel):
+    model_selection: ModelSelection | None = None
     operation_id: str = Field(min_length=1, max_length=100)
     expected_revision: int = Field(ge=1)
     content: str = Field(min_length=1, max_length=12000)
@@ -108,6 +110,7 @@ class MaterialAnswer(WireModel):
     answers: dict[str, str] = Field(default_factory=dict, max_length=60)
     requested_changes: str = Field(default="", max_length=12000)
     reference_asset_ids: list[str] = Field(default_factory=list, max_length=5)
+    account_usage_confirmed: Literal[True] | None = None
 
     @field_validator("reference_asset_ids")
     @classmethod
@@ -129,4 +132,8 @@ def material_request_payload(body: MaterialSend | MaterialAnswer) -> dict:
         payload.pop("referenceAssetIds")
     if isinstance(body, MaterialSend) and body.intent is None:
         payload.pop("intent")
+    if isinstance(body, MaterialSend) and body.model_selection is None:
+        payload.pop("modelSelection")
+    if isinstance(body, MaterialAnswer) and body.account_usage_confirmed is None:
+        payload.pop("accountUsageConfirmed")
     return payload

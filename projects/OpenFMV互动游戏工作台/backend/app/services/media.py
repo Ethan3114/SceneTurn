@@ -51,6 +51,7 @@ class ProbeStream(BaseModel):
     width: int = Field(default=0, ge=0)
     height: int = Field(default=0, ge=0)
     duration: float | None = Field(default=None, ge=0)
+    avg_frame_rate: str = Field(default="0/0", pattern=r"^[0-9]+/[0-9]+$")
 
 
 class ProbeFormat(BaseModel):
@@ -348,6 +349,16 @@ def _validate_and_store(path: Path, settings: Settings, name: str, generated_vid
         raise AppError(507, "MEDIA_STORAGE_FAILED", "媒体文件保存失败，请检查磁盘空间与目录权限") from exc
 
 
+def probe_media(path: Path) -> ProbeResult:
+    probe_response = _run_media([
+        "ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-show_streams", "-show_format", "-of", "json", str(path),
+    ])
+    try:
+        return ProbeResult.model_validate_json(probe_response.stdout)
+    except ValidationError as exc:
+        raise AppError(422, "MEDIA_METADATA_INVALID", "素材的媒体信息未通过结构检查") from exc
+
+
 def _inspect_and_store(path: Path, settings: Settings, name: str, generated_video: bool) -> StoredMedia:
     detected = filetype.guess(str(path))
     if detected is None or detected.mime not in SUPPORTED_MIME:
@@ -355,13 +366,7 @@ def _inspect_and_store(path: Path, settings: Settings, name: str, generated_vide
     mime_type = detected.mime
     if generated_video and mime_type != "video/mp4":
         raise AppError(422, "MEDIA_MIME_INVALID", "生成视频的真实格式必须为MP4")
-    probe_response = _run_media([
-        "ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-show_streams", "-show_format", "-of", "json", str(path),
-    ])
-    try:
-        probe = ProbeResult.model_validate_json(probe_response.stdout)
-    except ValidationError as exc:
-        raise AppError(422, "MEDIA_METADATA_INVALID", "素材的媒体信息未通过结构检查") from exc
+    probe = probe_media(path)
     visual = next((item for item in probe.streams if item.codec_type == "video"), None)
     audible = next((item for item in probe.streams if item.codec_type == "audio"), None)
     if mime_type.startswith(("video/", "image/")) and (visual is None or visual.width <= 0 or visual.height <= 0):

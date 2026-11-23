@@ -18,7 +18,7 @@ interface Props {
   selected: boolean;
   disabled: boolean;
   onSelect: (event: React.MouseEvent, id: string) => void;
-  onDrag: (event: React.MouseEvent, id: string) => void;
+  onDrag?: (event: React.MouseEvent, id: string) => void;
   onChange: (id: string, patch: Partial<CanvasNodeMetadata>) => void;
   onDelete: (id: string) => void;
   beforeRequest: () => Promise<number>;
@@ -118,8 +118,8 @@ function AgentCanvasNode({ node, nodes, projectId, sceneId, workspace = 'scene',
   }
   return <article className="fmv-agent-node" data-testid="canvas-node" data-agent-node data-node-id={node.id} data-node-type="agent" data-selected={selected} tabIndex={0}
     style={{ left: node.position.x, top: node.position.y, width: node.width, height: node.height }}
-    onMouseDownCapture={(event) => onSelect(event, node.id)} onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
-    <header data-testid="canvas-node-header" onMouseDown={(event) => onDrag(event, node.id)}><span><Bot size={18} />{workspace === 'project' ? '故事与剪辑助手' : '素材创作助手'}</span><button type="button" aria-label={workspace === 'project' ? '收起故事与剪辑助手' : '删除创作助手节点'} data-testid="canvas-node-delete" onMouseDown={(event) => event.stopPropagation()} onClick={() => onDelete(node.id)}><Trash2 size={16} /></button></header>
+    onMouseDownCapture={(event) => { if (onDrag || !(event.target instanceof Element && event.target.closest('[data-canvas-drag-node]'))) onSelect(event, node.id); }} onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+    <header data-testid="canvas-node-header" data-canvas-drag-node={onDrag ? undefined : node.id} onMouseDown={(event) => onDrag?.(event, node.id)}><span><Bot size={18} />{workspace === 'project' ? '故事与剪辑助手' : '素材创作助手'}</span><button type="button" aria-label={workspace === 'project' ? '收起故事与剪辑助手' : '删除创作助手节点'} data-testid="canvas-node-delete" onMouseDown={(event) => event.stopPropagation()} onClick={() => onDelete(node.id)}><Trash2 size={16} /></button></header>
     <div className="fmv-agent-scroll" data-testid="canvas-node-body">
       <form onSubmit={(event) => { void start(event); }}>
         <div className="fmv-agent-fields"><label>角色<select data-testid="agent-role" value={roleId} disabled={busy || executing} onChange={(event) => change({ agentRole: event.target.value })}>{roles.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><label>执行方式<select data-testid="agent-executor" value={executor} disabled={busy || executing} onChange={(event) => change({ agentExecutor: event.target.value as 'platform' | 'codex' })}><option value="platform">平台 API · DeepSeek Flash</option><option value="codex">本人 Codex</option></select></label></div>

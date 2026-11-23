@@ -37,6 +37,11 @@ class ConnectionView(WireModel):
     expires_at: str
     last_seen_at: str
     created_at: str
+    can_generate_images: bool = False
+
+
+class ConnectionHeartbeat(WireModel):
+    capabilities: list[Literal["native_image_v1"]] | None = Field(default=None, max_length=1)
 
 
 class ConnectionList(WireModel):

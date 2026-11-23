@@ -23,7 +23,7 @@ export default function TextSettingsPage() {
     await saveTextSettings({ apiKey, provider: 'deepseek', model: 'deepseek-flash' }).then((value) => { setSettings(value); setApiKey(''); setSaved(true); }).catch((problem: unknown) => setError(errorText(problem))).finally(() => setBusy(false));
   }
   if (!user) return <main className="fmv-loading">{userError || '正在读取账号…'}</main>;
-  return <WorkspaceShell user={user} title="文字生成设置"><main className="fmv-settings"><section className="fmv-panel"><p className="fmv-eyebrow">DeepSeek API</p><h2>文字生成服务</h2><p className="fmv-muted">使用 deepseek-flash 生成剧本摘要、角色画像、道具提示词、场景说明、分镜情节与单镜提示词。</p><p role="status" data-testid="text-settings-status">{settings?.configured ? '已保存文字服务配置' : '尚未配置文字服务'}</p>
+  return <WorkspaceShell user={user} title="文字生成设置" monochrome><main className="fmv-settings fmv-service-settings"><section className="fmv-panel"><p className="fmv-eyebrow">DeepSeek API</p><h2>文字生成服务</h2><p className="fmv-muted">使用 deepseek-flash 生成剧本摘要、角色画像、道具提示词、场景说明、分镜情节与单镜提示词。</p><p role="status" data-testid="text-settings-status">{settings?.configured ? '已保存文字服务配置' : '尚未配置文字服务'}</p>
     <p className="fmv-muted">按任务记录真实 Token 用量，支持核对执行记录。</p>
     {settings?.canManage ? <form onSubmit={(event) => { void submit(event); }}>
     <label>模型<input data-testid="text-model" value="deepseek-flash" readOnly /></label>

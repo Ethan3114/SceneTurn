@@ -42,7 +42,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     const inputs = buildNodeGenerationInputs(nodeId, nodes, connections);
     const sourceNode = nodes.find((node) => node.id === nodeId);
     // 组装框里没有 @ 引用时，仍然带上已经连进来的文字和图片。否则界面显示连上了，模型却收不到。
-    if (sourceNode?.type === CanvasNodeType.Config && Boolean(sourceNode.metadata?.composerContent?.trim()) && /@\[node:[^\]]+\]/.test(prompt)) {
+    if ((sourceNode?.type === CanvasNodeType.Config || sourceNode?.metadata?.generationMode === 'text') && Boolean(sourceNode.metadata?.composerContent?.trim()) && /@\[node:[^\]]+\]/.test(prompt)) {
         return buildComposerGenerationContext(inputs, prompt);
     }
 

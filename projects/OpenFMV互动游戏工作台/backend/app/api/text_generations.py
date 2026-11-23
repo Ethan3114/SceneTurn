@@ -36,6 +36,7 @@ class TextSettingsView(WireModel):
 
 
 class TextCreate(WireModel):
+    model_profile_id: str | None = Field(default=None, min_length=1, max_length=100)
     scene_id: str = Field(min_length=1, max_length=100)
     source_node_id: str = Field(min_length=1, max_length=100)
     output_node_id: str = Field(min_length=1, max_length=100)

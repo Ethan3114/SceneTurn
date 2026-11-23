@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from "react";
 import { createPortal } from 'react-dom';
 import { Button, Image } from "antd";
-import { FileText, Group, Image as ImageIcon, Music2, Video, X } from "lucide-react";
+import { ChevronDown, FileText, Group, Image as ImageIcon, Link2, Music2, Video, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import i18n from "../i18n";
@@ -17,6 +17,8 @@ type CanvasConfigComposerProps = {
     nodes: CanvasNodeData[];
     value: string;
     inputs: NodeGenerationInput[];
+    mentionInputs?: NodeGenerationInput[];
+    mentionLabels?: ReadonlyMap<string, string>;
     connectedNodes?: CanvasNodeData[];
     onChange: (value: string) => void;
     onClose?: () => void;
@@ -33,9 +35,11 @@ type MentionState = {
     query: string;
 };
 
+type MentionOption = { input: NodeGenerationInput; label: string };
+
 export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]/g;
 
-export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNodes = [], onChange, onClose, embedded = false, onDisconnectReference, onStartReferenceSelection }: CanvasConfigComposerProps) {
+export function CanvasConfigComposer({ nodeId, nodes, value, inputs, mentionInputs, mentionLabels, connectedNodes = [], onChange, onClose, embedded = false, onDisconnectReference, onStartReferenceSelection }: CanvasConfigComposerProps) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
@@ -45,12 +49,16 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const tokens = useMemo(() => parseComposerTokens(value), [value]);
     const referenceById = useMemo(() => new Map(inputs.map((input) => [input.nodeId, input])), [inputs]);
-    const candidates = useMemo(() => {
+    const mentionableInputs = mentionInputs ?? inputs;
+    const candidates = useMemo<MentionOption[]>(() => {
         if (!mention) return [];
         const query = (mention.query || "").trim().toLowerCase();
-        if (!query) return inputs;
-        return inputs.filter((input) => `${resourceLabel(input, inputs)} ${input.title} ${input.type === "group" ? "" : input.text || ""}`.toLowerCase().includes(query));
-    }, [inputs, mention]);
+        return mentionableInputs.flatMap((input) => {
+            const label = mentionLabels?.get(input.nodeId) ?? resourceLabel(input, mentionableInputs);
+            const text = input.type === "group" ? "" : input.text || "";
+            return `${label} ${input.title} ${text}`.toLowerCase().includes(query) ? [{ input, label }] : [];
+        });
+    }, [mentionableInputs, mentionLabels, mention]);
 
     useEffect(() => {
         if (document.activeElement === editorRef.current) return;
@@ -79,7 +87,7 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
     const syncMention = () => {
         const text = textBeforeCaret();
         const match = /@([^\s@]*)$/.exec(text);
-        if (!match || !inputs.length) {
+        if (!match || !mentionableInputs.length) {
             closeMention();
             return;
         }
@@ -116,36 +124,38 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
     };
 
     const stopCanvasInteraction = (event: PointerEvent | MouseEvent) => event.stopPropagation();
+    const referenceBar = <CanvasNodeReferenceBar nodeId={nodeId} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={onStartReferenceSelection} />;
+    const referenceTitles = connectedNodes.map((node) => node.title).filter(Boolean).join(" · ");
 
     return (
         <div
             data-canvas-no-zoom
-            className={embedded ? 'rounded-xl border p-2' : 'rounded-2xl border p-3 shadow-2xl backdrop-blur'}
-            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+            className={embedded ? 'canvas-config-composer' : 'rounded-2xl border p-3 shadow-2xl backdrop-blur'}
+            style={embedded ? undefined : { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
             onMouseDown={stopCanvasInteraction}
             onPointerDown={stopCanvasInteraction}
             onWheel={(event) => event.stopPropagation()}
         >
-            <div className="mb-2 flex items-center justify-between gap-2">
+            <div className={embedded ? 'canvas-config-prompt-heading' : 'mb-2 flex items-center justify-between gap-2'}>
                 <div className="flex min-w-0 items-baseline gap-2">
-                    <div className="shrink-0 text-xs font-semibold">{t("canvas.composer.title")}</div>
-                    <div className="truncate text-[11px] opacity-55">{t("canvas.composer.description")}</div>
+                    <div className="shrink-0 text-xs font-semibold">{embedded ? '提示词' : t("canvas.composer.title")}</div>
+                    <div className={embedded ? 'canvas-config-prompt-hint' : 'truncate text-[11px] opacity-65'}>{embedded ? mentionInputs ? '@ 引用本次选用的素材' : '@ 引用已连接的素材' : t("canvas.composer.description")}</div>
                 </div>
                 {!embedded && <Button size="small" type="text" className="!h-7 !w-7 !min-w-7 !p-0" icon={<X className="size-3.5" />} onClick={onClose} />}
             </div>
-            <CanvasNodeReferenceBar nodeId={nodeId} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={onStartReferenceSelection} />
-            <div className="relative rounded-xl">
-                {!value.trim() ? <div className="pointer-events-none absolute left-3 top-2 text-sm leading-7" style={{ color: theme.node.placeholder }}>{t("canvas.composer.placeholder")}</div> : null}
+            {!embedded && referenceBar}
+            <div className={embedded ? 'canvas-config-prompt' : 'relative rounded-xl'}>
+                {!value.trim() ? <div className={embedded ? 'canvas-config-placeholder' : 'pointer-events-none absolute left-3 top-2 text-sm leading-7'} style={embedded ? undefined : { color: theme.node.placeholder }}>{t("canvas.composer.placeholder")}</div> : null}
                 <div
                     ref={editorRef}
                     contentEditable
                     data-testid="generation-prompt"
                     role="textbox"
-                    aria-label="组合输入"
+                    aria-label={embedded ? '提示词' : '组合输入'}
                     aria-multiline="true"
                     suppressContentEditableWarning
-                    className={`thin-scrollbar min-h-28 ${embedded ? 'max-h-40' : 'max-h-72'} w-full overflow-y-auto overscroll-contain whitespace-pre-wrap break-words px-3 py-2 text-sm leading-7 outline-none`}
-                    style={{ color: theme.node.text }}
+                    className={embedded ? 'canvas-config-editor thin-scrollbar' : 'thin-scrollbar min-h-28 max-h-72 w-full overflow-y-auto overscroll-contain whitespace-pre-wrap break-words px-3 py-2 text-sm leading-7 outline-none'}
+                    style={embedded ? undefined : { color: theme.node.text }}
                     onInput={() => {
                         if (!composingRef.current) syncFromEditor();
                     }}
@@ -171,7 +181,7 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
                             }
                             if (event.key === "Enter") {
                                 event.preventDefault();
-                                insertReference(candidates[Math.min(activeIndex, candidates.length - 1)]);
+                                insertReference(candidates[Math.min(activeIndex, candidates.length - 1)].input);
                                 return;
                             }
                             if (event.key === "Escape") {
@@ -187,23 +197,33 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
                         }
                         requestAnimationFrame(syncMention);
                     }}
-                    onBlur={() => window.setTimeout(closeMention, 120)}
+                    onBlur={() => window.setTimeout(() => {
+                        if (document.activeElement !== editorRef.current) closeMention();
+                    }, 120)}
                 />
-                {mention && candidates.length ? <MentionMenu anchor={editorRef.current?.getBoundingClientRect()} inputs={candidates} allInputs={inputs} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null}
+                {mention && candidates.length ? <MentionMenu anchor={editorRef.current?.getBoundingClientRect()} candidates={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null}
             </div>
+            {embedded && <details className="canvas-config-references">
+                <summary title={referenceTitles || '添加参考素材'}>
+                    <Link2 size={15} aria-hidden="true" />
+                    <span>{referenceTitles || '添加参考素材'}</span>
+                    <ChevronDown size={12} aria-hidden="true" />
+                </summary>
+                {referenceBar}
+            </details>}
             {imagePreview ? <Image src={imagePreview} alt={t("canvas.composer.imagePreview")} style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
         </div>
     );
 
 }
 
-function MentionMenu({ inputs, allInputs, activeIndex, theme, anchor, onSelect }: { inputs: NodeGenerationInput[]; allInputs: NodeGenerationInput[]; activeIndex: number; anchor?: DOMRect; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (input: NodeGenerationInput) => void }) {
+function MentionMenu({ candidates, activeIndex, theme, anchor, onSelect }: { candidates: MentionOption[]; activeIndex: number; anchor?: DOMRect; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (input: NodeGenerationInput) => void }) {
     const selectedRef = useRef(false);
     const activeItemRef = useRef<HTMLButtonElement | null>(null);
 
     useEffect(() => {
         activeItemRef.current?.scrollIntoView({ block: "nearest" });
-    }, [activeIndex, inputs]);
+    }, [activeIndex, candidates]);
 
     const selectInput = (input: NodeGenerationInput) => {
         if (selectedRef.current) return;
@@ -215,22 +235,26 @@ function MentionMenu({ inputs, allInputs, activeIndex, theme, anchor, onSelect }
     const top = Math.max(8, Math.min(window.innerHeight - 232, (anchor?.bottom || 8) + 6));
     return createPortal(
         <div data-canvas-resource-mention-menu className="fixed z-[1100] max-h-56 w-64 overflow-y-auto rounded-xl border p-1 shadow-2xl" style={{ left, top, background: theme.toolbar.panel, borderColor: theme.toolbar.border }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}>
-            {inputs.map((input, index) => (
+            {candidates.map(({ input, label }, index) => (
                 <button
                     key={input.nodeId}
                     ref={index === activeIndex ? activeItemRef : undefined}
                     type="button"
                     className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition"
                     style={{ background: index === activeIndex ? theme.toolbar.activeBg : "transparent", color: index === activeIndex ? theme.toolbar.activeText : theme.node.text }}
-                    onMouseDown={(event) => {
+                    onPointerDown={(event) => {
                         event.preventDefault();
+                        event.stopPropagation();
+                        selectInput(input);
+                    }}
+                    onClick={(event) => {
                         event.stopPropagation();
                         selectInput(input);
                     }}
                 >
                     <ResourcePreview input={input} />
                     <span className="min-w-0 flex-1">
-                        <span className="block font-medium">{resourceLabel(input, allInputs)}</span>
+                        <span className="block font-medium">{label}</span>
                         <span className="block truncate opacity-65">{input.type === "group" ? i18n.t("canvas.node.nodeCount", { count: input.children.length }) : input.text || input.title}</span>
                     </span>
                 </button>

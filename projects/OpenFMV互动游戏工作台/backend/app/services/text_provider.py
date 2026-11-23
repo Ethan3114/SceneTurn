@@ -24,7 +24,7 @@ RESPONSES_ENDPOINT = "https://api.deepseek.com/responses"
 PRICE_VERSION = "deepseek-flash-2026-11-13"
 PRICE_VERSIONS = {MODEL: PRICE_VERSION, PRO_MODEL: "deepseek-v4-pro-2026-11-13"}
 PEAK_MICROS = {MODEL: (40000, 2000000, 8000000), PRO_MODEL: (300000, 9000000, 27000000)}
-TaskKind = Literal["text", "summary", "character", "prop", "scene", "plot", "shot"]
+TaskKind = Literal["text", "summary", "character", "prop", "scene", "plot", "shot", "translate"]
 
 
 class ResultModel(BaseModel):
@@ -65,7 +65,7 @@ class DramaShots(ResultModel):
         return self
 
 
-RESULTS = {"text": PlainText, "summary": DramaText, "character": DramaText, "prop": DramaText, "scene": DramaText, "plot": DramaShots, "shot": SingleShot}
+RESULTS = {"text": PlainText, "translate": PlainText, "summary": DramaText, "character": DramaText, "prop": DramaText, "scene": DramaText, "plot": DramaShots, "shot": SingleShot}
 TITLES = {"summary": "剧本摘要", "character": "角色画像", "prop": "道具提示词", "scene": "场景说明", "plot": "分镜情节", "shot": "单镜提示词"}
 def task_instructions(task: str) -> str:
     example = {"shots": [{"no": 1, "text": "第一镜头画面"}, {"no": 2, "text": "第二镜头画面"}, {"no": 3, "text": "第三镜头画面"}]} if task == "plot" else {"no": 1, "text": "镜头画面"} if task == "shot" else {"text": "创作正文"}

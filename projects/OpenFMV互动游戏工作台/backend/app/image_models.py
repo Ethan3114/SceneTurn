@@ -26,7 +26,7 @@ class ImageJob(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     scene_id: Mapped[str] = mapped_column(String(100))
-    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"), index=True, nullable=True)
     node_id: Mapped[str] = mapped_column(String(100))
     artifact_hash: Mapped[str] = mapped_column(String(64))
     operation_id: Mapped[str] = mapped_column(String(160))

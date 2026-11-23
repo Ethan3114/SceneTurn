@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas import WireModel
+from app.provider_schemas import ModelSelection
 
 
 RoleId = Literal["director", "writer", "character_designer", "scene_designer", "storyboarder", "media_producer", "editor", "interaction_designer", "sound_designer"]
@@ -16,6 +17,8 @@ class RunLimits(WireModel):
 
 
 class RunCreate(WireModel):
+    model_profile_id: str | None = Field(default=None, min_length=1, max_length=100)
+    model_selection: ModelSelection | None = None
     operation_id: str = Field(min_length=1, max_length=100)
     expected_revision: int = Field(ge=1)
     scene_id: str = Field(min_length=1, max_length=100)

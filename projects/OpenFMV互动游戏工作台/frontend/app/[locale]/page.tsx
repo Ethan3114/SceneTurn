@@ -1,12 +1,10 @@
-import { redirect } from 'next/navigation';
+import { connection } from 'next/server';
 
-import { routing } from '@/i18n/routing';
+import { SceneTurnHome } from '@/app/_components/showcase/SceneTurnHome';
 
 export default async function LocaleHomePage({ params }: { params: Promise<{ locale: string }> }) {
-  const { locale: requestedLocale } = await params;
-  const locale = routing.locales.includes(requestedLocale as (typeof routing.locales)[number])
-    ? requestedLocale
-    : routing.defaultLocale;
-
-  redirect(`/${locale}/projects`);
+  await connection();
+  const { locale } = await params;
+  const premiereSlug = process.env.SCENETURN_PREMIERE_PUBLICATION_SLUG;
+  return <SceneTurnHome locale={locale} premiereSlug={premiereSlug} />;
 }

@@ -1,0 +1,1282 @@
+{
+  "name": "SceneTurn · 产品设计",
+  "file": "SceneTurn · 产品设计.fig",
+  "pages": [
+    {
+      "name": "01 首页与互动试玩",
+      "id": "0:1",
+      "frames": 28
+    },
+    {
+      "name": "02 首页动效",
+      "id": "0:3",
+      "frames": 1
+    },
+    {
+      "name": "03 创作台、剧情与素材对话",
+      "id": "0:4",
+      "frames": 50
+    },
+    {
+      "name": "04 手动素材画布",
+      "id": "0:5",
+      "frames": 28
+    },
+    {
+      "name": "05 作品馆、作品详情与影院",
+      "id": "0:6",
+      "frames": 17
+    },
+    {
+      "name": "06 账户入口与服务设置",
+      "id": "0:7",
+      "frames": 12
+    },
+    {
+      "name": "07 素材管理与生成处理",
+      "id": "0:8",
+      "frames": 8
+    },
+    {
+      "name": "08 异常、确认与恢复",
+      "id": "0:9",
+      "frames": 9,
+      "stateReference": true
+    }
+  ],
+  "boards": 153,
+  "layers": 17668,
+  "editableTextLayers": 6080,
+  "imageAssets": 13,
+  "vectorDataBlocks": 6104,
+  "prototypeStarts": 5,
+  "transitions": 1040,
+  "externalLinks": 247,
+  "reactions": 1321,
+  "frames": [
+    {
+      "id": "home-blueprint-faq-0",
+      "title": "首页 · 剧情画布",
+      "node": "1:2",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "play-choice",
+      "title": "试玩 · 最后一份电力",
+      "node": "1:166",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "play-signal",
+      "title": "结局 · 灯火重燃",
+      "node": "1:190",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "play-gate",
+      "title": "结局 · 闸门关上",
+      "node": "1:209",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-menu",
+      "title": "首页菜单",
+      "node": "1:228",
+      "w": 374,
+      "h": 228,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-timeline-faq-0",
+      "title": "首页 · 场景与互动",
+      "node": "1:241",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-player-faq-0",
+      "title": "首页 · 网页试玩",
+      "node": "1:405",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-assets-faq-0",
+      "title": "首页 · 项目与素材",
+      "node": "1:569",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-blueprint-faq--1",
+      "title": "首页 · 剧情画布 · 问答 0",
+      "node": "1:733",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-timeline-faq--1",
+      "title": "首页 · 场景与互动 · 问答 0",
+      "node": "1:895",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-player-faq--1",
+      "title": "首页 · 网页试玩 · 问答 0",
+      "node": "1:1057",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-assets-faq--1",
+      "title": "首页 · 项目与素材 · 问答 0",
+      "node": "1:1219",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-blueprint-faq-1",
+      "title": "首页 · 剧情画布 · 问答 2",
+      "node": "1:1381",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-timeline-faq-1",
+      "title": "首页 · 场景与互动 · 问答 2",
+      "node": "1:1545",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-player-faq-1",
+      "title": "首页 · 网页试玩 · 问答 2",
+      "node": "1:1709",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-assets-faq-1",
+      "title": "首页 · 项目与素材 · 问答 2",
+      "node": "1:1873",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-blueprint-faq-2",
+      "title": "首页 · 剧情画布 · 问答 3",
+      "node": "1:2037",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-timeline-faq-2",
+      "title": "首页 · 场景与互动 · 问答 3",
+      "node": "1:2201",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-player-faq-2",
+      "title": "首页 · 网页试玩 · 问答 3",
+      "node": "1:2365",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-assets-faq-2",
+      "title": "首页 · 项目与素材 · 问答 3",
+      "node": "1:2529",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-blueprint-faq-3",
+      "title": "首页 · 剧情画布 · 问答 4",
+      "node": "1:2693",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-timeline-faq-3",
+      "title": "首页 · 场景与互动 · 问答 4",
+      "node": "1:2857",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-player-faq-3",
+      "title": "首页 · 网页试玩 · 问答 4",
+      "node": "1:3021",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-assets-faq-3",
+      "title": "首页 · 项目与素材 · 问答 4",
+      "node": "1:3185",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-blueprint-faq-4",
+      "title": "首页 · 剧情画布 · 问答 5",
+      "node": "1:3349",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-timeline-faq-4",
+      "title": "首页 · 场景与互动 · 问答 5",
+      "node": "1:3513",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-player-faq-4",
+      "title": "首页 · 网页试玩 · 问答 5",
+      "node": "1:3677",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "home-assets-faq-4",
+      "title": "首页 · 项目与素材 · 问答 5",
+      "node": "1:3841",
+      "w": 1440,
+      "h": 900,
+      "page": "01 首页与互动试玩"
+    },
+    {
+      "id": "motion-spec",
+      "title": "首页正式前端动效",
+      "node": "1:4005",
+      "w": 1440,
+      "h": 900,
+      "page": "02 首页动效"
+    },
+    {
+      "id": "projects",
+      "title": "我的项目",
+      "node": "1:4043",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "story",
+      "title": "剧情画布 · 场景属性",
+      "node": "1:4100",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "story-codex",
+      "title": "剧情画布 · 本人 Codex",
+      "node": "1:4673",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "timeline",
+      "title": "节点时间线 · 普通互动",
+      "node": "1:5238",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "timeline-qte",
+      "title": "节点时间线 · 限时互动",
+      "node": "1:5413",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "assets",
+      "title": "项目素材 · 素材库",
+      "node": "1:5593",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:5680",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-closed",
+      "title": "生成素材 · 收起对话",
+      "node": "1:5815",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-new-conversation",
+      "title": "生成素材 · 新对话",
+      "node": "1:5914",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "manual",
+      "title": "手动素材画布 · 节点与连线",
+      "node": "1:6017",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "manual-closed",
+      "title": "手动素材画布 · 收起对话",
+      "node": "1:6240",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "media-confirm",
+      "title": "视频生成待确认 · 首尾帧",
+      "node": "1:6437",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "media-confirm-closed",
+      "title": "视频生成待确认 · 收起对话",
+      "node": "1:6534",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "models",
+      "title": "模型设置 · 项目默认与服务连接",
+      "node": "1:6610",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "models-choose-text",
+      "title": "项目默认 · 文本模型",
+      "node": "1:6720",
+      "w": 568,
+      "h": 263,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "models-choose-image",
+      "title": "项目默认 · 图片模型",
+      "node": "1:6738",
+      "w": 568,
+      "h": 329,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "models-choose-video",
+      "title": "项目默认 · 视频模型",
+      "node": "1:6762",
+      "w": 568,
+      "h": 659,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "publish",
+      "title": "项目备份与固定版本 · 私有版本",
+      "node": "1:6816",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "project-new",
+      "title": "新建项目",
+      "node": "1:6916",
+      "w": 556,
+      "h": 366,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "project-import",
+      "title": "导入与恢复完整项目",
+      "node": "1:6929",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "account-menu",
+      "title": "创作台账户菜单",
+      "node": "1:6968",
+      "w": 328,
+      "h": 239,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "preview",
+      "title": "试玩 · 分支选择",
+      "node": "1:6982",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "preview-signal",
+      "title": "试玩 · 信标结局",
+      "node": "1:7008",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "preview-gate",
+      "title": "试玩 · 闸门结局",
+      "node": "1:7031",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "projects-1280",
+      "title": "我的项目 · 1280 像素",
+      "node": "1:7054",
+      "w": 1280,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "projects-no-poster",
+      "title": "我的项目 · 尚无封面",
+      "node": "1:7111",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "projects-empty",
+      "title": "我的项目 · 空状态",
+      "node": "1:7169",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models",
+      "title": "新一轮模型 · DeepSeek Flash / 商汤 Fast / Wan 3.0",
+      "node": "1:7213",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-deepseek-sensetime-seedance",
+      "title": "新一轮模型 · DeepSeek Flash / 商汤 Fast / Seedance 2.5",
+      "node": "1:7265",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-deepseek-seedream-wan",
+      "title": "新一轮模型 · DeepSeek Flash / Seedream 5.5 / Wan 3.0",
+      "node": "1:7317",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-deepseek-seedream-seedance",
+      "title": "新一轮模型 · DeepSeek Flash / Seedream 5.5 / Seedance 2.5",
+      "node": "1:7369",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-deepseek-codex-wan",
+      "title": "新一轮模型 · DeepSeek Flash / 个人 Codex / Wan 3.0",
+      "node": "1:7421",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-deepseek-codex-seedance",
+      "title": "新一轮模型 · DeepSeek Flash / 个人 Codex / Seedance 2.5",
+      "node": "1:7473",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-qwen-sensetime-wan",
+      "title": "新一轮模型 · Qwen3.8 Flash / 商汤 Fast / Wan 3.0",
+      "node": "1:7525",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-qwen-sensetime-seedance",
+      "title": "新一轮模型 · Qwen3.8 Flash / 商汤 Fast / Seedance 2.5",
+      "node": "1:7577",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-qwen-seedream-wan",
+      "title": "新一轮模型 · Qwen3.8 Flash / Seedream 5.5 / Wan 3.0",
+      "node": "1:7629",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-qwen-seedream-seedance",
+      "title": "新一轮模型 · Qwen3.8 Flash / Seedream 5.5 / Seedance 2.5",
+      "node": "1:7681",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-qwen-codex-wan",
+      "title": "新一轮模型 · Qwen3.8 Flash / 个人 Codex / Wan 3.0",
+      "node": "1:7733",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-models-qwen-codex-seedance",
+      "title": "新一轮模型 · Qwen3.8 Flash / 个人 Codex / Seedance 2.5",
+      "node": "1:7785",
+      "w": 894,
+      "h": 482,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-deepseek-sensetime-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:7837",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-deepseek-seedream-wan",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:7973",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-deepseek-seedream-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:8109",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-deepseek-codex-wan",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:8245",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-deepseek-codex-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:8381",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-qwen-sensetime-wan",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:8517",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-qwen-sensetime-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:8653",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-qwen-seedream-wan",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:8789",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-qwen-seedream-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:8925",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-qwen-codex-wan",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:9061",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "material-model-qwen-codex-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:9197",
+      "w": 1440,
+      "h": 900,
+      "page": "03 创作台、剧情与素材对话"
+    },
+    {
+      "id": "node-image",
+      "title": "手动画布 · 图片生成",
+      "node": "1:9333",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-text",
+      "title": "手动画布 · 文字生成",
+      "node": "1:9561",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-text",
+      "title": "手动画布 · 文字生视频",
+      "node": "1:9768",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video",
+      "title": "手动画布 · 首帧／首尾帧",
+      "node": "1:10030",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-reference",
+      "title": "手动画布 · 参考素材生成",
+      "node": "1:10300",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-edit",
+      "title": "手动画布 · 编辑视频",
+      "node": "1:10586",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-extend",
+      "title": "手动画布 · 延长视频",
+      "node": "1:10872",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-input",
+      "title": "手动画布 · 切换视频输入",
+      "node": "1:11158",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-edit-unselected",
+      "title": "手动画布 · 取消一张参考图",
+      "node": "1:11456",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-no-references",
+      "title": "手动画布 · 尚未选用参考素材",
+      "node": "1:11741",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-missing-original",
+      "title": "手动画布 · 尚未指定原视频",
+      "node": "1:12013",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-mention",
+      "title": "手动画布 · 提示词引用本次素材",
+      "node": "1:12280",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-model",
+      "title": "手动画布 · 选择图片模型",
+      "node": "1:12573",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-drop",
+      "title": "手动画布 · 拖线创建",
+      "node": "1:12811",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-map",
+      "title": "手动画布 · 小地图",
+      "node": "1:12992",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-queued",
+      "title": "手动画布 · 已确认与任务记录",
+      "node": "1:13285",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-edit-references",
+      "title": "手动画布 · 查看参考图",
+      "node": "1:13575",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-edit-references-unselected",
+      "title": "手动画布 · 查看未选用的参考图",
+      "node": "1:13846",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-reference-picks",
+      "title": "手动画布 · 查看仅图片参考",
+      "node": "1:14116",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-extend-picks",
+      "title": "手动画布 · 查看续写参考图",
+      "node": "1:14387",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-review-text",
+      "title": "手动画布 · 核对文字生视频",
+      "node": "1:14658",
+      "w": 720,
+      "h": 294,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-review-frames",
+      "title": "手动画布 · 核对首帧／首尾帧",
+      "node": "1:14674",
+      "w": 720,
+      "h": 477,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-review-reference",
+      "title": "手动画布 · 核对参考素材生成",
+      "node": "1:14695",
+      "w": 720,
+      "h": 477,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-review",
+      "title": "手动画布 · 核对编辑视频",
+      "node": "1:14716",
+      "w": 720,
+      "h": 477,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-review-extend",
+      "title": "手动画布 · 核对延长视频",
+      "node": "1:14741",
+      "w": 720,
+      "h": 477,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-video-review-unselected",
+      "title": "手动画布 · 核对编辑视频 · 一张参考图",
+      "node": "1:14766",
+      "w": 720,
+      "h": 477,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-review",
+      "title": "手动画布 · 核对生图内容",
+      "node": "1:14789",
+      "w": 420,
+      "h": 221,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "node-text-queued",
+      "title": "手动画布 · 文字任务已排队",
+      "node": "1:14799",
+      "w": 1440,
+      "h": 900,
+      "page": "04 手动素材画布"
+    },
+    {
+      "id": "gallery",
+      "title": "作品馆 · 公开作品",
+      "node": "1:15010",
+      "w": 1440,
+      "h": 1130,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "gallery-search",
+      "title": "作品馆 · 搜索结果",
+      "node": "1:15062",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "gallery-no-match",
+      "title": "作品馆 · 无搜索结果",
+      "node": "1:15106",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "gallery-empty",
+      "title": "作品馆 · 暂无公开作品",
+      "node": "1:15149",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "gallery-loading",
+      "title": "作品馆 · 加载中",
+      "node": "1:15188",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "gallery-error",
+      "title": "作品馆 · 读取失败",
+      "node": "1:15227",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "film-details",
+      "title": "作品详情 · 可播放先导片",
+      "node": "1:15268",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "film-details-no-trailer",
+      "title": "作品详情 · 无已公开先导片",
+      "node": "1:15313",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "cinema-access",
+      "title": "作品 · 当前不可访问",
+      "node": "1:15356",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "cinema-error",
+      "title": "作品 · 读取失败，可重试",
+      "node": "1:15392",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "cinema-open",
+      "title": "影院 · 剧情开场",
+      "node": "1:15430",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "cinema-choice",
+      "title": "影院 · 普通剧情选择",
+      "node": "1:15447",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "cinema-qte",
+      "title": "影院 · 空格限时互动",
+      "node": "1:15463",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "cinema-beacon",
+      "title": "影院 · 信标结局",
+      "node": "1:15480",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "cinema-gate",
+      "title": "影院 · 闸门结局",
+      "node": "1:15497",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "cinema-trailer",
+      "title": "影院 · 已公开先导片",
+      "node": "1:15514",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "cinema-trailer-unavailable",
+      "title": "影院 · 先导片尚未公开",
+      "node": "1:15532",
+      "w": 1440,
+      "h": 900,
+      "page": "05 作品馆、作品详情与影院"
+    },
+    {
+      "id": "hf-login",
+      "title": "登录 SceneTurn",
+      "node": "1:15545",
+      "w": 1440,
+      "h": 900,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "hf-register",
+      "title": "创建 SceneTurn 账号",
+      "node": "1:15580",
+      "w": 1440,
+      "h": 900,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "model-settings",
+      "title": "模型设置 · 选择项目和服务目录",
+      "node": "1:15616",
+      "w": 1440,
+      "h": 1160,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "model-settings-project",
+      "title": "模型设置 · 已选项目",
+      "node": "1:15696",
+      "w": 1440,
+      "h": 1160,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "model-settings-connections",
+      "title": "模型设置 · 展开服务连接",
+      "node": "1:15790",
+      "w": 1440,
+      "h": 1160,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "model-settings-picker-text",
+      "title": "模型设置 · 选择文本模型",
+      "node": "1:15886",
+      "w": 1440,
+      "h": 1160,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "model-settings-picker-image",
+      "title": "模型设置 · 选择图片模型",
+      "node": "1:16002",
+      "w": 1440,
+      "h": 1160,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "model-settings-picker-video",
+      "title": "模型设置 · 选择视频模型",
+      "node": "1:16123",
+      "w": 1440,
+      "h": 1160,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "text-settings",
+      "title": "文字生成设置",
+      "node": "1:16251",
+      "w": 1440,
+      "h": 900,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "video-settings",
+      "title": "视频生成设置",
+      "node": "1:16285",
+      "w": 1440,
+      "h": 900,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "legal-privacy",
+      "title": "隐私政策",
+      "node": "1:16318",
+      "w": 1440,
+      "h": 900,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "legal-terms",
+      "title": "使用条款",
+      "node": "1:16352",
+      "w": 1440,
+      "h": 900,
+      "page": "06 账户入口与服务设置"
+    },
+    {
+      "id": "library-all-projects",
+      "title": "全部项目素材",
+      "node": "1:16386",
+      "w": 1440,
+      "h": 900,
+      "page": "07 素材管理与生成处理"
+    },
+    {
+      "id": "media-inspector",
+      "title": "单素材详情 · 视频",
+      "node": "1:16491",
+      "w": 1440,
+      "h": 900,
+      "page": "07 素材管理与生成处理"
+    },
+    {
+      "id": "material-storyboard-frames",
+      "title": "分镜师 · 有序边界帧",
+      "node": "1:16558",
+      "w": 1440,
+      "h": 900,
+      "page": "07 素材管理与生成处理"
+    },
+    {
+      "id": "material-candidates-reel",
+      "title": "视频候选 · 对比与采用",
+      "node": "1:16653",
+      "w": 1440,
+      "h": 900,
+      "page": "07 素材管理与生成处理"
+    },
+    {
+      "id": "material-adopt-candidate",
+      "title": "确认采用候选",
+      "node": "1:16714",
+      "w": 1440,
+      "h": 900,
+      "page": "07 素材管理与生成处理"
+    },
+    {
+      "id": "material-generation-recovery",
+      "title": "视频任务 · 等待核实",
+      "node": "1:16775",
+      "w": 1440,
+      "h": 900,
+      "page": "07 素材管理与生成处理"
+    },
+    {
+      "id": "material-image-slice",
+      "title": "图片切片",
+      "node": "1:16855",
+      "w": 1440,
+      "h": 900,
+      "page": "07 素材管理与生成处理"
+    },
+    {
+      "id": "material-video-stitch",
+      "title": "按顺序拼接视频",
+      "node": "1:16921",
+      "w": 1440,
+      "h": 900,
+      "page": "07 素材管理与生成处理"
+    },
+    {
+      "id": "import-check",
+      "title": "检查导入文件",
+      "node": "1:16982",
+      "w": 1440,
+      "h": 900,
+      "page": "08 异常、确认与恢复"
+    },
+    {
+      "id": "import-blocked",
+      "title": "补全 ZIP 文件",
+      "node": "1:17024",
+      "w": 1440,
+      "h": 900,
+      "page": "08 异常、确认与恢复"
+    },
+    {
+      "id": "import-duplicate",
+      "title": "项目已导入",
+      "node": "1:17061",
+      "w": 1440,
+      "h": 900,
+      "page": "08 异常、确认与恢复"
+    },
+    {
+      "id": "candidate-duration",
+      "title": "候选时长不足",
+      "node": "1:17099",
+      "w": 1440,
+      "h": 900,
+      "page": "08 异常、确认与恢复"
+    },
+    {
+      "id": "candidate-stale",
+      "title": "按最新版本重新检查",
+      "node": "1:17182",
+      "w": 1440,
+      "h": 900,
+      "page": "08 异常、确认与恢复"
+    },
+    {
+      "id": "codex-offline",
+      "title": "剧情编排 · 等待连接",
+      "node": "1:17257",
+      "w": 1440,
+      "h": 900,
+      "page": "08 异常、确认与恢复"
+    },
+    {
+      "id": "codex-stop",
+      "title": "停止后续操作？",
+      "node": "1:17348",
+      "w": 1440,
+      "h": 900,
+      "page": "08 异常、确认与恢复"
+    },
+    {
+      "id": "codex-stopped",
+      "title": "剧情编排 · Codex 已停止",
+      "node": "1:17453",
+      "w": 1440,
+      "h": 900,
+      "page": "08 异常、确认与恢复"
+    },
+    {
+      "id": "codex-conflict",
+      "title": "Codex 操作需要复核",
+      "node": "1:17547",
+      "w": 1440,
+      "h": 900,
+      "page": "08 异常、确认与恢复"
+    }
+  ]
+}

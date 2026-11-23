@@ -153,6 +153,9 @@ def configurations(web_root: Path) -> dict[str, dict]:
     result["web"]["EnvironmentVariables"].update(
         HOSTNAME="127.0.0.1", PORT=str(WEB.port), NODE_ENV="production",
     )
+    premiere_slug = os.environ.get("SCENETURN_PREMIERE_PUBLICATION_SLUG")
+    if premiere_slug:
+        result["web"]["EnvironmentVariables"]["SCENETURN_PREMIERE_PUBLICATION_SLUG"] = premiere_slug
     return result
 
 

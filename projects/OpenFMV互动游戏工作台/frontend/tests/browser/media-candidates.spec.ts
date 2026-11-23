@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createProjectFromList } from './manual-studio';
 
 const product = path.resolve('..');
 
@@ -13,8 +14,7 @@ async function project(page: Page) {
   await page.getByTestId('auth-password').fill(crypto.randomUUID());
   await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill('连续首尾帧与候选验证');
-  await page.getByTestId('project-create').click();
+  await createProjectFromList(page, '连续首尾帧与候选验证');
   await expect(page).toHaveURL(/\/editor\?id=/);
   const id = new URL(page.url()).searchParams.get('id');
   if (!id) throw new Error('项目地址缺少标识');

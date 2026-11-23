@@ -1,5 +1,7 @@
-import ProjectsPage from './_components/workbench/ProjectsPage';
+import { redirect } from 'next/navigation';
+
+import { routing } from '@/i18n/routing';
 
 export default function Home() {
-  return <ProjectsPage />;
+  redirect('/' + routing.defaultLocale);
 }

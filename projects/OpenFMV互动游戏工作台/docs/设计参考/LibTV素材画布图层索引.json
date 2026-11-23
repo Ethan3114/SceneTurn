@@ -1,0 +1,729 @@
+[
+  {
+    "id": "A01",
+    "figma": "19:16",
+    "note": "添加菜单及脚本子菜单",
+    "assets": [
+      {
+        "name": "node-menu",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:6",
+        "sha1": "5d610c1efd4b445434cc6053032619e9005d8caa"
+      },
+      {
+        "name": "script-kind-menu",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:15",
+        "sha1": "2e87f29bc8a60137e1717881e3fdf01b3ce21035"
+      }
+    ]
+  },
+  {
+    "id": "A02",
+    "figma": "26:3",
+    "note": "选中后的编辑面板，拖动期间状态见代码",
+    "assets": [
+      {
+        "name": "public-text-selected",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:45",
+        "sha1": "a8879b6cc5b570a58f40dcbf7ff5718aae2f2632"
+      },
+      {
+        "name": "public-image-selected",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:39",
+        "sha1": "0943bf220d5c133370eb18b29e59c42522a817ad"
+      },
+      {
+        "name": "video-populated-base",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "010acb8f6a9f9357c3636cbe4616651ee02fb686"
+      }
+    ]
+  },
+  {
+    "id": "A03",
+    "figma": "19:15",
+    "note": "多条已建立的引用，选材全过程见代码",
+    "assets": [
+      {
+        "name": "connected-workflow",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:9",
+        "sha1": "e71c279ea8d191e646f02508aa1d725fd71cdcc9"
+      }
+    ]
+  },
+  {
+    "id": "A04",
+    "figma": "0:5",
+    "note": "拖线菜单及多选规则见功能分析，未找到该状态的独立本地原图",
+    "assets": []
+  },
+  {
+    "id": "A05",
+    "figma": "13:10,13:12",
+    "note": "连线及悬停",
+    "assets": [
+      {
+        "name": "connected-workflow",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:9",
+        "sha1": "e71c279ea8d191e646f02508aa1d725fd71cdcc9"
+      },
+      {
+        "name": "public-wire-hover",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:36",
+        "sha1": "ac34f00ba462c6e9c9208c84dbb06ab51bbe7b19"
+      }
+    ]
+  },
+  {
+    "id": "A06",
+    "figma": "13:2,13:11",
+    "note": "缩放与分组",
+    "assets": [
+      {
+        "name": "public-zoom-menu",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:30",
+        "sha1": "514a35fb786387db838f4bc9ab798ed83c7b311e"
+      },
+      {
+        "name": "public-group",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:24",
+        "sha1": "9f6f00de7a2a78fffc9edb9162b927b092466ce7"
+      }
+    ]
+  },
+  {
+    "id": "A07",
+    "figma": "32:2",
+    "note": "复制和历史版本见功能分析",
+    "assets": []
+  },
+  {
+    "id": "A08",
+    "figma": "13:7",
+    "note": "故事板，对话操作见功能分析",
+    "assets": [
+      {
+        "name": "public-storyboard-layout",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:33",
+        "sha1": "1138d7a96ecfeb684570e0509390c7b1437f937c"
+      }
+    ]
+  },
+  {
+    "id": "B01",
+    "figma": "13:3",
+    "note": "手写入口与已有正文",
+    "assets": [
+      {
+        "name": "text-editable",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:12",
+        "sha1": "11b5b6c13a038533068eabb55efd65b42235affe"
+      },
+      {
+        "name": "public-text",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:15",
+        "sha1": "d34422ef7a4d180c794b10976e4bdc4806a878f8"
+      }
+    ]
+  },
+  {
+    "id": "B02",
+    "figma": "35:2",
+    "note": "模型编辑面板，媒体引用态另有可编辑重建层",
+    "assets": [
+      {
+        "name": "public-text-selected",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:45",
+        "sha1": "a8879b6cc5b570a58f40dcbf7ff5718aae2f2632"
+      }
+    ]
+  },
+  {
+    "id": "B03",
+    "figma": "13:3",
+    "note": "视频和音乐入口，创建结果需操作验证",
+    "assets": [
+      {
+        "name": "text-editable",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:12",
+        "sha1": "11b5b6c13a038533068eabb55efd65b42235affe"
+      }
+    ]
+  },
+  {
+    "id": "B04",
+    "figma": "13:3",
+    "note": "反推入口，带图状态另有文本生成器重建层",
+    "assets": [
+      {
+        "name": "text-editable",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:12",
+        "sha1": "11b5b6c13a038533068eabb55efd65b42235affe"
+      }
+    ]
+  },
+  {
+    "id": "C01",
+    "figma": "19:12",
+    "note": "剧本、角色与手写三项入口",
+    "assets": [
+      {
+        "name": "script-editable",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:18",
+        "sha1": "8f52c905b01b2864e4bf5d3013678e48f0738342"
+      }
+    ]
+  },
+  {
+    "id": "C02",
+    "figma": "19:2",
+    "note": "手工十列表格，重开保留须验证",
+    "assets": [
+      {
+        "name": "script-table",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:21",
+        "sha1": "84d1692fd719f1190c92382b891d19eee990a71a"
+      }
+    ]
+  },
+  {
+    "id": "C03",
+    "figma": "32:2",
+    "note": "参考来源、排序和素材库确认见功能分析",
+    "assets": []
+  },
+  {
+    "id": "C04",
+    "figma": "19:2",
+    "note": "镜头表有三个制作步骤，逐镜提交参数没有独立原图",
+    "assets": [
+      {
+        "name": "script-table",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:21",
+        "sha1": "84d1692fd719f1190c92382b891d19eee990a71a"
+      }
+    ]
+  },
+  {
+    "id": "C05",
+    "figma": "19:16",
+    "note": "新旧菜单，内容字段转换见功能分析",
+    "assets": [
+      {
+        "name": "script-kind-menu",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:15",
+        "sha1": "2e87f29bc8a60137e1717881e3fdf01b3ce21035"
+      }
+    ]
+  },
+  {
+    "id": "D01",
+    "figma": "19:14,40:5",
+    "note": "空卡、规格面板",
+    "assets": [
+      {
+        "name": "image-editable",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:24",
+        "sha1": "8fdbdcb7675bde32395c1d60e77895e5e4929fa5"
+      },
+      {
+        "name": "image-specs-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "16b90f4f8e0b9b7dcd08887125abeeef2a1db55f"
+      }
+    ]
+  },
+  {
+    "id": "D02",
+    "figma": "13:9",
+    "note": "原图及空卡入口",
+    "assets": [
+      {
+        "name": "public-image",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:9",
+        "sha1": "4834e8a3b99cbd34dddda6efb40760fa2e0f8eab"
+      },
+      {
+        "name": "image-editable",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:24",
+        "sha1": "8fdbdcb7675bde32395c1d60e77895e5e4929fa5"
+      }
+    ]
+  },
+  {
+    "id": "D03",
+    "figma": "16:3",
+    "note": "图片生成面板，选区操作见代码",
+    "assets": [
+      {
+        "name": "public-image-generator",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:54",
+        "sha1": "01812d265b297f51e71ce814f0e24cdecd7afdec"
+      }
+    ]
+  },
+  {
+    "id": "D04",
+    "figma": "32:2",
+    "note": "已生成图片的编辑工具见代码及指南",
+    "assets": []
+  },
+  {
+    "id": "E01",
+    "figma": "19:11,26:3",
+    "note": "固定首尾帧接线及编辑面板",
+    "assets": [
+      {
+        "name": "video-first-last-shortcut",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:42",
+        "sha1": "b2ff4f529c1fc91f2593f0b5954ba246e9e7ca52"
+      },
+      {
+        "name": "video-populated-base",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "010acb8f6a9f9357c3636cbe4616651ee02fb686"
+      }
+    ]
+  },
+  {
+    "id": "E02",
+    "figma": "19:5,19:3",
+    "note": "两种模型的输入方式菜单",
+    "assets": [
+      {
+        "name": "video-wan-mode",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:39",
+        "sha1": "3d625b2ef9a474cdba7416a928c5ed8d28e5e295"
+      },
+      {
+        "name": "video-seedance-mode",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:30",
+        "sha1": "4bf0682dc912cb248754d5dc895ba1a6f770f304"
+      }
+    ]
+  },
+  {
+    "id": "E03",
+    "figma": "32:2",
+    "note": "编辑与续写入口，混合参考的提交见代码",
+    "assets": [
+      {
+        "name": "video-seedance-mode",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:30",
+        "sha1": "4bf0682dc912cb248754d5dc895ba1a6f770f304"
+      }
+    ]
+  },
+  {
+    "id": "E04",
+    "figma": "26:2",
+    "note": "影视指导选择器",
+    "assets": [
+      {
+        "name": "video-film-style",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "1fd63498acbb86d8209cf009bd6a3de8cce498d6"
+      },
+      {
+        "name": "video-color-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "b0cb0ce2b1707b35ff1afe9b5e9b3cefaa82d48e"
+      },
+      {
+        "name": "video-composition-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "e288e5ab8a9c7d94336013ffccb606e6f4de2e66"
+      },
+      {
+        "name": "video-rhythm-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "36036d4dc029c31c5680a81b2f22099126679d34"
+      }
+    ]
+  },
+  {
+    "id": "E05",
+    "figma": "40:6",
+    "note": "相机参数",
+    "assets": [
+      {
+        "name": "video-camera-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "14f04fe2b904931167bb88a670971e491bfa56d4"
+      }
+    ]
+  },
+  {
+    "id": "E06",
+    "figma": "26:3",
+    "note": "选材入口，上传/标记的全过程见功能分析",
+    "assets": [
+      {
+        "name": "video-populated-base",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "010acb8f6a9f9357c3636cbe4616651ee02fb686"
+      }
+    ]
+  },
+  {
+    "id": "E07",
+    "figma": "26:3,44:3",
+    "note": "提示词及预设库",
+    "assets": [
+      {
+        "name": "video-populated-base",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "010acb8f6a9f9357c3636cbe4616651ee02fb686"
+      },
+      {
+        "name": "video-prompt-library-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "8fbcf7a6eab807cae7cf87b5e0883d6f6b07df3d"
+      }
+    ]
+  },
+  {
+    "id": "E08",
+    "figma": "26:3",
+    "note": "模型与输出参数，供应商回执须另验",
+    "assets": [
+      {
+        "name": "video-populated-base",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "010acb8f6a9f9357c3636cbe4616651ee02fb686"
+      },
+      {
+        "name": "video-models",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:33",
+        "sha1": "d3cb34f114bf35d23cff8e553994a6d118f08298"
+      }
+    ]
+  },
+  {
+    "id": "E09",
+    "figma": "32:2",
+    "note": "成片截帧与裁切见功能分析",
+    "assets": []
+  },
+  {
+    "id": "E10",
+    "figma": "32:2",
+    "note": "成片画面、字幕和声音处理见功能分析",
+    "assets": []
+  },
+  {
+    "id": "F01",
+    "figma": "19:17,13:4",
+    "note": "旁白面板和音频选中态",
+    "assets": [
+      {
+        "name": "audio-editable",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:54",
+        "sha1": "20cf48c6f32ae9b3dc6f66e9322302869e6d1c25"
+      },
+      {
+        "name": "public-audio-selected",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:51",
+        "sha1": "7417ff3a8dfadd645184f640a670ff73432d5bb4"
+      }
+    ]
+  },
+  {
+    "id": "F02",
+    "figma": "38:2",
+    "note": "音乐面板",
+    "assets": [
+      {
+        "name": "audio-music-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "64749ccee153ab400e63c8c7b6b2998de682a0ca"
+      }
+    ]
+  },
+  {
+    "id": "F03",
+    "figma": "38:2",
+    "note": "音效面板",
+    "assets": [
+      {
+        "name": "audio-sfx-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "b82fe34513bb197b45546d72e5a60049ffbe2fed"
+      }
+    ]
+  },
+  {
+    "id": "F04",
+    "figma": "38:2",
+    "note": "音色设计面板",
+    "assets": [
+      {
+        "name": "audio-voice-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "b743f633695b00f7ea5ad57f459c0212cf876691"
+      }
+    ]
+  },
+  {
+    "id": "F05",
+    "figma": "32:2",
+    "note": "已选音频，仅入口和播放区",
+    "assets": [
+      {
+        "name": "public-audio-selected",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:51",
+        "sha1": "7417ff3a8dfadd645184f640a670ff73432d5bb4"
+      }
+    ]
+  },
+  {
+    "id": "G01",
+    "figma": "19:7",
+    "note": "空智能剪辑卡",
+    "assets": [
+      {
+        "name": "smart-editable",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:51",
+        "sha1": "52b65075772d0a97855e012c40fde831fa92c26a"
+      }
+    ]
+  },
+  {
+    "id": "G02",
+    "figma": "32:2",
+    "note": "时间线与混音见指南和代码",
+    "assets": []
+  },
+  {
+    "id": "G03",
+    "figma": "32:2",
+    "note": "剪辑导出回填见代码",
+    "assets": []
+  },
+  {
+    "id": "H01",
+    "figma": "19:8",
+    "note": "导演台内景及属性面板",
+    "assets": [
+      {
+        "name": "director-panel",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:48",
+        "sha1": "6694cd1b390cd76c130d3fb1eeb065172fe94a00"
+      }
+    ]
+  },
+  {
+    "id": "H02",
+    "figma": "19:8",
+    "note": "导演台入口背景，模型上传结果没有独立本地原图",
+    "assets": [
+      {
+        "name": "director-panel",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:48",
+        "sha1": "6694cd1b390cd76c130d3fb1eeb065172fe94a00"
+      }
+    ]
+  },
+  {
+    "id": "H03",
+    "figma": "19:8",
+    "note": "机位、动作设置所在视窗，调整结果须实测",
+    "assets": [
+      {
+        "name": "director-panel",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:48",
+        "sha1": "6694cd1b390cd76c130d3fb1eeb065172fe94a00"
+      }
+    ]
+  },
+  {
+    "id": "H04",
+    "figma": "32:2",
+    "note": "截图回填及再次打开见功能分析",
+    "assets": []
+  },
+  {
+    "id": "P01",
+    "figma": "13:8,13:7",
+    "note": "工作流和故事板",
+    "assets": [
+      {
+        "name": "public-canvas-layout",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:27",
+        "sha1": "4fd912e3894b2fa059b808ca1561fd9630f94d4e"
+      },
+      {
+        "name": "public-storyboard-layout",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:33",
+        "sha1": "1138d7a96ecfeb684570e0509390c7b1437f937c"
+      }
+    ]
+  },
+  {
+    "id": "P02",
+    "figma": "41:2",
+    "note": "节点列表和筛选见功能分析",
+    "assets": []
+  },
+  {
+    "id": "P03",
+    "figma": "41:2",
+    "note": "资产分类与管理见功能分析",
+    "assets": []
+  },
+  {
+    "id": "P04",
+    "figma": "19:16",
+    "note": "生成历史入口，历史弹层没有独立原图",
+    "assets": [
+      {
+        "name": "node-menu",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:6",
+        "sha1": "5d610c1efd4b445434cc6053032619e9005d8caa"
+      }
+    ]
+  },
+  {
+    "id": "P05",
+    "figma": "41:2",
+    "note": "创作广场和角色造型室见功能分析",
+    "assets": []
+  },
+  {
+    "id": "P06",
+    "figma": "41:2",
+    "note": "全部功能目录见功能分析",
+    "assets": []
+  },
+  {
+    "id": "P07",
+    "figma": "41:2",
+    "note": "创作对话与选中素材见功能分析",
+    "assets": []
+  },
+  {
+    "id": "P08",
+    "figma": "19:8",
+    "note": "导演台和入口，导出回填须另验",
+    "assets": [
+      {
+        "name": "director-panel",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:48",
+        "sha1": "6694cd1b390cd76c130d3fb1eeb065172fe94a00"
+      },
+      {
+        "name": "director-entry",
+        "source": "LibTV 编辑态原图.fig",
+        "node": "1:45",
+        "sha1": "2f47450d5bbc6f0957c239b5bc354959f52c632f"
+      }
+    ]
+  },
+  {
+    "id": "P09",
+    "figma": "26:3,40:6",
+    "note": "五项影视指导",
+    "assets": [
+      {
+        "name": "video-populated-base",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "010acb8f6a9f9357c3636cbe4616651ee02fb686"
+      },
+      {
+        "name": "video-color-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "b0cb0ce2b1707b35ff1afe9b5e9b3cefaa82d48e"
+      },
+      {
+        "name": "video-composition-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "e288e5ab8a9c7d94336013ffccb606e6f4de2e66"
+      },
+      {
+        "name": "video-rhythm-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "36036d4dc029c31c5680a81b2f22099126679d34"
+      },
+      {
+        "name": "video-film-style",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "1fd63498acbb86d8209cf009bd6a3de8cce498d6"
+      },
+      {
+        "name": "video-camera-review",
+        "source": "Figma 评审画板导入源图",
+        "sha1": "14f04fe2b904931167bb88a670971e491bfa56d4"
+      }
+    ]
+  },
+  {
+    "id": "P10",
+    "figma": "41:2",
+    "note": "工具列外观，选中与平移事件见代码",
+    "assets": [
+      {
+        "name": "public-canvas-layout",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:27",
+        "sha1": "4fd912e3894b2fa059b808ca1561fd9630f94d4e"
+      }
+    ]
+  },
+  {
+    "id": "P11",
+    "figma": "13:2",
+    "note": "缩放预设，快捷键整页没有独立原图",
+    "assets": [
+      {
+        "name": "public-zoom-menu",
+        "source": "LibTV 原始卡片与连线.fig",
+        "node": "1:30",
+        "sha1": "514a35fb786387db838f4bc9ab798ed83c7b311e"
+      }
+    ]
+  },
+  {
+    "id": "P12",
+    "figma": "41:2",
+    "note": "教程及帮助菜单见功能分析",
+    "assets": []
+  }
+]

@@ -18,10 +18,13 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.security import decode_secret
 from app.models import Asset, Budget, Canvas, Generation, Operation, Project, ProviderSettings
+from app.services import canvas_video_inputs
 from app.services.media import download_video, resolve_asset_path
 from app.services.projects import iso_timestamp, lock_write, require_project, require_revision
 from app.services.video_join import join_videos
 from app.services.wan import MODEL, PRICES, PRICE_VERSION, REGION, WanClient, WanFailure, endpoint
+from app.services.providers import freeze_selection, frozen_key, project_defaults
+from app.services.ark import ArkVideoClient, seedance_billing_limit
 
 
 ACTIVE_STATUSES = ("submitting", "submission_unknown", "processing", "downloading", "query_interrupted")
@@ -42,7 +45,13 @@ def _node_metadata(node: dict) -> dict:
 
 
 def generation_view(generation: Generation) -> dict:
-    usage = {key: value for key, value in generation.usage_json.items() if key != "resultUrl"}
+    usage = {key: value for key, value in generation.usage_json.items() if key not in {"resultUrl", "resultUrlIssuedAt", "providerResponse"}}
+    visible_input = {key: value for key, value in generation.input_json.items() if key not in {"localInputs", "billingLimit", "includeConnectedText"}}
+    if "canvasMedia" in visible_input:
+        canvas_media = visible_input["canvasMedia"]
+        visible_input["canvasMedia"] = [{"nodeId": item["nodeId"], "assetId": item["assetId"], "type": item["type"]} for item in canvas_media]
+        media_order = {item["nodeId"]: index for index, item in enumerate(canvas_media)}
+        visible_input["inputs"] = sorted(visible_input["inputs"], key=lambda item: media_order.get(item["nodeId"], len(canvas_media)))
     return {
         "id": generation.id,
         "projectId": generation.project_id,
@@ -52,7 +61,7 @@ def generation_view(generation: Generation) -> dict:
         "clipId": generation.clip_id,
         "projectRevision": generation.project_revision,
         "status": generation.status,
-        "input": {key: value for key, value in generation.input_json.items() if key != "localInputs"},
+        "input": visible_input,
         "confirmationHash": generation.input_hash,
         "retryOf": generation.input_json.get("request", {}).get("retryOf"),
         "quotedCents": generation.quoted_cents,
@@ -187,22 +196,49 @@ def _flatten_inputs(inputs: list[dict]) -> list[dict]:
     return list(resources.values())
 
 
-def _compose_prompt(source: dict, inputs: list[dict], raw_prompt: str) -> tuple[str, list[dict]]:
+def _compose_prompt(source: dict, inputs: list[dict], raw_prompt: str, *, accept_images: bool = False, video_media: tuple = (),
+        ignore_unassigned_media: bool = False, include_connected_text: bool = False) -> tuple[str, list[dict]]:
     metadata = _node_metadata(source)
     composer = metadata.get("composerContent")
-    explicit = source.get("type") == "config" and isinstance(composer, str) and bool(composer.strip()) and COMPOSER_REFERENCE.search(raw_prompt) is not None
+    explicit = (source.get("type") == "config" or metadata.get("generationMode") == "text") and isinstance(composer, str) and bool(composer.strip()) and COMPOSER_REFERENCE.search(raw_prompt) is not None
     selected: dict[str, dict] = {}
     text_blocks: list[str] = []
+    media_labels: dict[str, list[str]] = {}
+    reference_image_number = 0
+    for kind, identifier in video_media:
+        if kind == "reference_image":
+            reference_image_number += 1
+            label = f"图{reference_image_number}"
+        else:
+            label = {"first_frame": "首帧", "last_frame": "尾帧", "reference_video": "视频1"}[kind]
+        media_labels.setdefault(identifier, []).append(label)
 
-    def select_text(resource: dict) -> str:
-        if resource["type"] != "text":
-            raise AppError(422, "GENERATION_MEDIA_INPUT_UNSUPPORTED", "当前视频生成支持文字输入，请移除本次选中的媒体参考")
+    def select_resource(resource: dict) -> str:
         node_id = resource["nodeId"]
+        if node_id in media_labels and resource["type"] in {"image", "video"}:
+            if node_id not in selected:
+                selected[node_id] = {**{key: value for key, value in resource.items() if key != "url"},
+                    "label": "与".join(media_labels[node_id]), "assetId": resource.get("storageKey") or resource.get("assetId")}
+            return f"【{selected[node_id]['label']}】"
+        if accept_images and resource["type"] == "image":
+            if node_id not in selected:
+                index = sum(item["type"] == "image" for item in selected.values()) + 1
+                selected[node_id] = {**resource, "label": f"参考图{index}"}
+            return f"【{selected[node_id]['label']}】"
+        if resource["type"] != "text":
+            message = "当前图片生成支持文字和图片参考，请移除其他媒体输入" if accept_images else "请选择本次提示词引用的素材，并设置素材用途"
+            raise AppError(422, "GENERATION_MEDIA_INPUT_UNSUPPORTED", message)
         if node_id not in selected:
-            item = {**resource, "label": f"文本{len(selected) + 1}"}
+            item = {**resource, "label": f"文本{len(text_blocks) + 1}"}
             selected[node_id] = item
             text_blocks.append(f"【{item['label']}】\n{item['text']}")
         return f"【{selected[node_id]['label']}】"
+
+    flattened = _flatten_inputs(inputs)
+    if video_media:
+        for resource in flattened:
+            if resource["nodeId"] in media_labels:
+                select_resource(resource)
 
     if explicit:
         inputs_by_id = {item["nodeId"]: item for item in inputs}
@@ -211,12 +247,17 @@ def _compose_prompt(source: dict, inputs: list[dict], raw_prompt: str) -> tuple[
             item = inputs_by_id.get(match.group(1))
             if item is None:
                 raise AppError(422, "GENERATION_REFERENCE_MISSING", "提示词引用的素材未连接到当前生成输入，请检查画布连线")
-            return "、".join(select_text(resource) for resource in _flatten_inputs([item]))
+            return "、".join(select_resource(resource) for resource in _flatten_inputs([item]))
 
         prompt = COMPOSER_REFERENCE.sub(replace_reference, raw_prompt)
+        if include_connected_text:
+            for resource in flattened:
+                if resource["type"] == "text":
+                    select_resource(resource)
     else:
-        for resource in _flatten_inputs(inputs):
-            select_text(resource)
+        for resource in flattened:
+            if (not video_media and not ignore_unassigned_media) or resource["nodeId"] in media_labels or resource["type"] == "text":
+                select_resource(resource)
         prompt = raw_prompt
     if text_blocks:
         prompt = f"{prompt.strip() if explicit else prompt}\n\n" + "\n\n".join(text_blocks)
@@ -228,7 +269,9 @@ def _compose_prompt(source: dict, inputs: list[dict], raw_prompt: str) -> tuple[
     return prompt, list(selected.values())
 
 
-def _canvas_composition(session: Session, project: Project, scene_id: str, source_node_id: str, raw_prompt: str, output_node_id: str | None, *, generation_mode: str = "video", output_type: str = "video") -> tuple[dict, str, dict]:
+def _canvas_composition(session: Session, project: Project, scene_id: str, source_node_id: str, raw_prompt: str, output_node_id: str | None,
+        *, generation_mode: str = "video", output_type: str = "video", video_media: tuple = (), ignore_unassigned_media: bool = False,
+        include_connected_text: bool = False, text_image_input: bool = False) -> tuple[dict, str, dict]:
     scene_node(project, scene_id)
     canvas = session.scalar(select(Canvas).where(Canvas.project_id == project.id, Canvas.scene_id == scene_id, Canvas.owner_id == project.owner_id))
     if canvas is None:
@@ -263,6 +306,14 @@ def _canvas_composition(session: Session, project: Project, scene_id: str, sourc
             if node.get("type") == "group":
                 children = [resource for child in nodes if _node_metadata(child).get("groupId") == node["id"] and (resource := _resource_input(child, ready_videos)) is not None]
                 resource = {"nodeId": node["id"], "type": "group", "title": node.get("title", ""), "children": children} if children else None
+            elif node.get("type") == "config" and _node_metadata(node).get("generationMode") == "image":
+                output_id = _node_metadata(node).get("outputNodeId")
+                image = nodes_by_id.get(output_id, {}) if isinstance(output_id, str) else {}
+                resource = None
+                if image.get("type") == "image" and _node_metadata(image).get("storageKey") and any(
+                    edge.get("fromNodeId") == node["id"] and edge.get("toNodeId") == output_id for edge in connections
+                ):
+                    resource = _resource_input({**image, "id": node["id"], "title": node.get("title", "")}, ready_videos)
             else:
                 resource = _resource_input(node, ready_videos)
             if resource is not None:
@@ -274,7 +325,7 @@ def _canvas_composition(session: Session, project: Project, scene_id: str, sourc
     inputs: list[dict] = []
     input_connections: list[dict] = []
     config = None
-    if config_connection is not None:
+    if config_connection is not None and source.get("type") != "config" and not (source.get("type") == "text" and metadata.get("generationMode") == "text"):
         config = nodes_by_id[config_connection["toNodeId"]]
         config_inputs, config_links = connected_inputs(config["id"])
         for resource, connection in zip(config_inputs, config_links, strict=True):
@@ -285,7 +336,19 @@ def _canvas_composition(session: Session, project: Project, scene_id: str, sourc
         inputs, input_connections = connected_inputs(source_node_id)
         config = None
         config_connection = None
-    prompt, used_inputs = _compose_prompt(source, inputs, source_prompt)
+    prompt, used_inputs = _compose_prompt(source, inputs, source_prompt, accept_images=generation_mode == "image" or text_image_input,
+        video_media=video_media, ignore_unassigned_media=ignore_unassigned_media, include_connected_text=include_connected_text)
+    if generation_mode in {"image", "video"} and metadata.get("filmGuidance"):
+        labels = {"style": "风格", "palette": "配色", "composition": "构图", "rhythm": "节奏", "camera": "相机", "lens": "镜头", "focal": "焦距", "aperture": "光圈"}
+        guidance = metadata["filmGuidance"]
+        if not isinstance(guidance, dict) or any(key not in labels or not isinstance(value, str) or len(value) > 250 for key, value in guidance.items()):
+            raise AppError(422, "FILM_GUIDANCE_INVALID", "当前镜头的影视指导格式无效，请重新选择")
+        directions = [f"{label}：{guidance[key].strip()}" for key, label in labels.items()
+            if guidance.get(key, "").strip() not in {"", "Auto"} and (generation_mode == "video" or key != "rhythm")]
+        if directions:
+            prompt += "\n\n" + "\n".join(directions)
+        if len(prompt) > 20000:
+            raise AppError(422, "GENERATION_INPUT_TOO_LONG", "包含影视指导的提示词超过20000字符")
     composition = {"inputCompositionVersion": 1, "sourcePrompt": source_prompt, "prompt": prompt, "inputs": used_inputs}
     if output_node_id is not None:
         composition["outputNodeId"] = output_node_id
@@ -302,8 +365,14 @@ def quote_generation(session: Session, project_id: str, owner_id: str, payload: 
     if manage_transaction:
         lock_write(session)
     project = require_project(session, project_id, owner_id)
+    if payload.get("modelProfileId") is None:
+        payload = {key: value for key, value in payload.items() if key != "modelProfileId"}
     if payload.get("outputNodeId") is None:
         payload = {key: value for key, value in payload.items() if key != "outputNodeId"}
+    optional = {"ratio", "firstFrameNodeId", "lastFrameNodeId", "referenceVideoNodeId", "referenceImageNodeIds", "videoInputMode"}
+    payload = {key: value for key, value in payload.items() if key not in optional or value is not None}
+    if payload.get("referenceImageNodeIds") == []:
+        payload.pop("referenceImageNodeIds")
     previous = session.scalar(select(Generation).where(Generation.project_id == project_id, Generation.operation_id == payload["operationId"]))
     if previous is not None and "inputCompositionVersion" not in previous.input_json:
         payload = {**payload, "prompt": payload["prompt"].strip()}
@@ -314,7 +383,10 @@ def quote_generation(session: Session, project_id: str, owner_id: str, payload: 
         if previous.owner_id != owner_id or previous.input_json["request"] != payload:
             raise AppError(409, "OPERATION_CONFLICT", "该操作标识已用于不同的生成输入")
         return previous
-    source, source_digest, composition = _canvas_composition(session, project, payload["sceneId"], payload["sourceNodeId"], payload["prompt"], payload.get("outputNodeId"))
+    requested_media = canvas_video_inputs.requested_media(payload)
+    include_connected_text = bool(retry_of.input_json.get("includeConnectedText")) if retry_of else bool(payload.get("videoInputMode") or requested_media)
+    source, source_digest, composition = _canvas_composition(session, project, payload["sceneId"], payload["sourceNodeId"], payload["prompt"], payload.get("outputNodeId"),
+        video_media=tuple(requested_media), ignore_unassigned_media=payload.get("videoInputMode") == "text", include_connected_text=include_connected_text)
     drama_task = _node_metadata(source).get("dramaTask")
     if drama_task not in {None, "clip"}:
         raise AppError(422, "GENERATION_TASK_UNSUPPORTED", "视频模型用于分镜视频，请选择对应的生成功能")
@@ -323,30 +395,69 @@ def quote_generation(session: Session, project_id: str, owner_id: str, payload: 
         if target is None or target.get("type") not in {"video", "image"}:
             raise AppError(409, "GENERATION_TARGET_INVALID", "指定片段不存在或无法采用视频")
     provider = session.get(ProviderSettings, owner_id)
+    selected_id = payload.get("modelProfileId") or project_defaults(project)["video"]
+    selected = freeze_selection(session, owner_id, project, "video", selected_id) if selected_id != "wan-3-0" else None
     model = provider.model if provider else settings.generation_model
     region = provider.region if provider else settings.generation_region
-    if model != MODEL or region != REGION:
+    if selected is None and (model != MODEL or region != REGION):
         raise AppError(422, "WAN_CONFIGURATION_UNSUPPORTED", "请使用北京地域的wan3.0-video配置")
-    quoted = payload["duration"] * PRICES[payload["resolution"]]
+    if selected is not None:
+        capabilities = selected["capabilities"]
+        if payload["resolution"] not in capabilities["resolutions"] or not capabilities["minDuration"] <= payload["duration"] <= capabilities["maxDuration"]:
+            raise AppError(422, "MODEL_VIDEO_PARAMETERS_UNSUPPORTED", "所选视频模型不支持当前清晰度或时长")
+        if (payload.get("boundaryFrames") or payload.get("lastFrameNodeId")) and not capabilities["lastFrame"]:
+            raise AppError(422, "MODEL_LAST_FRAME_UNSUPPORTED", "所选模型不支持首尾帧视频")
+        if payload.get("firstFrameNodeId") and not capabilities["firstFrame"]:
+            raise AppError(422, "MODEL_FIRST_FRAME_UNSUPPORTED", "所选模型不支持固定首帧")
+        if payload.get("videoInputMode") not in {None, "text"}:
+            raise AppError(422, "MODEL_VIDEO_REFERENCE_UNSUPPORTED", "当前画布视频参考功能使用 Wan 3.0")
+        rates = selected["price"]["centsPerSecond"]
+        if payload["resolution"] not in rates:
+            raise AppError(409, "MODEL_PRICE_NOT_CONFIGURED", "当前清晰度的报价上界尚未核实")
+        model, region = selected["model"], selected["region"]
+    else:
+        rates = PRICES
+    ratio = payload.get("ratio", "16:9")
+    if payload.get("videoInputMode") == "extend" or (payload.get("firstFrameNodeId") and selected and selected["capabilities"].get("fixedFrameRatioMode") == "adaptive"):
+        if payload.get("ratio") not in {None, "adaptive"}:
+            raise AppError(422, "MODEL_VIDEO_RATIO_ADAPTIVE_REQUIRED", "当前生成模式须使用自适应画幅")
+        ratio = "adaptive"
+    workspace_id = selected.get("workspaceId") if selected else provider.workspace_id if provider else ""
+    legacy_receipt = retry_of is not None and canvas_video_inputs.uses_legacy_receipt(retry_of.input_json)
+    canvas_media = canvas_video_inputs.freeze_media(session, project, composition["inputs"], requested_media, payload["duration"], workspace_id, settings, legacy_receipt=legacy_receipt)
+    input_seconds = (sum(item.get("durationMs", 0) for item in canvas_media) + 999) // 1000
+    quoted = (payload["duration"] + input_seconds) * rates[payload["resolution"]]
     frozen = {
-        "provider": "aliyun-wan",
-        "workspaceId": provider.workspace_id if provider else "",
+        "provider": selected["providerId"] if selected else "aliyun-wan",
+        "workspaceId": workspace_id,
         "region": region,
         "model": model,
         **composition,
         "duration": payload["duration"],
         "resolution": payload["resolution"],
         "count": 1,
-        "ratio": "16:9",
-        "audio": True,
+        "ratio": ratio,
+        "audio": (selected["capabilities"]["audio"] if selected else True) and _node_metadata(source).get("generateAudio") != "false",
         "promptExtend": False,
         "watermark": False,
-        "priceVersion": PRICE_VERSION,
-        "centsPerSecond": PRICES[payload["resolution"]],
+        "priceVersion": selected["price"]["version"] if selected else PRICE_VERSION,
+        "centsPerSecond": rates[payload["resolution"]],
         "maxAllowedCents": settings.max_generation_cents,
         "replaceExisting": bool(payload.get("clipId")),
         "request": payload,
     }
+    if selected is not None:
+        frozen["modelProfile"] = selected
+        billing_limit = seedance_billing_limit(selected, payload["resolution"], payload["duration"], ratio, quoted)
+        if billing_limit:
+            frozen["billingLimit"] = billing_limit
+    if include_connected_text:
+        frozen["includeConnectedText"] = True
+    if canvas_media:
+        frozen["canvasMedia"] = canvas_media
+        frozen["billableInputSeconds"] = input_seconds
+        if payload.get("videoInputMode"):
+            frozen["videoInputMode"] = payload["videoInputMode"]
     if drama_task is not None:
         frozen["dramaTask"] = drama_task
     if payload.get("boundaryFrames"):
@@ -360,7 +471,7 @@ def quote_generation(session: Session, project_id: str, owner_id: str, payload: 
         changed = any(frozen.get(key) != retry_of.input_json.get(key) for key in (
             "workspaceId", "region", "model", "sourcePrompt", "prompt", "inputs", "outputNodeId",
             "duration", "resolution", "count", "ratio", "audio", "promptExtend", "watermark",
-            "replaceExisting", "boundaryFrames",
+            "replaceExisting", "boundaryFrames", "canvasMedia", "videoInputMode",
         ))
         if changed or not hmac.compare_digest(source_digest, retry_of.source_digest):
             raise AppError(409, "GENERATION_INPUT_CHANGED", "原镜头输入或业务空间已有变化，请重新核对视频方案")
@@ -434,6 +545,8 @@ def retry_generation_quote(session: Session, generation_id: str, owner_id: str, 
 
 
 def _provider_client(session: Session, generation: Generation, settings: Settings) -> WanClient:
+    if generation.input_json.get("provider") == "volcengine-ark":
+        return ArkVideoClient(settings, frozen_key(session, generation.owner_id, generation.input_json["modelProfile"], settings), generation.input_json["model"])
     provider = session.get(ProviderSettings, generation.owner_id)
     if provider is None or not provider.api_key_encrypted:
         raise AppError(503, "WAN_NOT_CONFIGURED", "请先保存阿里云业务空间和API Key")
@@ -520,9 +633,18 @@ def confirm_generation(session: Session, generation_id: str, owner_id: str, conf
     if composition_version is None:
         _, current_source = _canvas_source(session, project, generation.scene_id, generation.source_node_id)
     elif composition_version == 1:
-        _, current_source, composition = _canvas_composition(session, project, generation.scene_id, generation.source_node_id, generation.input_json["sourcePrompt"], generation.input_json.get("outputNodeId"))
+        request = generation.input_json["request"]
+        requested_media = canvas_video_inputs.requested_media(request)
+        _, current_source, composition = _canvas_composition(session, project, generation.scene_id, generation.source_node_id, generation.input_json["sourcePrompt"], generation.input_json.get("outputNodeId"),
+            video_media=tuple(requested_media), ignore_unassigned_media=request.get("videoInputMode") == "text",
+            include_connected_text=generation.input_json.get("includeConnectedText", False))
         if any(composition.get(key) != generation.input_json.get(key) for key in ("sourcePrompt", "prompt", "inputs", "outputNodeId")):
             raise AppError(409, "GENERATION_INPUT_CHANGED", "来源节点或参考素材已变化，请重新查看报价")
+        if requested_media:
+            current = canvas_video_inputs.freeze_media(session, project, composition["inputs"], requested_media, generation.input_json["duration"],
+                generation.input_json["workspaceId"], settings, legacy_receipt=canvas_video_inputs.uses_legacy_receipt(generation.input_json))
+            if current != generation.input_json["canvasMedia"]:
+                raise AppError(409, "VIDEO_MEDIA_INPUT_CHANGED", "画布中的固定帧或参考素材已变化，请重新查看报价")
     else:
         raise AppError(422, "GENERATION_INPUT_VERSION_UNSUPPORTED", "该任务的输入组装版本暂不支持")
     if not hmac.compare_digest(current_source, generation.source_digest):
@@ -643,19 +765,36 @@ def _worker_generation(session: Session, generation_id: str, worker_id: str) -> 
     return generation
 
 
-async def _submit(settings: Settings, factory: sessionmaker, generation_id: str, worker_id: str, client: WanClient, frozen_input: dict) -> None:
-    if frozen_input.get("boundaryFrames"):
+async def _submit(settings: Settings, factory: sessionmaker, generation_id: str, worker_id: str, client: WanClient | ArkVideoClient, frozen_input: dict) -> None:
+    if frozen_input.get("boundaryFrames") or frozen_input.get("canvasMedia"):
         from app.services.video_boundaries import media_payload
         try:
             with factory() as session:
                 generation = _worker_generation(session, generation_id, worker_id)
-                frozen_input = {**frozen_input, "media": media_payload(session, generation.owner_id, frozen_input["boundaryFrames"], settings)}
-        except (AppError, OSError) as failure:
+                media = canvas_video_inputs.media_payload(session, generation, settings) if frozen_input.get("canvasMedia") else media_payload(session, generation.owner_id, frozen_input["boundaryFrames"], settings)
+            provider_media = []
+            for item in media:
+                if "path" in item:
+                    if not isinstance(client, WanClient):
+                        raise AppError(422, "MODEL_VIDEO_REFERENCE_UNSUPPORTED", "当前画布视频参考功能使用 Wan 3.0")
+                    item = {"type": item["type"], "url": await client.upload_reference_video(item["path"])}
+                provider_media.append(item)
+            frozen_input = {**frozen_input, "media": provider_media}
+        except (AppError, OSError, WanFailure) as failure:
             with factory() as session:
                 generation = _worker_generation(session, generation_id, worker_id)
-                _finish_failure(session, generation, "VIDEO_FRAME_UNAVAILABLE", "首尾图片已经变化或不可用，任务未提交，请恢复图片后重新确认", True)
+                if isinstance(failure, WanFailure):
+                    _finish_failure(session, generation, failure.code, failure.message, True)
+                else:
+                    _finish_failure(session, generation, "VIDEO_MEDIA_UNAVAILABLE", "已确认的参考素材发生变化或不可用，请重新选择素材", True)
                 session.commit()
             return
+    with factory() as session:
+        generation = _worker_generation(session, generation_id, worker_id)
+        generation.status = "submitting"
+        generation.started_at = time.time()
+        generation.updated_at = generation.started_at
+        session.commit()
     try:
         result = await client.submit(frozen_input)
     except WanFailure as failure:
@@ -702,20 +841,46 @@ async def _query(settings: Settings, factory: sessionmaker, generation_id: str, 
         generation.updated_at = time.time()
         status = result.output.task_status
         if status in {"FAILED", "CANCELED"}:
-            _finish_failure(session, generation, "WAN_GENERATION_FAILED", "供应商任务未生成成功，输入与原任务标识已保留", True)
+            if generation.input_json.get("provider") == "volcengine-ark":
+                generation.status, generation.error_code, generation.error_message = "query_interrupted", "ARK_FAILURE_COST_UNVERIFIED", "供应商任务未成功，原任务和费用预留继续保留，请核实实际账单"
+                generation.usage_json = {**generation.usage_json, "providerResponse": result.provider_response}
+            else:
+                _finish_failure(session, generation, "WAN_GENERATION_FAILED", "供应商任务未生成成功，输入与原任务标识已保留", True)
         elif status == "UNKNOWN":
             generation.status = "query_interrupted"
             generation.error_code = "WAN_TASK_UNKNOWN"
             generation.error_message = "供应商无法识别原任务，可能已超过24小时查询期限，费用预留继续保留"
         elif status == "SUCCEEDED":
             usage = result.usage
-            if usage is None or not result.output.video_url or usage.input_video_duration != 0 or usage.SR != int(generation.input_json["resolution"][:-1]) or usage.duration > generation.input_json["duration"] or usage.output_video_duration > generation.input_json["duration"]:
+            input_seconds = generation.input_json.get("billableInputSeconds", 0)
+            output_seconds = generation.input_json["duration"]
+            if (usage is None or not result.output.video_url or not 0 <= usage.input_video_duration <= input_seconds
+                    or bool(input_seconds) != bool(usage.input_video_duration) or usage.SR != int(generation.input_json["resolution"][:-1])
+                    or usage.duration > input_seconds + output_seconds or usage.output_video_duration > output_seconds
+                    or (generation.input_json.get("request", {}).get("ratio") not in {None, "adaptive"} and usage.ratio != generation.input_json["ratio"])):
                 generation.status = "query_interrupted"
                 generation.error_code = "WAN_RESULT_INVALID"
                 generation.error_message = "供应商用量或结果与已确认参数不一致，需要核实原任务与费用"
             else:
-                actual = int((Decimal(str(usage.duration)) * generation.input_json["centsPerSecond"]).to_integral_value(rounding=ROUND_CEILING))
-                generation.usage_json = {**generation.usage_json, **usage.model_dump(), "resultUrl": result.output.video_url}
+                duration = max(Decimal(str(usage.duration)), Decimal(str(usage.input_video_duration)) + Decimal(str(usage.output_video_duration)))
+                actual = int((duration * generation.input_json["centsPerSecond"]).to_integral_value(rounding=ROUND_CEILING))
+                provider_response = getattr(result, "provider_response", None)
+                if provider_response is not None:
+                    price = generation.input_json["modelProfile"]["price"]
+                    output_rate = price.get("outputMicrosPerMillion")
+                    if output_rate is None:
+                        generation.status, generation.error_code, generation.error_message = "query_interrupted", "MODEL_PRICE_NOT_CONFIGURED", "方舟实际Token价表缺失，原预留继续保留"
+                        session.commit()
+                        return
+                    output_tokens = provider_response["usage"]["completion_tokens"]
+                    actual = int((Decimal(output_tokens) * output_rate / 10000000000).to_integral_value(rounding=ROUND_CEILING))
+                    generation.usage_json = {**generation.usage_json, "providerResponse": provider_response, "completionTokens": output_tokens}
+                    billing_limit = generation.input_json.get("billingLimit")
+                    if actual > generation.reserved_cents or (billing_limit and output_tokens > billing_limit["maxCompletionTokens"]):
+                        generation.status, generation.error_code, generation.error_message = "query_interrupted", "GENERATION_COST_OUT_OF_BOUNDS", "供应商实际用量超过报价预留，请核实原任务，系统不会自动重发"
+                        session.commit()
+                        return
+                generation.usage_json = {**generation.usage_json, **usage.model_dump(), "resultUrl": result.output.video_url, "resultUrlIssuedAt": time.time()}
                 _settle(session, generation, actual)
                 generation.status = "downloading"
                 generation.next_poll_at = time.time()
@@ -843,9 +1008,6 @@ async def _process_one(settings: Settings, factory: sessionmaker, worker_id: str
                 return
             frozen_input = generation.input_json
             if generation.status == "queued":
-                generation.status = "submitting"
-                generation.started_at = time.time()
-                generation.updated_at = time.time()
                 session.commit()
                 action = "submit"
             else:

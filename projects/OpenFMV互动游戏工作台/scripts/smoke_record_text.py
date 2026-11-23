@@ -289,6 +289,7 @@ def main() -> None:
     actions.add_argument("--capture-before-restart", action="store_true")
     actions.add_argument("--verify-after-restart", action="store_true")
     parser.add_argument("--register", action="store_true")
+    parser.add_argument("--stage", choices=["阶段2-1", "阶段3-1"], default="阶段2-1")
     arguments = parser.parse_args()
     if arguments.register and not arguments.verify_after_restart:
         raise ValueError("正式首次登记必须先完成实际重启前后验证")
@@ -319,7 +320,7 @@ def main() -> None:
             record.update(verifiedAt=datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S"), restartVerified=True, restartVerification={"capturedAt": previous.capturedAt.isoformat(), "verifiedAt": datetime.now(timezone.utc).isoformat(), "beforeService": previous.service.model_dump(), "afterService": identity.model_dump(), "snapshotFile": str(path.relative_to(ROOT)), "currentTargetFingerprint": fingerprints["currentTarget"]})
             summary.update(restartVerified=True, beforePid=previous.service.pid, afterPid=identity.pid)
             if arguments.register:
-                summary["firstRegistered"] = EvidenceStore(ROOT).register(record)
+                summary["firstRegistered"] = EvidenceStore(ROOT, arguments.stage).register(record)
     print(json.dumps(summary, ensure_ascii=False))
 
 

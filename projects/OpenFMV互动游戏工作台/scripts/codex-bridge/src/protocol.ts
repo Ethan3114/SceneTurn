@@ -11,7 +11,7 @@ export const SUPPORTED_VERSION = "0.168.0";
 const bridgePackage = findPackageJSON(import.meta.url);
 if (!bridgePackage) throw new Error("BRIDGE_PACKAGE_NOT_FOUND");
 export const codexExecutable = resolve(dirname(bridgePackage), "node_modules/.bin/codex");
-const allowedMethods = new Set(["initialize", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/interrupt", "account/read", "mcpServerStatus/list", "skills/list"]);
+const allowedMethods = new Set(["initialize", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/interrupt", "account/read", "model/list", "mcpServerStatus/list", "skills/list"]);
 const wireMessage = z.object({
   id: z.union([z.string(), z.number()]).optional(),
   method: z.string().optional(),
@@ -41,13 +41,18 @@ export class CodexProtocol extends EventEmitter {
   private readonly parser;
   private readonly pending = new Set<string | number>();
 
-  constructor(cwd: string) {
+  constructor(cwd: string, readonly imageProfile?: { inputsPath: string }) {
     super();
     installedVersion();
     const disabled = ["shell_tool", "apps", "plugins", "remote_plugin", "multi_agent", "multi_agent_v2", "browser_use", "computer_use", "view_image", "image_generation", "hooks", "plugin_hooks", "in_app_local_automation", "sleep_tool", "skill_search", "code_mode", "code_mode_only", "code_mode_only_strict_3p_tools"];
     const args = ["app-server", "--stdio", "-c", "mcp_servers={}", "-c", "mcp_servers.node_repl.enabled=false", "-c", "web_search=\"disabled\"", "-c", "shell_environment_policy.inherit=\"none\"", "-c", "project_doc_max_bytes=0", "-c", "include_environment_context=false"];
-    for (const feature of disabled) args.push("-c", `features.${feature}=false`);
+    for (const feature of disabled) args.push("-c", `features.${feature}=${feature === "image_generation" && imageProfile ? "true" : "false"}`);
     args.push("-c", "features.code_mode_host=true");
+    if (imageProfile) {
+      if (resolve(cwd, "inputs") !== imageProfile.inputsPath) throw new Error("CODEX_IMAGE_INPUT_SCOPE_INVALID");
+      args.push("-c", `permissions.openfmv_image.filesystem={${JSON.stringify(imageProfile.inputsPath)}="read"}`,
+        "-c", "permissions.openfmv_image.network={enabled=false}", "-c", "default_permissions=\"openfmv_image\"");
+    }
     const environment = { ...process.env };
     for (const name of ["CODEX_CI", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "CODEX_PERMISSION_PROFILE", "CODEX_SESSION_ID", "CODEX_THREAD_ID", "CODEX_TOOL_CALL_ID", "CODEX_VERSION"]) delete environment[name];
     this.process = spawn(codexExecutable, args, { cwd, env: environment, stdio: ["pipe", "pipe", "pipe"] });
@@ -79,7 +84,7 @@ export class CodexProtocol extends EventEmitter {
     if (!parsed.success) return this.fail("CODEX_PROTOCOL_INVALID");
     const message = parsed.data;
     if (message.method && message.id !== undefined) {
-      if (message.method !== "item/tool/call") {
+      if (message.method !== "item/tool/call" || this.imageProfile) {
         this.process.stdin.write(`${JSON.stringify({ id: message.id, error: { code: -32601, message: "METHOD_NOT_AUTHORIZED" } })}\n`);
         this.emit("deniedRequest", message.method);
         return;
@@ -125,14 +130,27 @@ export class CodexProtocol extends EventEmitter {
     return { isolated: true, checkedServers };
   }
 
-  async assertRestrictedConfiguration(): Promise<{ restricted: true; dynamicToolHostEnabled: true }> {
+  async assertRestrictedConfiguration(): Promise<{ restricted: true; dynamicToolHostEnabled: boolean }> {
     const received = await this.client.timeout(15000).request("config/read", { includeLayers: false });
     const data = z.object({ config: z.object({ features: z.record(z.string(), z.unknown()), web_search: z.string() }).passthrough() }).parse(received);
-    for (const name of ["shell_tool", "apps", "plugins", "browser_use", "computer_use", "view_image", "image_generation", "code_mode", "code_mode_only", "code_mode_only_strict_3p_tools"]) {
+    for (const name of ["shell_tool", "apps", "plugins", "browser_use", "computer_use", "view_image", "code_mode", "code_mode_only", "code_mode_only_strict_3p_tools"]) {
       if (data.config.features[name] !== false) throw new Error("CODEX_RESTRICTION_UNVERIFIED");
     }
-    if (data.config.features.code_mode_host !== true || data.config.web_search !== "disabled") throw new Error("CODEX_RESTRICTION_UNVERIFIED");
+    if (data.config.features.code_mode_host !== true || data.config.features.image_generation !== !!this.imageProfile || data.config.web_search !== "disabled") throw new Error("CODEX_RESTRICTION_UNVERIFIED");
+    if (this.imageProfile) {
+      const profile = z.object({ default_permissions: z.literal("openfmv_image"), permissions: z.record(z.string(), z.unknown()) }).parse(data.config);
+      const selected = z.object({ filesystem: z.record(z.string(), z.unknown()), network: z.object({ enabled: z.literal(false) }),
+        description: z.string().nullable().optional(), extends: z.null().optional(), workspace_roots: z.null().optional(),
+      }).strict().parse(profile.permissions.openfmv_image);
+      const { glob_scan_max_depth: depth, ...entries } = z.object({ glob_scan_max_depth: z.null().optional() }).passthrough().parse(selected.filesystem);
+      if (depth != null || JSON.stringify(entries) !== JSON.stringify({ [this.imageProfile.inputsPath]: "read" })) throw new Error("CODEX_IMAGE_FILESYSTEM_UNVERIFIED");
+    }
     return { restricted: true, dynamicToolHostEnabled: true };
+  }
+
+  async assertChatgptAccount(): Promise<void> {
+    const account = z.object({ account: z.object({ type: z.literal("chatgpt"), planType: z.string().min(1).refine((value) => value !== "free") }).passthrough() }).safeParse(await this.request("account/read", { refreshToken: false }));
+    if (!account.success) throw new Error("CODEX_IMAGE_CHATGPT_REQUIRED");
   }
 
   respond(id: string | number, result: { success: boolean; contentItems: Array<{ type: "inputText"; text: string }> }): void {

@@ -1,0 +1,87 @@
+.fmv-libtv-create-menu {
+  position: absolute;
+  z-index: 120;
+  width: 208px;
+  padding: 4px;
+  transform-origin: top left;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: #202020;
+  color: #f7f7f7;
+  box-shadow: 0 8px 16px -4px rgba(0, 0, 0, 0.24), 0 2px 4px rgba(0, 0, 0, 0.16);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.fmv-libtv-create-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.fmv-libtv-create-row:not(:disabled):is(:hover, :focus-visible),
+.fmv-libtv-create-row[aria-expanded='true'] {
+  background: #2c2c2c;
+}
+
+.fmv-libtv-create-row:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.48);
+  outline-offset: -1px;
+}
+
+.fmv-libtv-create-row > svg { flex: none; }
+
+.fmv-libtv-create-row:disabled {
+  color: #919191;
+}
+
+.fmv-libtv-create-heading {
+  padding: 4px 8px;
+  color: #919191;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.fmv-libtv-create-resource {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.fmv-libtv-create-badge {
+  min-width: 26px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: #393939;
+  color: #f7f7f7;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+.fmv-libtv-create-badge[data-badge='Beta'] {
+  background: #343434;
+  color: #d1d1d1;
+}
+
+.fmv-libtv-create-script { position: relative; }
+.fmv-libtv-create-submenu-icon { margin-left: auto; color: #919191; }
+
+.fmv-libtv-create-script-flyout {
+  position: absolute;
+  top: -4px;
+  left: 100%;
+  padding-left: 8px;
+}
+
+.fmv-libtv-create-script-menu { position: relative; }

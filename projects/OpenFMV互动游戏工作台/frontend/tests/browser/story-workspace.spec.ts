@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { readFile, readdir, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { ProjectEnvelope } from '../../app/_utils/cloudApi';
+import { restoreLegacyCanvasAssistant } from './manual-studio';
 
 const proofDirectory = path.resolve('../.intermediate/agent-smoke/279439cb-7838-4bda-960d-026e6c38b764');
 test.use({ viewport: { width: 1440, height: 1000 } });
@@ -68,9 +69,9 @@ test('问问AI持续保存本人Codex对话、停止记录与当前场景', asyn
   await expect(page.getByTestId('chat-run-status')).toHaveText('已停止');
   const scene = envelope.project.graphData.nodes.find((node) => node.type === 'scene')!;
   await page.goto(`/zh-CN/studio?id=${id}&sceneId=${scene.id}`);
-  await expect(page.getByTestId('canvas-add-agent')).toBeEnabled();
+  await expect(page.getByTestId('canvas-add-node')).toBeEnabled();
   await expect(page.locator('[data-agent-node]')).toHaveCount(0);
-  await page.getByTestId('canvas-add-agent').click();
+  await restoreLegacyCanvasAssistant(page);
   await expect(page.locator('[data-agent-node]').getByTestId('agent-role').locator('option')).toHaveCount(6);
 });
 

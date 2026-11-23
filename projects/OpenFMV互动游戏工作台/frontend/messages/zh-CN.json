@@ -2,6 +2,145 @@
   "app": {
     "description": "本地优先的互动影像编辑器"
   },
+  "home": {
+    "nav": {
+      "product": "产品",
+      "features": "功能",
+      "menu": "菜单",
+      "studio": "进入创作台",
+      "github": "GitHub",
+      "close": "关闭",
+      "label": "首页导航"
+    },
+    "hero": {
+      "headlineFirst": "让观众决定",
+      "headlineSecond": "下一幕",
+      "description": "互动影片创作台。用 AI 生成素材，编排剧情分支，发布观众可以亲自选择的作品。",
+      "githubAccess": "GitHub 目前需要仓库访问权限。",
+      "explore": "向下了解产品",
+      "artAlt": "《潮汐尽头》中的海防站"
+    },
+    "product": {
+      "title": "从拍什么，到观众怎么选",
+      "description": "生成素材、用本机 Codex CLI 编排剧情和添加互动，最后发布成可玩的网页影片。",
+      "trialLink": "体验观众选择",
+      "material": {
+        "title": "AI 生成素材",
+        "description": "写下构想，获得剧本、角色图、分镜和视频。",
+        "caption": "素材生成 · 对话提交需求",
+        "alt": "在素材工作台中输入生成需求，并选用一张海防站参考图"
+      },
+      "codex": {
+        "title": "Codex CLI 编排与互动",
+        "description": "一句话排列场景、调整镜头，添加选择按钮或限时互动。",
+        "caption": "问问 AI · 连接本机 Codex",
+        "alt": "剧情画布与等待本机 Codex 连接的对话面板，输入框内是设置分支与互动的指令"
+      }
+    },
+    "trial": {
+      "heading": "试玩《潮汐尽头》",
+      "introduction": "港口的备用电只够供一处。你会点亮信标，还是关闭闸门？",
+      "storyTitle": "潮汐尽头",
+      "startPrompt": "为港口分配最后一份电力。",
+      "startLabel": "开始试玩",
+      "replayHint": "两条分支，可重新选择。",
+      "decisionTitle": "最后一份电力",
+      "decisionPrompt": "海水漫过控制台，备用电只够供一处。亮起信标可以给救援船指路，关上闸门可以守住低地街区。",
+      "signalLabel": "点亮信标",
+      "signalHint": "给尚未靠岸的救援船照出水路。",
+      "gateLabel": "关闭闸门",
+      "gateHint": "先保护受困的低地街区。",
+      "signalTitle": "灯火重燃",
+      "signalOutcome": "救援船顺着信标找到了港口。闸门没能及时关上，低地街区需要连夜撤离。",
+      "gateTitle": "闸门关上",
+      "gateOutcome": "低地街区躲过了涌潮。救援船失去信号，只能等天亮再靠岸。",
+      "retryLabel": "重新选择",
+      "backLabel": "退出试玩"
+    },
+    "features": {
+      "title": "用同一个样例，看四个制作界面",
+      "description": "切换功能，查看《潮汐尽头》在 SceneTurn 里的实际界面。",
+      "previewLabel": "SceneTurn 实际界面",
+      "blueprint": {
+        "title": "剧情画布",
+        "description": "用节点和连线编排开场、分支和结局。",
+        "previewTitle": "蓝图 · 备用电源与两条路线",
+        "imageAlt": "画布上的开场场景通过连线通向两条剧情分支和两个结局"
+      },
+      "timeline": {
+        "title": "场景与互动",
+        "description": "在时间线上安排镜头、选择按钮和限时操作。",
+        "previewTitle": "时间线 · 设置观众选择及出现时间",
+        "imageAlt": "时间线上选中了点亮信标按钮，一旁显示互动设置"
+      },
+      "player": {
+        "title": "网页试玩",
+        "description": "走过不同分支，检查每个选择会把观众带到哪里。",
+        "previewTitle": "网页播放器 · 停在电力抉择处",
+        "imageAlt": "网页播放器显示点亮信标和关闭闸门两个选项"
+      },
+      "assets": {
+        "title": "项目与素材",
+        "description": "管理本项目的镜头和声音，也能查找其他项目的素材。",
+        "previewTitle": "素材库 · 同一项目的画面和声音",
+        "imageAlt": "素材库中列出了海防站、信标和海闸的参考图"
+      }
+    },
+    "workflow": {
+      "title": "从素材到可分享的作品",
+      "description": "用一个项目串起准备素材、剪辑、互动设置和网页试玩。",
+      "material": {
+        "title": "准备素材",
+        "description": "导入已有片段，或用 AI 生成剧本与镜头素材。"
+      },
+      "story": {
+        "title": "编排剧情",
+        "description": "用画布或本机 Codex 串起开场、场景和结局。"
+      },
+      "interaction": {
+        "title": "添加互动",
+        "description": "在时间线上安排选择按钮和限时操作。"
+      },
+      "publish": {
+        "title": "试玩与发布",
+        "description": "确认不同分支能走通，再发布选定版本。"
+      }
+    },
+    "faq": {
+      "title": "常见问题",
+      "description": "开始创作前，了解素材、Codex 连接和作品发布。",
+      "settingsLabel": "查看模型设置",
+      "materials": {
+        "question": "可以用手头的素材开始吗？",
+        "answer": "可以。把现有文字、图片、声音和视频导入项目，也可以在「素材 → 生成素材」制作剧本、角色图、分镜和视频。"
+      },
+      "models": {
+        "question": "生成素材前需要配置什么？",
+        "answer": "在「模型设置」查看当前账号可用的模型，按所选服务配置。提交生成视频前，可以核对首尾图和生成规格。"
+      },
+      "codex": {
+        "question": "怎样让本机 Codex 编排剧情？",
+        "answer": "在项目里打开「问问 AI → 连接本人 Codex」，在电脑上登录 Codex CLI 并完成配对。它可以编辑你授权的场景、时间线和互动，你也可以继续手动修改。"
+      },
+      "play": {
+        "question": "试玩作品需要登录或安装软件吗？",
+        "answer": "发布后的作品可通过浏览器链接直接打开。创作和管理自己的项目时需要登录。"
+      },
+      "publish": {
+        "question": "发布后，哪些内容会被公开？",
+        "answer": "你选择公开固定的作品版本和用于展示的封面、先导片。草稿、对话和凭据仅在项目内保存，已发布的作品可以撤下。"
+      }
+    },
+    "footer": {
+      "title": "开始制作你的互动影片",
+      "works": "作品馆"
+    },
+    "premiere": {
+      "label": "SceneTurn 首映",
+      "trailer": "播放先导片",
+      "detail": "作品详情"
+    }
+  },
   "navigation": {
     "askAi": "问问 AI",
     "minimize": "最小化",
@@ -675,47 +814,75 @@
     "inputPlaceholder": "输入消息，Ctrl/⌘ + Enter 发送",
     "send": "发送"
   },
+  "materialModels": {
+    "title": "新一轮模型",
+    "description": "选择下一轮制作使用的模型。当前任务继续使用提交时的型号。",
+    "choose": "选择{model}模型",
+    "projectDescription": "为项目选择默认型号。可以在生成素材中为下一轮另选模型。",
+    "text": "文本",
+    "image": "图片",
+    "video": "视频",
+    "textModel": "文本模型",
+    "imageModel": "图片模型",
+    "videoModel": "视频模型",
+    "currentModels": "当前任务模型",
+    "nextModels": "下一轮模型",
+    "personalCodex": "个人 Codex",
+    "localConnected": "本机连接 · 已连接",
+    "localDisconnected": "等待支持图片生成的本机连接",
+    "connect": "去连接个人 Codex",
+    "qwen": "阿里云百炼 · 千问",
+    "sensetime": "商汤",
+    "ark": "火山方舟",
+    "wan": "阿里云百炼",
+    "bothFrames": "支持首尾帧",
+    "firstFrame": "支持首帧",
+    "requiresBothFrames": "此制作流程需要支持首尾帧的型号",
+    "unavailable": "当前不可用",
+    "usesDefaults": "初始选择来自项目默认值。",
+    "resetDefault": "恢复项目默认值",
+    "loading": "正在读取模型及连接状态…",
+    "loadError": "无法读取模型及连接状态。",
+    "retry": "重新读取",
+    "cancel": "取消",
+    "apply": "应用到下一轮",
+    "applyDefault": "选择型号",
+    "confirmPersonalUsage": "我确认使用已连接的个人 Codex 账户额度生成这些图片。"
+  },
   "legal": {
+    "backHome": "返回首页",
+    "navigation": "隐私与条款",
+    "skip": "跳到主要内容",
     "privacy": {
-      "eyebrow": "OpenFMV 本地编辑器",
-      "title": "隐私",
-      "description": "OpenFMV 当前是本地优先桌面应用，不提供账号、云同步或托管后端。",
-      "localData": {
-        "title": "本地数据",
-        "body": "项目、设置和素材索引默认保存在你的设备上。"
+      "title": "隐私政策",
+      "description": "了解 SceneTurn 在登录、创作和公开播放时如何使用数据。",
+      "account": {
+        "title": "账户和创作数据",
+        "body": "邮箱用于注册和登录。项目、素材、任务状态和创作历史保存在工作台，并通过账户权限控制访问。"
       },
-      "assets": {
-        "title": "素材文件",
-        "body": "导入素材会复制到本地项目目录或浏览器本地存储中。"
+      "generation": {
+        "title": "生成服务与本人 Codex",
+        "body": "生成素材时，任务所需的提示词和参考素材会提交给所选服务。连接本人 Codex 的授权限于配对项目，Codex 登录凭据保留在本机。"
       },
-      "ai": {
-        "title": "AI 设置",
-        "body": "AI 聊天通过你在设置中选择的本地 CLI 运行。"
-      },
-      "updates": {
-        "title": "变更",
-        "body": "如果未来加入网络功能，隐私说明应随功能一起更新。"
+      "publication": {
+        "title": "公开作品",
+        "body": "公开固定版本后，访客可以访问该版本的播放内容及选定的封面和先导片。撤下作品后，系统停止新的公开访问请求。"
       }
     },
     "terms": {
-      "eyebrow": "OpenFMV 本地编辑器",
       "title": "使用条款",
-      "description": "这些条款说明当前本地版本的使用边界。",
-      "localFirst": {
-        "title": "本地优先",
-        "body": "OpenFMV 面向本地创作工作流，不包含账号或云端同步。"
-      },
+      "description": "在 SceneTurn 制作和发布互动作品时，请核对素材、生成结果和发布范围。",
       "content": {
-        "title": "创作内容",
-        "body": "你负责导入素材和生成内容的授权、保存和备份。"
+        "title": "作品与素材",
+        "body": "请确认你拥有上传素材的使用权限，并在采用生成结果或发布作品前检查其内容。"
       },
-      "exports": {
-        "title": "导出",
-        "body": "导出的故事包会写入你选择的本地目录。"
+      "generation": {
+        "title": "生成与确认",
+        "body": "视频生成前请核对镜头、首尾图和参数。生成结果进入素材库后，可预览并选择要采用的版本。"
       },
-      "responsibility": {
-        "title": "责任",
-        "body": "请在发布前自行测试互动流程、素材路径和导出结果。"
+      "publication": {
+        "title": "公开与撤销",
+        "body": "发布前请试玩所需的剧情线路。作品馆播放你确认公开的固定版本，可以在固定版本管理中撤下作品。"
       }
     }
   },

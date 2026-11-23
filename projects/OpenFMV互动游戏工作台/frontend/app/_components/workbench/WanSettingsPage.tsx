@@ -24,7 +24,7 @@ export default function WanSettingsPage() {
     }).catch((problem: unknown) => setError(errorText(problem))).finally(() => setBusy(false));
   }
   if (!user) return <main className="fmv-loading">{userError || '正在读取账号…'}</main>;
-  return <WorkspaceShell user={user} title="视频生成设置"><main className="fmv-settings"><section className="fmv-panel"><p className="fmv-eyebrow">阿里云百炼 · 北京</p><h2>连接 Wan 视频服务</h2><p className="fmv-muted">生成前逐次展示提示词、模型、参数和最高费用，由你确认。</p><p role="status">{settings?.configured ? '已保存服务配置' : '尚未配置服务'}</p><form onSubmit={(event) => { void submit(event); }}>
+  return <WorkspaceShell user={user} title="视频生成设置" monochrome><main className="fmv-settings fmv-service-settings"><section className="fmv-panel"><p className="fmv-eyebrow">阿里云百炼 · 北京</p><h2>连接 Wan 视频服务</h2><p className="fmv-muted">生成前逐次展示提示词、模型、参数和最高费用，由你确认。</p><p role="status">{settings?.configured ? '已保存服务配置' : '尚未配置服务'}</p><form onSubmit={(event) => { void submit(event); }}>
     <label>业务空间 ID<input data-testid="wan-workspace" autoComplete="off" value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)} required /></label>
     <label>API Key<input data-testid="wan-key" type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} required /></label>
     <p className="fmv-muted">凭据加密保存在服务端，保存后输入框清空。每次生成最高 ¥10，本次模型验证累计最高 ¥300。</p>

@@ -8,7 +8,7 @@ from app.agent_models import AgentStep
 from app.api.generations import GenerationResult, visible_generation
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.models import Budget, Generation, Project
+from app.models import Budget, Canvas, Generation, Project
 from app.services.generation import confirm_generation, retry_generation_quote
 from conftest import PRODUCT_ROOT
 
@@ -43,7 +43,14 @@ def test_actual_interrupted_material_video_retry_keeps_the_original_and_requires
         assert generation_ids.count(original.id) == generation_ids.count(first.id) == 1
         response = GenerationResult.model_validate({"generation": visible_generation(session, first)}).model_dump(by_alias=True)["generation"]
         assert response["retryOf"] == original.id and response["material"] and not response["canRetry"]
-        assert "prompt" not in response["input"] and "reservedCents" not in response
+        assert "prompt" not in response["input"] and "request" not in response["input"] and "reservedCents" not in response
+        canvas = session.scalars(select(Canvas).where(Canvas.project_id == original.project_id, Canvas.scene_id == original.scene_id)).one()
+        node = next(node for node in canvas.data_json["nodes"] if node["id"] == old_input["request"]["videoArtifactNodeId"])
+        artifact = node["metadata"]["creativeArtifact"]
+        shot_key = old_input["boundaryFrames"]["shotKey"]
+        prompt = next(shot["videoPrompt"] for shot in artifact["shots"] if shot["shotKey"] == shot_key)
+        assert response["input"]["shotSummary"] == {"title": f"{artifact['title']} · {shot_key}"[:200],
+            "action": prompt["actionTimeline"], "camera": prompt["cameraMovement"], "sound": prompt["audioRequirement"]}
         assert session.scalars(select(Generation).where(
             Generation.project_id == original.project_id,
             Generation.input_json["request"]["retryOf"].as_string() == original.id,

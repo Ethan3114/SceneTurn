@@ -1,0 +1,257 @@
+.material-workspace {
+  --material-role-background: #0d0d0d;
+  --material-role-panel: #191919;
+  --material-role-field: #111;
+  --material-role-border: #353535;
+  --material-role-text: #f7f7f7;
+  --material-role-secondary: #c7c7c7;
+  --material-role-muted: #a7a7a7;
+  color: var(--material-role-text);
+  background: var(--material-role-background);
+}
+
+.material-workspace .material-workspace-toolbar {
+  min-height: 66px;
+  flex-shrink: 0;
+  padding: 12px 26px;
+  border-color: var(--material-role-border);
+  background: var(--material-role-panel);
+}
+
+.material-workspace .material-workspace-toolbar > .material-actions:last-child { margin-left: auto; }
+
+.material-workspace .material-workspace-toolbar button {
+  min-height: 38px;
+  padding-inline: 12px;
+  color: var(--material-role-text);
+  background: #292929;
+  border-color: var(--material-role-border);
+}
+
+.material-workspace button:focus-visible, .material-workspace summary:focus-visible {
+  outline: 2px solid var(--material-role-text);
+  outline-offset: 2px;
+}
+
+.material-workspace .material-canvas-viewport {
+  container: material-role-view / inline-size;
+  background: var(--material-role-background);
+}
+
+.material-workspace .material-role-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  padding: 20px 26px 16px;
+  min-width: 0;
+  align-items: stretch;
+}
+
+.material-role-grid .material-role-area {
+  min-height: 224px;
+  padding: 11px 14px 14px;
+  color: var(--material-role-text);
+  background: var(--material-role-panel);
+  border: 1px solid var(--material-role-border);
+  border-radius: 12px;
+}
+
+.material-role-grid .material-director-brief {
+  grid-column: 1 / -1;
+  min-height: 84px;
+  margin-bottom: 4px;
+  padding-bottom: 10px;
+}
+
+.material-role-grid [data-role='storyboarder'] { grid-column: span 2; }
+.material-role-grid :is([data-role='storyboarder'], [data-role='media_producer']) { min-height: 281px; }
+
+.material-role-grid .material-role-card-header {
+  min-height: 35px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--material-role-border);
+  gap: 10px;
+}
+
+.material-role-card-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 23px;
+  overflow-wrap: anywhere;
+}
+
+.material-director-brief .material-role-card-header { justify-content: space-between; padding: 0; border: 0; }
+.material-director-brief .material-role-card-header h3 { font-size: 16px; line-height: 24px; }
+
+.material-role-grid .material-director-objective {
+  margin: 0;
+  color: var(--material-role-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.material-director-progress { margin-top: 4px; color: var(--material-role-muted); font-size: 12px; }
+.material-director-progress summary { width: fit-content; cursor: pointer; }
+.material-role-grid .material-plan-list { gap: 6px; margin: 8px 0; }
+.material-role-grid .material-plan-list li { flex-wrap: wrap; padding-top: 6px; color: var(--material-role-secondary); border-color: var(--material-role-border); }
+.material-role-grid .material-plan-list li > span { color: var(--material-role-muted); }
+
+.material-role-status {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 27px;
+  align-items: center;
+  padding: 3px 8px;
+  gap: 5px;
+  border-radius: 7px;
+  color: var(--material-role-secondary);
+  background: #292929;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 19px;
+  overflow-wrap: anywhere;
+}
+
+.material-role-status > svg { flex: none; }
+.material-role-status[data-tone='warn'] { color: #edc58e; background: #302721; }
+.material-role-status[data-tone='good'] { color: #aed1ba; background: #222a25; }
+
+.material-role-grid .material-role-waiting {
+  margin: 14px 0 0;
+  color: var(--material-role-secondary);
+  font-size: 14px;
+  line-height: 23px;
+}
+
+.material-role-artifact { min-width: 0; padding-top: 12px; }
+.material-role-artifact + .material-role-artifact { margin-top: 10px; border-top: 1px solid var(--material-role-border); }
+.material-role-artifact h4 { margin-bottom: 6px; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.material-role-artifact audio { width: 100%; }
+
+.material-role-media { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.material-role-grid [data-role='storyboarder'] .material-role-media { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.material-role-media .material-image-result { min-width: 0; margin: 0; }
+.material-role-media figcaption { padding: 6px 0 0; color: var(--material-role-secondary); font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
+
+.material-role-artifact :is(img, video), .material-role-frame-state {
+  display: block;
+  width: 100%;
+  height: clamp(96px, 12cqw, 123px);
+  border-radius: 7px;
+  background: var(--material-role-field);
+  object-fit: contain;
+}
+
+.material-role-grid [data-role='storyboarder'] .material-role-media :is(img, .material-role-frame-state) {
+  height: clamp(112px, 15.5cqw, 157px);
+}
+
+.material-role-artifact video { height: auto; max-height: 240px; }
+.material-role-frame-state { display: grid; place-items: center; padding: 12px; color: var(--material-role-muted); text-align: center; }
+
+.material-role-copy {
+  display: -webkit-box;
+  min-height: 95px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--material-role-secondary);
+  font-size: 14px;
+  line-height: 24px;
+}
+
+.material-role-copy[data-expanded='true'] { display: block; max-height: min(60dvh, 760px); overflow: auto; }
+
+.material-role-artifact-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.material-role-artifact-actions > .material-role-status { margin-right: auto; }
+.material-workspace .material-role-artifact-actions button {
+  min-height: 31px;
+  padding: 3px 7px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--material-role-secondary);
+}
+
+.material-workspace .material-role-artifact-actions button:hover { background: #292929; }
+.material-workspace .material-role-artifact-actions button[aria-pressed='true'] { color: var(--material-role-text); border-color: #757575; }
+.material-role-video-review { display: grid; justify-items: start; gap: 12px; padding: 14px 0 0; }
+.material-role-video-review p { margin: 0; color: var(--material-role-secondary); font-size: 14px; }
+.material-workspace .material-role-primary { min-height: 43px; min-width: 144px; color: #161616; border-color: #fff; background: #fff; font-weight: 600; }
+
+.material-video-review-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 20px 26px;
+}
+
+.material-video-review-view {
+  min-height: 647px;
+  padding: 17px 19px 22px;
+  border: 1px solid var(--material-role-border);
+  border-radius: 13px;
+  background: var(--material-role-panel);
+}
+
+.material-video-review-view header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.material-video-review-view h3 { margin: 0; font-size: 24px; font-weight: 700; line-height: 35px; }
+.material-video-review-specs { margin: 8px 0 24px; color: var(--material-role-secondary); font-size: 14px; line-height: 24px; overflow-wrap: anywhere; }
+
+.material-video-review-frames {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+  margin-bottom: 22px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--material-role-border);
+}
+
+.material-video-review-frames figure { min-width: 0; margin: 0; }
+.material-video-review-frames img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; border-radius: 9px; background: var(--material-role-field); }
+.material-video-review-frames figcaption { margin-top: 8px; color: var(--material-role-secondary); font-size: 13px; font-weight: 500; line-height: 22px; }
+
+.material-video-review-details { display: grid; grid-template-columns: minmax(72px, 110px) minmax(0, 1fr); row-gap: 13px; column-gap: 13px; margin: 0; font-size: 13px; line-height: 22px; }
+.material-video-review-details dt { font-weight: 600; }
+.material-video-review-details dd { margin: 0; color: var(--material-role-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.material-video-review-view footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-top: 34px; }
+.material-video-review-view footer button { min-height: 44px; }
+
+.material-role-grid .material-media-candidates { margin-top: 10px; padding: 12px 0 0; border-color: var(--material-role-border); }
+.material-role-grid .material-media-candidates :is(input, textarea, select, fieldset, .material-review, .material-sequence, .material-segment, .material-candidate) { border-color: var(--material-role-border); }
+.material-role-grid .material-media-candidates .material-review { background: #232323; }
+.material-role-grid .material-media-candidates .material-video-boundaries img { max-height: 160px; }
+.material-role-grid .material-media-candidates .material-primary { background: var(--material-role-text); color: #161616; }
+
+.material-workspace .material-canvas-controls {
+  justify-content: flex-end;
+  flex-shrink: 0;
+  padding: 4px 26px;
+  border-color: var(--material-role-border);
+  color: var(--material-role-muted);
+  background: var(--material-role-panel);
+}
+
+.material-workspace[data-scene-picker='true'] .material-manual .fmv-studio-toolbar > label { display: none; }
+.material-workspace[data-scene-picker='true'] .material-manual .fmv-studio-toolbar { justify-content: flex-end; }
+
+@container material-role-view (width < 700px) {
+  .material-workspace .material-role-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding-inline: 16px; }
+}
+
+@container material-role-view (width < 460px) {
+  .material-workspace .material-role-grid { grid-template-columns: minmax(0, 1fr); }
+  .material-role-grid [data-role='storyboarder'] { grid-column: auto; }
+  .material-role-grid .material-role-area { min-height: 112px; }
+}
+
+@media (max-width: 700px) {
+  .material-workspace .material-workspace-toolbar { padding-inline: 16px; }
+  .material-workspace .material-canvas-controls { padding-inline: 16px; }
+  .material-video-review-viewport { padding-inline: 16px; }
+  .material-video-review-view { min-height: 0; }
+}

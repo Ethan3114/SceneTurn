@@ -254,12 +254,12 @@ export const detectOpenFMVAiAgentsOnServer = async (): Promise<OpenFMVAgentInfo[
   }));
 };
 
-export const testOpenFMVAiAgentOnServer = async (agentId: OpenFMVAgentId): Promise<OpenFMVConnectionTestResult> => {
+export const testOpenFMVAiAgentOnServer = async (agentId: string): Promise<OpenFMVConnectionTestResult> => {
   const agent = openfmvAgentDefinitions.find((item) => item.id === agentId);
   if (!agent) return { ok: false, message: 'Unknown CLI' };
   const executable = await findExecutable(agent.bin);
   if (!executable) return { ok: false, message: 'Executable not found in PATH' };
-  const result = await runCommand(executable, testArgsByAgent.get(agentId) || ['--version'], 5000);
+  const result = await runCommand(executable, testArgsByAgent.get(agent.id) || ['--version'], 5000);
   return result.ok || result.output
     ? { ok: true, message: result.output || 'CLI available' }
     : { ok: false, message: result.error || 'CLI test failed' };

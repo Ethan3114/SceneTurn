@@ -25,6 +25,7 @@ from app.services.image_split import split_image
 from app.services.media import resolve_asset_path
 from app.services.projects import get_operation, iso_timestamp, lock_write, payload_digest, project_envelope, record_project_version, require_project, require_revision, require_scene, save_operation
 from app.services.prompts.agent import ROLE_DUTIES, ROLE_TITLES
+from app.services.providers import LEGACY_DEFAULTS
 from app.tools.story_tools import STORY_DESCRIPTIONS, STORY_SCHEMAS, execute_story_tool
 from app.tools.editing_tools import EDITING_DESCRIPTIONS, EDITING_SCHEMAS, execute_editing_tool
 
@@ -929,7 +930,9 @@ def _quote_material_video(session: Session, run: AgentRun, step: AgentStep, proj
     _write_canvas(session, run, project, canvas, data)
     payload = {"sourceNodeId": source["nodeId"], "outputNodeId": output["nodeId"], "prompt": prompt_text,
         "duration": prompt.duration_seconds, "resolution": prompt.resolution, "sceneId": run.scene_id, "operationId": operation_id,
-        "boundaryFrames": boundary, "videoArtifactNodeId": node["id"], "videoArtifactHash": digest}
+        "shotSummary": {"title": title, "action": prompt.action_timeline, "camera": prompt.camera_movement, "sound": prompt.audio_requirement},
+        "boundaryFrames": boundary, "videoArtifactNodeId": node["id"], "videoArtifactHash": digest,
+        "modelProfileId": run.limits_json.get("modelSelection", {}).get("video", LEGACY_DEFAULTS["video"])}
     return quote_generation(session, run.project_id, run.owner_id, payload, settings, manage_transaction=False)
 
 
@@ -1142,6 +1145,10 @@ def execute_tool(session: Session, run: AgentRun, role: str, tool_name: str, arg
         if body.clip_id is not None:
             authorized(run, body.clip_id)
         generation_payload = {**body.model_dump(by_alias=True), "sceneId": run.scene_id, "operationId": service_operation}
+        if run.limits_json.get("modelSelection", {}).get("video"):
+            generation_payload["modelProfileId"] = run.limits_json["modelSelection"]["video"]
+        elif run.limits_json.get("workspace") == "materials":
+            generation_payload["modelProfileId"] = LEGACY_DEFAULTS["video"]
         if isinstance(body, BoundaryGenerationArguments):
             from app.services.video_boundaries import freeze_boundaries
             authorized(run, body.storyboard_node_id)

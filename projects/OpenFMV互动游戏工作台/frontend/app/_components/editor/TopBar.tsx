@@ -1,31 +1,37 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { Check, ChevronDown, Clock3, Download, Film, GitBranch, Globe2, Loader2, MonitorDown, Play, Settings2 } from 'lucide-react';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { Check, ChevronLeft, Clock3, Download, Globe2, Loader2, MessageSquare, MonitorDown, Play, Settings, Upload } from 'lucide-react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useProjectSessionStore } from '@/app/_features/project-session/store';
 import { useRuntimeSessionStore } from '@/app/_features/runtime-session/store';
 import { useClickOutside } from '@/app/_hooks/useClickOutside';
-import { useEditorStore } from '@/app/_store/useEditorStore';
+import { isAssetWorkspaceOpen, useEditorStore } from '@/app/_store/useEditorStore';
 import { usePlayerStore } from '@/app/_store/usePlayerStore';
 import { getLocalizedPath, stripLocaleFromPath } from '@/app/_utils/localePaths';
 import { getEntryNodeId } from '@/app/_utils/graphRuntime';
-import { Header } from '../ui/Header';
-import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import ProjectTransfers from '@/app/_features/project-transfers/ProjectTransfers';
+import { useMaterialWorkspace } from '@/app/_features/material-workspace/store';
+import SceneTurnMark from '@/app/_components/workbench/SceneTurnMark';
+import { ProjectChatControl } from '@/app/_components/local/AppWindowFrame';
+import { syncProjectSession } from '@/app/_utils/syncProjectSession';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../ui/dialog';
+import './material-shell.css';
 
 const AUTOSAVE_DELAY_MS = 1200;
 
 export default function TopBar() {
   const locale = useLocale();
   const t = useTranslations('editor');
+  const assetsT = useTranslations('assets');
+  const navigationT = useTranslations('navigation');
+  const projectsT = useTranslations('projects');
+  const projectChat = useContext(ProjectChatControl);
   const {
     project,
     projectId,
@@ -70,6 +76,7 @@ export default function TopBar() {
   const startRuntimeSession = useRuntimeSessionStore((state) => state.start);
   const searchParams = useSearchParams();
   const pathname = usePathname();
+  const router = useRouter();
   const routeProjectId = searchParams.get('id');
   const initialTitleFromQuery = searchParams.get('title')?.trim();
   const [isExporting, setIsExporting] = useState(false);
@@ -77,16 +84,25 @@ export default function TopBar() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [isTransferOpen, setIsTransferOpen] = useState(false);
+  const [projectActionPending, setProjectActionPending] = useState(false);
+  const [projectActionError, setProjectActionError] = useState('');
   const settingsRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const exportStatusTimerRef = useRef<number | null>(null);
   const navigationParams = new URLSearchParams(searchParams.toString());
+  const openAssetsFromRoute = navigationParams.get('workspace') === 'assets';
+  if (openAssetsFromRoute) navigationParams.delete('workspace');
   if (!navigationParams.get('id') && projectId) navigationParams.set('id', projectId);
   const queryString = navigationParams.toString();
   const querySuffix = queryString ? `?${queryString}` : '';
   const isNodeMode = stripLocaleFromPath(pathname).startsWith('/nodes');
+  const showAssetWorkspace = useEditorStore(isAssetWorkspaceOpen) && !isNodeMode;
+  const assetWorkspaceView = useEditorStore((state) => state.assetWorkspaceView);
+  const assetChatOpen = useMaterialWorkspace((state) => state.chatOpen);
   const blueprintHref = getLocalizedPath(locale, `/editor${querySuffix}`);
   const nodesHref = getLocalizedPath(locale, `/nodes${querySuffix}`);
+  const activeView = showAssetWorkspace ? 'assets' : isNodeMode ? 'timeline' : 'story';
+  const chatOpen = showAssetWorkspace ? assetWorkspaceView === 'generate' && assetChatOpen : projectChat?.open ?? false;
   const lastSaved = project?.updatedAt ? new Date(project.updatedAt) : null;
 
   useClickOutside(settingsRef as React.RefObject<HTMLElement>, () => {
@@ -115,6 +131,14 @@ export default function TopBar() {
   }, [initialTitleFromQuery, routeProjectId, setTitle, title]);
 
   useEffect(() => {
+    if (isNodeMode || !openAssetsFromRoute) return;
+    const editor = useEditorStore.getState();
+    editor.setTargetNodeIdForAsset(null);
+    editor.setAssetPickerOpen(true);
+    router.replace(blueprintHref, { scroll: false });
+  }, [blueprintHref, isNodeMode, openAssetsFromRoute, router]);
+
+  useEffect(() => {
     return () => {
       if (exportStatusTimerRef.current) window.clearTimeout(exportStatusTimerRef.current);
     };
@@ -138,12 +162,12 @@ export default function TopBar() {
 
   const isProjectSaving = status === 'saving';
   const saveStatus = !autoSaveEnabled
-    ? { label: t('autoSavePaused'), icon: Clock3, className: 'text-openfmv-muted', spin: false }
+    ? { label: t('autoSavePaused'), icon: Clock3, spin: false }
     : isProjectSaving
-      ? { label: t('saving'), icon: Loader2, className: 'text-sky-200', spin: true }
+      ? { label: t('saving'), icon: Loader2, spin: true }
       : dirty
-        ? { label: t('autoSaving'), icon: Clock3, className: 'text-orange-200', spin: false }
-        : { label: t('autoSaved'), icon: Check, className: 'text-emerald-200', spin: false };
+        ? { label: t('autoSaving'), icon: Clock3, spin: false }
+        : { label: t('autoSaved'), icon: Check, spin: false };
   const SaveStatusIcon = saveStatus.icon;
 
   const handlePlay = () => {
@@ -199,47 +223,85 @@ export default function TopBar() {
     }
   };
 
+  async function runProjectAction(action: () => void) {
+    if (projectActionPending) return;
+    setProjectActionPending(true);
+    setProjectActionError('');
+    try {
+      if (showAssetWorkspace) {
+        await useMaterialWorkspace.getState().savePending();
+        if (projectId) await syncProjectSession(projectId);
+      }
+      await flushPendingChanges();
+      action();
+    } catch (error) {
+      setProjectActionError(error instanceof Error ? error.message : t('saveLocalFailed'));
+    } finally {
+      setProjectActionPending(false);
+    }
+  }
+
+  function openProjectView(view: typeof activeView) {
+    if (view === activeView) return;
+    void runProjectAction(() => {
+      const editor = useEditorStore.getState();
+      if (view === 'assets') {
+        if (isNodeMode) {
+          navigationParams.set('workspace', 'assets');
+          router.push(getLocalizedPath(locale, `/editor?${navigationParams.toString()}`));
+        } else {
+          editor.setTargetNodeIdForAsset(null);
+          editor.setAssetPickerOpen(true);
+        }
+        return;
+      }
+      if (showAssetWorkspace) editor.setAssetPickerOpen(false);
+      if (view === 'timeline') router.push(nodesHref);
+      else if (isNodeMode) router.push(blueprintHref);
+    });
+  }
+
+  function navigateAway(target: string) {
+    void runProjectAction(() => {
+      if (showAssetWorkspace) useEditorStore.getState().setAssetPickerOpen(false);
+      router.push(target);
+    });
+  }
+
+  function toggleChat() {
+    if (!showAssetWorkspace) {
+      projectChat?.toggle();
+      return;
+    }
+    if (assetWorkspaceView === 'generate') {
+      useMaterialWorkspace.setState({ chatOpen: !assetChatOpen });
+      return;
+    }
+    void runProjectAction(() => useEditorStore.getState().setAssetWorkspaceView('generate'));
+  }
+
   return (
-    <Header position="absolute" className="h-14 border-b border-white/[0.06] bg-black/24 px-3 shadow-[0_16px_44px_rgba(0,0,0,0.24)]">
-      <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-        <div className="pointer-events-auto flex min-w-0 items-center">
-          <div className="flex h-openfmv-control min-w-0 items-center gap-2 rounded-openfmv-pill border border-white/10 bg-white/[0.075] px-3 shadow-[0_10px_28px_rgba(0,0,0,0.18)] backdrop-blur-2xl">
-            <div className="h-6 w-6 shrink-0 rounded-openfmv-pill bg-[radial-gradient(circle_at_30%_24%,#fff7ad,transparent_31%),radial-gradient(circle_at_66%_25%,#7dd3fc,transparent_34%),radial-gradient(circle_at_42%_70%,#c084fc,transparent_38%),linear-gradient(135deg,#f97316,#14b8a6)] shadow-[0_0_16px_rgba(125,211,252,0.18)]" />
-            <Input type="text" value={title} onChange={(event) => setTitle(event.target.value)} className="h-auto w-32 min-w-0 border-0 bg-transparent px-0 py-0 text-sm font-semibold tracking-normal text-white shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 md:w-56" />
-            <div className="h-5 w-px shrink-0 bg-white/10" />
-            <div className="flex h-openfmv-tool w-openfmv-tool shrink-0 items-center justify-center rounded-openfmv-tool bg-black/20" title={lastSaved ? t('lastSaved', { time: lastSaved.toLocaleTimeString() }) : t('autoSaveEnabled')} suppressHydrationWarning>
-              <SaveStatusIcon size={14} className={`${saveStatus.className} ${saveStatus.spin ? 'animate-spin' : ''}`} />
-            </div>
-          </div>
-        </div>
-
-        <nav className="pointer-events-auto flex h-openfmv-control items-center gap-1 rounded-openfmv-pill border border-white/10 bg-white/[0.075] p-1 shadow-[0_10px_28px_rgba(0,0,0,0.18)] backdrop-blur-2xl">
-          <Link href={blueprintHref} onClick={flushProjectSession} className={`inline-flex h-openfmv-tool min-w-[94px] items-center justify-center gap-1.5 rounded-openfmv-pill px-3 text-xs font-bold transition ${isNodeMode ? 'text-openfmv-sub hover:bg-white/[0.08] hover:text-white' : 'bg-white/[0.18] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]'}`} title={t('blueprintMode')}>
-            <GitBranch size={13} />
-            <span className="hidden sm:inline">{t('blueprintMode')}</span>
-          </Link>
-          <Link href={nodesHref} onClick={flushProjectSession} className={`inline-flex h-openfmv-tool min-w-[88px] items-center justify-center gap-1.5 rounded-openfmv-pill px-3 text-xs font-bold transition ${isNodeMode ? 'bg-white/[0.18] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]' : 'text-openfmv-sub hover:bg-white/[0.08] hover:text-white'}`} title={t('nodeMode')}>
-            <Film size={13} />
-            <span className="hidden sm:inline">{t('nodeMode')}</span>
-          </Link>
-        </nav>
-
-        <div className="pointer-events-auto flex min-w-0 items-center justify-end">
-          <div className="flex h-openfmv-control items-center gap-1 rounded-openfmv-pill border border-white/10 bg-white/[0.075] p-1 shadow-[0_10px_28px_rgba(0,0,0,0.18)] backdrop-blur-2xl">
+    <>
+      <header className="scene-material-topbar" data-testid={showAssetWorkspace ? 'material-project-nav' : undefined}>
+        <div className="scene-material-project">
+          <div className="scene-material-brand"><SceneTurnMark size={26} monochrome /><span>SceneTurn</span></div>
+          <button type="button" className="scene-material-project-back" aria-label={locale === 'zh-CN' ? '我的项目' : 'My projects'} onClick={() => navigateAway(getLocalizedPath(locale, '/projects'))} disabled={projectActionPending}><ChevronLeft size={17} aria-hidden="true" /></button>
+          <div className="scene-material-project-name">
+            <Input type="text" aria-label={projectsT('projectName')} value={title} onChange={(event) => setTitle(event.target.value)} disabled={projectActionPending} />
             <div className="relative" ref={settingsRef}>
-              <Button onClick={() => setIsSettingsOpen((value) => !value)} variant="icon" size="compactIcon" className={`border-0 bg-transparent shadow-none ${isSettingsOpen ? 'text-openfmv-accent' : 'text-openfmv-sub'}`} title={t('settings')}>
-                <Settings2 size={15} />
-              </Button>
+              <button type="button" className="scene-material-save-status" onClick={() => setIsSettingsOpen((value) => !value)} aria-expanded={isSettingsOpen} aria-label={`${saveStatus.label} · ${t('settings')}`} title={lastSaved ? t('lastSaved', { time: lastSaved.toLocaleTimeString() }) : t('settings')} suppressHydrationWarning>
+                <span>{saveStatus.label}</span><SaveStatusIcon size={12} className={saveStatus.spin ? 'animate-spin' : undefined} aria-hidden="true" />
+              </button>
 
               {isSettingsOpen && (
-                <div className="absolute right-0 top-full z-50 mt-3 w-72 overflow-hidden rounded-openfmv-panel border border-white/15 bg-[#15171c]/95 p-1.5 shadow-[0_24px_80px_rgba(0,0,0,0.56)] ring-1 ring-black/40 backdrop-blur-xl">
+                <div className="scene-project-menu absolute left-0 top-full z-50 mt-3 w-72 overflow-hidden rounded-[10px] border border-white/15 bg-[#191919] p-1.5 shadow-[0_24px_80px_rgba(0,0,0,0.56)]">
                   <div className="px-3 py-3">
                     <button type="button" role="switch" aria-checked={autoSaveEnabled} onClick={() => setAutoSaveEnabled(!autoSaveEnabled)} className="flex h-openfmv-editor w-full items-center justify-between gap-3 rounded-openfmv-control border border-white/15 bg-white/[0.075] px-3 text-left transition hover:border-white/25 hover:bg-white/[0.10]" title={autoSaveEnabled ? t('pauseAutoSave') : t('enableAutoSave')}>
                       <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-openfmv-text">
                         <span className="truncate">{t('autoSave')}</span>
-                        <SaveStatusIcon size={13} className={`shrink-0 ${saveStatus.className} ${saveStatus.spin ? 'animate-spin' : ''}`} />
+                        <SaveStatusIcon size={13} className={saveStatus.spin ? 'shrink-0 animate-spin' : 'shrink-0'} aria-hidden="true" />
                       </span>
-                      <span aria-hidden="true" className={`flex h-6 w-11 shrink-0 items-center rounded-openfmv-pill border p-0.5 transition ${autoSaveEnabled ? 'border-emerald-300/40 bg-emerald-400/25' : 'border-white/15 bg-white/[0.08]'}`}>
+                      <span aria-hidden="true" className={`flex h-6 w-11 shrink-0 items-center rounded-openfmv-pill border p-0.5 transition ${autoSaveEnabled ? 'border-white/40 bg-white/25' : 'border-white/15 bg-white/[0.08]'}`}>
                         <span className={`h-5 w-5 rounded-openfmv-pill bg-white shadow-[0_3px_10px_rgba(0,0,0,0.35)] transition-transform ${autoSaveEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                       </span>
                     </button>
@@ -261,31 +323,30 @@ export default function TopBar() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
 
-            <Button onClick={handlePlay} data-testid="project-play-current" aria-label={t('preview')} title={t('preview')} size="pill" className="h-openfmv-tool bg-white/[0.16] px-3 text-xs font-bold text-white shadow-none hover:bg-white/[0.22]">
-              <Play size={13} fill="currentColor" />
-              <span className="hidden sm:inline">{t('preview')}</span>
-            </Button>
+        <nav className="scene-material-project-tabs" aria-label="项目视图">
+          <button type="button" aria-current={activeView === 'story' ? 'page' : undefined} disabled={projectActionPending} onClick={() => openProjectView('story')}>{locale === 'zh-CN' ? '剧情编排' : t('blueprintMode')}</button>
+          <button type="button" aria-current={activeView === 'timeline' ? 'page' : undefined} disabled={projectActionPending} onClick={() => openProjectView('timeline')}>{locale === 'zh-CN' ? '时间线' : t('nodeMode')}</button>
+          <button type="button" aria-current={activeView === 'assets' ? 'page' : undefined} disabled={projectActionPending} onClick={() => openProjectView('assets')}>{assetsT('title')}</button>
+        </nav>
 
-            <div className="relative" ref={exportMenuRef}>
-              <Button
-                onClick={() => setIsExportMenuOpen((value) => !value)}
-                data-testid="project-export-menu"
-                aria-label={t('export')}
-                disabled={isExporting}
-                variant="outline"
-                size="pill"
-                aria-haspopup="menu"
-                aria-expanded={isExportMenuOpen}
-                className="h-openfmv-tool rounded-openfmv-control border-0 bg-transparent px-2.5 text-xs font-bold text-openfmv-sub shadow-none hover:bg-white/[0.10] hover:text-white"
-              >
-                {isExporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                <span className="hidden sm:inline">{t('export')}</span>
-                <ChevronDown size={12} className={`transition-transform ${isExportMenuOpen ? 'rotate-180' : ''}`} />
-              </Button>
+        <div className="scene-material-project-actions">
+          {(projectChat || showAssetWorkspace) && <button type="button" className="scene-project-chat-toggle" aria-pressed={chatOpen} aria-label={navigationT('askAi')} onClick={toggleChat} disabled={!projectId || projectActionPending}><MessageSquare size={16} aria-hidden="true" /><span>{navigationT('askAi')}</span></button>}
+          <button type="button" data-testid="project-play-current" aria-label={t('preview')} onClick={() => { void runProjectAction(handlePlay); }} disabled={projectActionPending}><Play size={15} aria-hidden="true" /><span>{t('preview')}</span></button>
+
+          <div className="relative" ref={exportMenuRef}>
+            <button type="button" data-testid="project-export-menu" aria-label={t('export')} aria-haspopup={showAssetWorkspace ? 'dialog' : 'menu'} aria-expanded={showAssetWorkspace ? isTransferOpen : isExportMenuOpen} disabled={isExporting || projectActionPending} onClick={() => {
+              if (showAssetWorkspace) void runProjectAction(() => setIsTransferOpen(true));
+              else setIsExportMenuOpen((value) => !value);
+            }}>
+              {isExporting ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Upload size={16} aria-hidden="true" />}
+              <span>{t('export')}</span>
+            </button>
 
               {isExportMenuOpen && (
-                <div role="menu" className="absolute right-0 top-full z-50 mt-3 w-64 overflow-hidden rounded-openfmv-panel border border-white/15 bg-[#15171c]/95 p-1.5 shadow-[0_24px_80px_rgba(0,0,0,0.56)] ring-1 ring-black/40 backdrop-blur-xl">
+                <div role="menu" className="scene-project-menu absolute right-0 top-full z-50 mt-3 w-64 overflow-hidden rounded-[10px] border border-white/15 bg-[#191919] p-1.5 shadow-[0_24px_80px_rgba(0,0,0,0.56)]">
                   <button type="button" role="menuitem" onClick={() => void handleExport()} className="flex h-openfmv-control w-full items-center gap-2.5 rounded-openfmv-control px-2.5 text-left text-sm font-semibold text-openfmv-text transition hover:bg-white/[0.075] hover:text-white">
                     <Globe2 size={15} />
                     <span className="min-w-0 flex-1 truncate">{t('exportWebPackage')}</span>
@@ -299,16 +360,13 @@ export default function TopBar() {
                   </button>
                 </div>
               )}
-            </div>
           </div>
-          {exportStatus && (
-            <div className="absolute right-4 top-[58px] z-50 max-w-[360px] truncate rounded-openfmv-control border border-emerald-300/20 bg-black/72 px-3 py-2 text-xs font-medium text-emerald-100 shadow-[0_18px_50px_rgba(0,0,0,0.35)] backdrop-blur-2xl" title={exportStatus}>
-              {exportStatus}
-            </div>
-          )}
+          <button type="button" title="模型设置" aria-label="模型设置" onClick={() => navigateAway(getLocalizedPath(locale, projectId ? `/settings/models?projectId=${encodeURIComponent(projectId)}` : '/settings/models'))} disabled={projectActionPending}><Settings size={17} aria-hidden="true" /></button>
         </div>
-      </div>
-      <Dialog open={isTransferOpen} onOpenChange={setIsTransferOpen}><DialogContent className="fmv-transfer-dialog max-w-[820px]"><header><DialogTitle>项目备份与游戏导出</DialogTitle><button type="button" onClick={() => setIsTransferOpen(false)}>关闭导出窗口</button></header><DialogDescription>保存完整项目，或核对并导出当前游戏版本。</DialogDescription>{projectId && <ProjectTransfers projectId={projectId} />}</DialogContent></Dialog>
-    </Header>
+        {projectActionError && <p className="scene-material-nav-error" role="alert">{projectActionError}</p>}
+        {exportStatus && <p className="scene-material-nav-error scene-project-export-status" role="status">{exportStatus}</p>}
+      </header>
+    <Dialog open={isTransferOpen} onOpenChange={setIsTransferOpen}><DialogContent className="fmv-transfer-dialog max-w-[820px]"><header><DialogTitle>项目备份与游戏导出</DialogTitle><button type="button" onClick={() => setIsTransferOpen(false)}>关闭导出窗口</button></header><DialogDescription>保存完整项目，或核对并导出当前游戏版本。</DialogDescription>{projectId && <ProjectTransfers projectId={projectId} />}</DialogContent></Dialog>
+    </>
   );
 }

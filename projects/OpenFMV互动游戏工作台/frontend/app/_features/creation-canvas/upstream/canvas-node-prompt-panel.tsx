@@ -25,13 +25,18 @@ export type CanvasNodePromptPanelProps = {
   onStartReferenceSelection: (nodeId: string) => void;
 };
 
-export function CanvasVideoSettings({ node, model, onConfigChange }: Pick<CanvasNodePromptPanelProps, 'node' | 'model' | 'onConfigChange'>) {
+export function CanvasVideoSettings({ node, model, onConfigChange, resolutions, durationRange, inline = false, ratios, ratio }: Pick<CanvasNodePromptPanelProps, 'node' | 'model' | 'onConfigChange'> & { resolutions?: string[]; durationRange?: [number, number]; inline?: boolean; ratios?: string[]; ratio?: string }) {
   const change = (patch: Partial<CanvasNodeMetadata>) => onConfigChange(node.id, patch);
-  return <div className="fmv-node-video-settings" data-canvas-no-zoom>
-    <label>模型<span>{model || '请在生成设置中配置 Wan'}</span></label>
-    <label>清晰度<select aria-label="清晰度" value={node.metadata?.vquality || '720P'} onChange={(event) => change({ vquality: event.target.value })}>{['480P', '720P', '1080P'].map((value) => <option key={value}>{value}</option>)}</select></label>
-    <label>视频时长<select aria-label="视频时长" value={node.metadata?.seconds || '5'} onChange={(event) => change({ seconds: event.target.value })}>{[3, 5, 8, 10, 15].map((value) => <option value={value} key={value}>{value} 秒</option>)}</select></label>
-    <p>数量 1 个。报价将展示本次实际生效的全部参数。</p>
+  const sizes = resolutions ?? ['480P', '720P', '1080P'];
+  const durations = durationRange ? Array.from({ length: durationRange[1] - durationRange[0] + 1 }, (_, index) => durationRange[0] + index) : [3, 5, 8, 10, 15];
+  const quality = node.metadata?.vquality || '720P';
+  const seconds = Number(node.metadata?.seconds || 5);
+  const fieldClass = inline ? 'canvas-config-field' : undefined;
+  return <div className={inline ? 'canvas-config-controls canvas-config-controls--video' : 'fmv-node-video-settings'} data-canvas-no-zoom>
+    {!inline && <label>模型<span>{model || '请在模型设置中配置服务'}</span></label>}
+    <label className={fieldClass}><span>清晰度</span><select aria-label="清晰度" value={sizes.includes(quality) ? quality : ''} onChange={(event) => change({ vquality: event.target.value })}>{!sizes.includes(quality) && <option value="" disabled>请选择支持的清晰度</option>}{sizes.map((value) => <option key={value}>{value}</option>)}</select></label>
+    <label className={fieldClass}><span>视频时长</span><select aria-label="视频时长" value={durations.includes(seconds) ? seconds : ''} onChange={(event) => change({ seconds: event.target.value })}>{!durations.includes(seconds) && <option value="" disabled>请选择支持的时长</option>}{durations.map((value) => <option value={value} key={value}>{value} 秒</option>)}</select></label>
+    {ratios && <label className={fieldClass}><span>视频比例</span><select aria-label="视频比例" value={ratio} disabled={ratios.length < 2} onChange={(event) => change({ videoRatio: event.target.value })}>{ratios.map((value) => <option key={value} value={value}>{value === 'adaptive' ? '自适应' : value}</option>)}</select></label>}
   </div>;
 }
 

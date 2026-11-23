@@ -215,6 +215,42 @@ def test_import_missing_media_is_reported_before_confirmation(transfer_service, 
         assert len(client.get("/projects").json()["projects"]) == 1
 
 
+def test_publication_only_exposes_confirmed_fixed_version_and_selected_media(transfer_service, sample_video):
+    with (closing(registered_client(transfer_service)[0]) as owner,
+          closing(registered_client(transfer_service)[0]) as other,
+          transfer_service.client() as guest):
+        source, asset = actual_project(owner, sample_video)
+        project_id = source["project"]["id"]
+        version = confirm(owner, export(owner, project_id, source["revision"], "game"))
+        settings = f"/transfers/{version['id']}/publication"
+        choice = {"published": True, "title": "公开试玩", "description": "获准发布的固定版本", "trailerAssetId": asset["id"]}
+        assert guest.get("/publications").json() == {"publications": []}
+        assert other.put(settings, json=choice).status_code == 404
+        assert owner.put(settings, json={**choice, "posterAssetId": asset["id"]}).status_code == 404
+        published = owner.put(settings, json=choice)
+        assert published.status_code == 200, published.text
+        current = published.json()["publication"]
+        detail = guest.get(f"/publications/{current['slug']}").json()["publication"]
+        assert guest.get("/publications").json()["publications"] == [detail]
+        assert "trailerAssetId" not in detail
+        assert resource(guest, detail["trailerUrl"]).content == sample_video.read_bytes()
+        assert guest.get(detail["trailerUrl"].removeprefix("/api/v1"), headers={"Range": "bytes=0-19"}).status_code == 206
+        player = resource(guest, detail["playUrl"])
+        assert player.status_code == 200
+        assert "sandbox allow-scripts" in player.headers["content-security-policy"]
+        assert "这份创作依据只保留在完整工程中" not in player.text
+        assert resource(guest, version["downloadUrl"]).status_code == 401
+        assert guest.get(f"/assets/{asset['id']}/content").status_code == 401
+        transfer_service.stop()
+        transfer_service.start(worker_enabled=True)
+        assert guest.get(f"/publications/{current['slug']}").json()["publication"] == detail
+        assert owner.put(settings, json={"published": False}).status_code == 200
+        assert resource(guest, detail["playUrl"]).status_code == 404
+        assert resource(guest, detail["trailerUrl"]).status_code == 404
+        assert guest.get("/publications").json() == {"publications": []}
+        assert resource(owner, version["previewUrl"]).status_code == 200
+
+
 @pytest.mark.parametrize("unsafe", ["parent", "symlink", "manifest"])
 def test_invalid_archives_fail_with_persistent_errors(transfer_service, unsafe):
     with closing(registered_client(transfer_service)[0]) as client:

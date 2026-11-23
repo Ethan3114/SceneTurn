@@ -60,6 +60,8 @@ export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[],
 }
 
 export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    const source = nodes.find((node) => node.id === nodeId);
+    if (source?.type === CanvasNodeType.Text && source.metadata?.generationMode === 'text') return getContextInputNodes(nodeId, nodes, connections);
     const configInputs = getConnectedConfigInputNodes(nodeId, nodes, connections);
     if (configInputs.length) return configInputs;
     const ownInputs = getContextInputNodes(nodeId, nodes, connections);
@@ -70,14 +72,26 @@ export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData
 function getContextInputNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     return connections
         .filter((connection) => connection.toNodeId === nodeId)
-        .map((connection) => nodes.find((node) => node.id === connection.fromNodeId))
+        .map((connection) => {
+            const node = nodes.find((item) => item.id === connection.fromNodeId);
+            return node && resolveCanvasImageOutput(node, nodes, connections);
+        })
         .filter((node): node is CanvasNodeData => Boolean(node && isCanvasReferenceNode(node, nodes)));
 }
 
 function getConnectedConfigInputNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    if (nodes.some((node) => node.id === nodeId && node.type === CanvasNodeType.Config)) return [];
     const configConnection = connections.find((connection) => connection.fromNodeId === nodeId && nodes.find((node) => node.id === connection.toNodeId)?.type === CanvasNodeType.Config);
     if (!configConnection) return [];
     return getContextInputNodes(configConnection.toNodeId, nodes, connections).filter((node) => node.id !== nodeId);
+}
+
+export function resolveCanvasImageOutput(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]): CanvasNodeData {
+    if (node.type !== CanvasNodeType.Config || node.metadata?.generationMode !== "image") return node;
+    const outputId = node.metadata.outputNodeId;
+    if (!outputId || !connections.some((edge) => edge.fromNodeId === node.id && edge.toNodeId === outputId)) return node;
+    const output = nodes.find((item) => item.id === outputId && item.type === CanvasNodeType.Image && item.metadata?.storageKey);
+    return output ? { ...output, id: node.id, title: node.title } : node;
 }
 
 function hasGroupResources(node: CanvasNodeData, nodes: CanvasNodeData[]) {
@@ -100,7 +114,7 @@ export function getGroupResourceNodes(groupId: string, nodes: CanvasNodeData[]) 
 function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
     const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0 };
     return nodes.flatMap((node): CanvasResourceReference[] => {
-        const kind = resourceKind(node);
+        const kind = getCanvasResourceKind(node);
         if (!kind) return [];
         const resource = getNodeDefinition(node.type)?.resource?.(node);
         const index = counts[kind]++;
@@ -128,7 +142,7 @@ function labelForKind(kind: CanvasResourceKind, index: number) {
 }
 
 function isResourceNode(node: CanvasNodeData) {
-    return Boolean(resourceKind(node));
+    return Boolean(getCanvasResourceKind(node));
 }
 
 function resourceText(node: CanvasNodeData): string | undefined {
@@ -137,7 +151,7 @@ function resourceText(node: CanvasNodeData): string | undefined {
     return resource?.kind === "text" ? resource.text : undefined;
 }
 
-function resourceKind(node: CanvasNodeData): CanvasResourceKind | null {
+export function getCanvasResourceKind(node: CanvasNodeData): CanvasResourceKind | null {
     if (node.type === CanvasNodeType.Image && node.metadata?.content) return "image";
     if (node.type === CanvasNodeType.Video && node.metadata?.content) return "video";
     if (node.type === CanvasNodeType.Audio && node.metadata?.content) return "audio";

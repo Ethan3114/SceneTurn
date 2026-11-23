@@ -116,11 +116,13 @@ def render_evidence(records: list[dict], *, legacy_ui_label: bool = False, stage
 
 class EvidenceStore:
     def __init__(self, root: Path, stage: str = "阶段2-1"):
-        if stage not in {"阶段2-1", "阶段2-3", "阶段2-4"}:
+        directories = {"阶段2-1": "smoke", "阶段2-3": "smoke-media-candidates",
+                       "阶段2-4": "smoke-project-transfers", "阶段3-1": "sceneturn-smoke"}
+        if stage not in directories:
             raise ValueError("不支持的媒体验证阶段")
         self.root = root.resolve()
         self.stage = stage
-        self.registry_path = self.root / ".intermediate" / {"阶段2-1": "smoke", "阶段2-3": "smoke-media-candidates", "阶段2-4": "smoke-project-transfers"}[stage] / "registry.json"
+        self.registry_path = self.root / ".intermediate" / directories[stage] / "registry.json"
         self.evidence_path = self.root / "docs" / "evidence" / stage / "冒烟记录.md"
 
     def directory(self, record: dict) -> Path:

@@ -1,0 +1,201 @@
+.section {
+  background: #080808;
+  color: #fff;
+  padding: 76px 0 100px;
+  scroll-margin-top: var(--st-home-header-height, 76px);
+}
+
+.inner {
+  width: min(1280px, calc(100% - 2 * var(--home-gutter, clamp(28px, 5.5556vw, 80px))));
+  margin-inline: auto;
+}
+
+.heading {
+  margin: 0;
+  font-size: clamp(2.25rem, 3.27vw, 2.9375rem);
+  font-weight: 700;
+  line-height: 1.22;
+}
+
+.introduction {
+  margin: 17px 0 0;
+  color: #c7c7c7;
+  font-size: 1.125rem;
+  line-height: 1.67;
+}
+
+.stage {
+  position: relative;
+  display: grid;
+  align-items: center;
+  min-height: 470px;
+  margin-top: 58px;
+  padding: 46px 48px;
+  isolation: isolate;
+  overflow: hidden;
+  background: #161616;
+  border: 1px solid #3c3c3c;
+  border-radius: 18px;
+}
+
+.artwork {
+  z-index: -2;
+  object-fit: cover;
+  object-position: center;
+}
+
+.shade {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgb(8 8 8 / 65%), transparent 33%),
+    linear-gradient(90deg, rgb(8 8 8 / 97%), rgb(8 8 8 / 90%) 38%, rgb(8 8 8 / 32%) 68%, transparent);
+  pointer-events: none;
+}
+
+.stage:not([data-phase='intro']) {
+  padding-top: 84px;
+  animation: enter-scene 200ms ease-out;
+}
+
+.scene {
+  max-width: 38rem;
+}
+
+.storyTitle {
+  margin: 0 0 20px;
+  color: #e8e8e8;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.sceneTitle {
+  margin: 0;
+  font-size: clamp(2.25rem, 3.48vw, 3.125rem);
+  font-weight: 700;
+  line-height: 1.24;
+}
+
+.sceneDescription {
+  max-width: 36rem;
+  margin: 16px 0 25px;
+  color: #f7f7f7;
+  font-size: 1.125rem;
+  line-height: 1.65;
+}
+
+.primary,
+.secondary,
+.back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 52px;
+  padding: 10px 21px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.primary {
+  min-width: 142px;
+  background: #fff;
+  color: #161616;
+}
+
+.primary:hover {
+  background: #dedede;
+}
+
+.secondary,
+.back {
+  border-color: #7c7c7c;
+  background: #161616;
+  color: #fff;
+}
+
+.secondary:hover,
+.back:hover {
+  background: #303030;
+}
+
+.back {
+  position: absolute;
+  inset-block-start: 20px;
+  inset-inline-end: 24px;
+  min-height: 44px;
+  padding: 7px 15px;
+}
+
+.primary:focus-visible,
+.secondary:focus-visible,
+.back:focus-visible,
+.sceneTitle:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 4px;
+}
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.choices button {
+  width: 100%;
+}
+
+.hint {
+  margin: 14px 0 0;
+  color: #e0e0e0;
+  font-size: .9375rem;
+  line-height: 1.5;
+}
+
+@keyframes enter-scene {
+  from { opacity: .72; }
+  to { opacity: 1; }
+}
+
+@media (max-width: 760px) {
+  .section {
+    padding-block: 58px 72px;
+  }
+
+  .stage {
+    margin-top: 36px;
+    padding: 36px 26px;
+  }
+
+  .shade {
+    background:
+      linear-gradient(180deg, rgb(8 8 8 / 65%), transparent 33%),
+      linear-gradient(90deg, rgb(8 8 8 / 97%), rgb(8 8 8 / 68%) 75%);
+  }
+
+  .back {
+    inset-inline-end: 16px;
+  }
+
+  .choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage:not([data-phase='intro']) {
+    animation: none;
+  }
+
+  .primary,
+  .secondary,
+  .back {
+    transition: none;
+  }
+}

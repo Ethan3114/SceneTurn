@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { enterManualStudio } from './manual-studio';
+import { addCanvasNode, createProjectFromList, enterManualStudio } from './manual-studio';
 
 test.use({ viewport: { width: 1440, height: 1000 } });
 
@@ -14,10 +14,9 @@ async function createProject(page: Page, label: string) {
   await page.getByTestId('auth-password').fill(crypto.randomUUID());
   await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill(label);
-  await page.getByTestId('project-create').click();
+  await createProjectFromList(page, label);
   await enterManualStudio(page);
-  await expect(page.getByTestId('canvas-add-config')).toBeEnabled();
+  await expect(page.getByTestId('canvas-add-node')).toBeEnabled();
   const id = new URL(page.url()).searchParams.get('id');
   if (!id) throw new Error('真实项目地址没有项目标识');
   return id;
@@ -48,36 +47,57 @@ async function connectNodes(page: Page, from: string, to: string) {
   await page.mouse.move(end.x + end.width / 2, end.y + end.height / 2, { steps: 12 }); await page.mouse.up();
 }
 
-test('生成分类在Config内部编辑，文字计费与图片配置保持真实状态', async ({ page }) => {
+test('独立卡片编辑分镜，图片规格与文字计费状态保存后可恢复', async ({ page }) => {
   let paidRequests = 0;
   page.on('request', (request) => { if (request.method() === 'POST' && (/\/generations\/[^/]+\/confirm$/.test(new URL(request.url()).pathname) || new URL(request.url()).pathname.endsWith('/text-generations'))) paidRequests++; });
   const projectId = await createProject(page, '节点内功能分类验证');
-  await page.getByTestId('canvas-add-config').click();
-  const config = page.getByTestId('canvas-node').last();
+  const script = await addCanvasNode(page, 'script');
+  const scriptId = await script.getAttribute('data-node-id');
+  await expect(script.getByTestId('text-generation-start')).toBeDisabled();
+  await expect(script.getByTestId('text-service-status')).toContainText(/尚未配置|尚未开放/);
+  await script.getByRole('button', { name: '自己编写分镜脚本' }).click();
+  const table = page.getByTestId('canvas-script-table');
+  await table.getByLabel('镜头 1 名称').fill('清晨树林');
+  await table.getByLabel('镜头 1 时长（秒）').fill('8');
+  await table.getByTestId('canvas-script-add-row').click();
+  await expect(table.getByTestId('canvas-script-row')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await expect(table).toHaveCount(0);
+  const config = await addCanvasNode(page, 'image');
   const id = await config.getAttribute('data-node-id');
-  await config.getByTestId('generation-kind-text').click();
-  for (const task of ['text', 'summary', 'character', 'prop', 'scene', 'plot', 'shot']) await expect(config.getByTestId(`generation-task-${task}`)).toBeVisible();
-  await expect(config.getByTestId('canvas-node-body').getByTestId('generation-prompt')).toContainText('根据创意编写完整剧本');
-  await config.getByTestId('generation-prompt').fill('写一个发生在清晨树林中的互动故事。');
-  await expect(config.getByTestId('text-generation-start')).toBeDisabled();
-  await expect(config.getByTestId('text-service-status')).toContainText(/尚未配置|尚未开放/);
-  await config.getByTestId('generation-kind-image').click();
-  for (const task of ['characterImage', 'propImage', 'sceneImage', 'shotImage']) await expect(config.getByTestId(`generation-task-${task}`)).toBeVisible();
-  await expect(config.getByTestId('image-service-status')).toContainText('尚未配置');
-  await expect(config.getByTestId('generation-quote')).toBeDisabled();
-  await config.getByTestId('generation-kind-video').click();
-  await config.getByTestId('generation-task-join').click();
-  await expect(config.getByTestId('generation-join')).toBeDisabled();
-  await expect(config.getByTestId('generation-input-problem')).toContainText('至少两个');
-  await config.getByTestId('generation-task-clip').click();
-  await expect(config.getByTestId('generation-prompt')).toContainText('清晨树林');
-  await expect(config.locator('[data-node-panel] [contenteditable="true"]')).toHaveCount(0);
+  await config.getByTestId('generation-model-trigger').click();
+  await expect(config.getByTestId('generation-model-codex-image')).toBeDisabled();
+  await config.getByTestId('generation-specifications-trigger').click();
+  await config.getByRole('button', { name: '图片比例 9:16', exact: true }).click();
+  const size = config.getByRole('button', { name: '图片尺寸 4K' });
+  await size.click();
+  await expect(size).toHaveAttribute('title', '2304 × 4096');
+  await config.getByTestId('generation-specifications-trigger').click();
+  await config.getByTestId('generation-prompt').fill('清晨树林，柔和薄雾。');
+  await expect(config.getByTestId('image-generation-prepare')).toBeDisabled();
+  await expect(config.getByTestId('canvas-node-body').getByTestId('generation-prompt')).toHaveCount(0);
   await page.getByTestId('canvas-save').click(); await expect(page.getByTestId('save-status')).toContainText('已保存');
   await page.reload();
   const restored = page.locator(`[data-testid="canvas-node"][data-node-id="${id}"]`);
-  await expect(restored.getByTestId('canvas-node-body').getByTestId('generation-prompt')).toContainText('清晨树林');
+  await restored.getByTestId('canvas-node-title').click();
+  await expect(restored.getByTestId('generation-prompt')).toContainText('清晨树林');
   const stored = await (await page.request.get(`/api/v1/projects/${projectId}`)).json();
-  expect(stored.canvases.flatMap((canvas: { nodes: Array<{ id: string; metadata: Record<string, unknown> }> }) => canvas.nodes).find((node: { id: string }) => node.id === id).metadata.dramaTask).toBe('clip');
+  expect(stored.canvases[0].nodes.find((node: { id: string }) => node.id === id).metadata).toMatchObject({ dramaTask: 'shotImage', imageWidth: 2304, imageHeight: 4096 });
+  expect(stored.canvases[0].nodes.find((node: { id: string }) => node.id === scriptId).metadata.scriptRows[0]).toMatchObject({ title: '清晨树林', duration: 8 });
+  await restored.getByTestId('generation-specifications-trigger').click();
+  await expect(restored.getByRole('button', { name: '图片比例 9:16', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(restored.getByRole('button', { name: '图片尺寸 4K' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: '资产管理', exact: true }).click();
+  const sidebar = page.getByRole('complementary', { name: '资产管理' });
+  await sidebar.getByRole('searchbox', { name: '搜索节点' }).fill('图片');
+  await expect(sidebar.getByRole('button', { name: '图片节点', exact: true })).toBeVisible();
+  await expect(sidebar.getByRole('button', { name: '脚本生成器', exact: true })).toHaveCount(0);
+  await sidebar.getByRole('button', { name: '收起节点侧栏' }).click();
+  const views = page.getByRole('group', { name: '画布视图' });
+  await views.getByRole('button', { name: '故事板' }).click();
+  await expect(page.getByRole('region', { name: '故事板' }).getByRole('button', { name: '第一幕' })).toBeVisible();
+  await views.getByRole('button', { name: '工作流' }).click();
+  await expect(restored).toBeVisible();
   await page.goto('/zh-CN/settings/text');
   await expect(page.getByTestId('text-settings-status')).toBeVisible(); await expect(page.getByTestId('text-api-key')).toHaveCount(0);
   await expect(page.getByTestId('text-price-table')).toHaveCount(0);
@@ -122,6 +142,68 @@ test('图片切片使用真实素材并保存切线、独立素材和子节点',
   await writeFile(testInfo.outputPath('actual-image-split.json'), JSON.stringify({ verifiedAt: new Date().toISOString(), projectId: id, sourceId, adjustedVerticalLine: adjusted, pieces: result.pieces }, null, 2));
 });
 
+test('视频节点保存首尾帧、镜头剧本和画幅，真实确认卡展示两张原图', async ({ page }, testInfo) => {
+  const { image, video } = await cc0Media(testInfo.config.configFile);
+  const lastImage = path.join(path.dirname(image), 'flower-last-frame.png');
+  if (!existsSync(lastImage)) execFileSync('ffmpeg', ['-v', 'error', '-ss', '2', '-i', video, '-frames:v', '1', '-update', '1', lastImage], { env: { ...process.env, TMPDIR: path.join(path.dirname(testInfo.config.configFile!), '../.intermediate/tmp') } });
+  const id = await createProject(page, '固定首尾帧和镜头剧本');
+  for (const source of [image, lastImage]) {
+    const uploaded = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/assets'));
+    await page.getByTestId('canvas-import-file').setInputFiles(source);
+    expect((await uploaded).status()).toBe(201);
+    await page.getByTestId('canvas-save').click();
+    await expect(page.getByTestId('save-status')).toContainText('已保存');
+  }
+  await addCanvasNode(page, 'text');
+  await addCanvasNode(page, 'video');
+  await page.getByTestId('canvas-save').click();
+  await expect(page.getByTestId('save-status')).toContainText('已保存');
+  const envelope = await (await page.request.get(`/api/v1/projects/${id}`)).json();
+  const canvas = envelope.canvases[0];
+  const [firstImage, endImage, script, config] = canvas.nodes;
+  const positions = [{ x: 30, y: 80 }, { x: 30, y: 370 }, { x: 410, y: 80 }, { x: 800, y: 40 }];
+  const placed = await page.request.put(`/api/v1/projects/${id}/canvases/${canvas.sceneId}`, { data: {
+    nodes: canvas.nodes.map((node: { id: string; metadata: Record<string, unknown> }, index: number) => ({ ...node, position: positions[index], metadata: node.id === script.id ? { ...node.metadata, content: '风吹过花丛，镜头追随花瓣轻微摇动。' } : node.metadata })),
+    connections: [firstImage, endImage, script].map((node) => ({ id: crypto.randomUUID(), fromNodeId: node.id, toNodeId: config.id })),
+    viewport: { x: 30, y: 90, k: .85 }, expectedRevision: envelope.revision, operationId: crypto.randomUUID(),
+  } });
+  expect(placed.status()).toBe(200);
+  await page.reload();
+  const editor = page.locator(`[data-testid="canvas-node"][data-node-id="${config.id}"]`);
+  await editor.getByTestId('canvas-node-title').click();
+  await editor.getByTestId('video-input-trigger').click();
+  await editor.getByTestId('video-mode-frames').click();
+  await editor.getByTestId('generation-source-first').click();
+  await editor.getByRole('combobox', { name: '首帧', exact: true }).selectOption(firstImage.id);
+  await editor.getByTestId('generation-source-last').click();
+  await editor.getByRole('combobox', { name: '尾帧', exact: true }).selectOption(endImage.id);
+  await editor.getByTestId('generation-specifications-trigger').click();
+  await editor.getByLabel('视频比例').selectOption('9:16');
+  await editor.getByTestId('generation-prompt').fill('用静止镜头记录清晨。');
+  await expect(editor.getByTestId('generation-input-problem')).toHaveCount(0);
+  await page.getByTestId('canvas-save').click();
+  await expect(page.getByTestId('save-status')).toContainText('已保存');
+
+  const saved = await (await page.request.get(`/api/v1/projects/${id}`)).json();
+  const metadata = saved.canvases[0].nodes.find((node: { id: string }) => node.id === config.id).metadata;
+  expect(metadata).toMatchObject({ videoSourceMode: 'frames', videoRatio: '9:16', firstFrameNodeId: firstImage.id, lastFrameNodeId: endImage.id });
+  const quoted = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/generations/quote'));
+  await editor.getByTestId('generation-quote').click();
+  const quote = await quoted;
+  expect(quote.status()).toBe(201);
+  const { generation } = await quote.json();
+  expect(generation.status).toBe('awaiting_confirmation');
+  expect(generation.reservedCents).toBe(0);
+  expect(generation.remoteTaskId).toBeNull();
+  await page.reload();
+  await editor.getByTestId('canvas-node-header').click();
+  await editor.locator(`[data-task-id="${generation.id}"]`).getByTestId('generation-open-review').click();
+  const card = page.getByRole('dialog', { name: '核对视频生成' });
+  await expect(card.getByTestId('generation-composed-input')).toContainText('风吹过花丛');
+  await expect(card.getByTestId('generation-media-inputs').getByRole('img', { name: '首帧' })).toHaveAttribute('src', `/api/v1/assets/${firstImage.metadata.storageKey}/content`);
+  await expect(card.getByTestId('generation-media-inputs').getByRole('img', { name: '尾帧' })).toHaveAttribute('src', `/api/v1/assets/${endImage.metadata.storageKey}/content`);
+});
+
 test('两个真实视频经节点连线在本机拼接，成片可播放和采用', async ({ page }, testInfo) => {
   test.setTimeout(180000);
   const { video } = await cc0Media(testInfo.config.configFile);
@@ -133,7 +215,7 @@ test('两个真实视频经节点连线在本机拼接，成片可播放和采�
     await page.getByTestId('canvas-import-file').setInputFiles(video); expect((await uploaded).status()).toBe(201);
     await page.getByTestId('canvas-save').click(); await expect(page.getByTestId('save-status')).toContainText('已保存');
   }
-  await page.getByTestId('canvas-add-config').click();
+  await addCanvasNode(page, 'smart-edit');
   const configId = await page.getByTestId('canvas-node').last().getAttribute('data-node-id');
   await page.getByTestId('canvas-save').click(); await expect(page.getByTestId('save-status')).toContainText('已保存');
   const arranged = await page.evaluate(async ({ id, configId }) => {
@@ -145,8 +227,8 @@ test('两个真实视频经节点连线在本机拼接，成片可播放和采�
   }, { id, configId });
   expect(arranged.status).toBe(200); await page.reload(); await page.getByTestId('canvas-fit-all').click();
   const config = page.locator(`[data-testid="canvas-node"][data-node-id="${configId}"]`);
-  await config.getByTestId('generation-task-join').click();
   for (const videoId of arranged.videoIds) await connectNodes(page, videoId, configId!);
+  await config.getByTestId('canvas-node-title').click();
   await expect(config.getByTestId('generation-join')).toBeEnabled();
   const joined = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/generations/join'));
   await config.getByTestId('generation-join').click();

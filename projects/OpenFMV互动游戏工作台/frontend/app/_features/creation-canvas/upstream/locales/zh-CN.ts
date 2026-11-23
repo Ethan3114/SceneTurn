@@ -301,6 +301,8 @@ const zhCN = {
         },
         export: { defaultProjectName: "无限画布", defaultNodesName: "画布元素", item: "元素" },
         createMenu: {
+            frames: "按首尾帧生成视频", reference: "参考视频生成", edit: "编辑视频", extend: "延长视频",
+            join: "成片拼接",
             fromNode: "引用该节点生成", close: "关闭", text: "文本生成", textDescription: "脚本、广告词、品牌文案", image: "图片生成", video: "视频生成", audio: "音频参考", config: "配置节点", configDescription: "模型、尺寸、数量和输入顺序", select: "选择节点",
         },
         node: {

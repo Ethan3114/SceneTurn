@@ -5,5 +5,5 @@ export default defineConfig({
   outputDir: '../.intermediate/frontend-browser',
   timeout: 60000,
   reporter: 'line',
-  use: { baseURL: 'http://127.0.0.1:3210', browserName: 'chromium', headless: true },
+  use: { baseURL: process.env.OPENFMV_TEST_BASE_URL ?? 'http://127.0.0.1:3210', browserName: 'chromium', headless: true },
 });

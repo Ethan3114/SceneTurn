@@ -79,8 +79,8 @@ def stop_service(process) -> None:
             process.wait(timeout=10)
 
 
-def record_smoke(job: dict, elapsed: float) -> None:
-    destination = ROOT / "docs" / "evidence" / "阶段2-1" / "文本冒烟记录.md"
+def record_smoke(job: dict, elapsed: float, stage: str) -> None:
+    destination = ROOT / "docs" / "evidence" / stage / "文本冒烟记录.md"
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not destination.exists():
         destination.write_text("# 真实文本冒烟记录\n\n| 时间 | 任务 | 模型 | 请求与任务 | 输入/输出/总Token | 耗时秒 | 结构校验 | 重试次数 | 结果 | 供应商预估成本微元 |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n", encoding="utf-8")
@@ -133,6 +133,7 @@ def main() -> None:
     parser.add_argument("--provider-data", type=Path, default=ROOT / "data")
     parser.add_argument("--tasks", nargs="+", choices=list(PROMPTS), default=list(PROMPTS))
     parser.add_argument("--max-tokens", type=int, default=512)
+    parser.add_argument("--stage", choices=["阶段2-1", "阶段3-1"], default="阶段2-1")
     args = parser.parse_args()
     if not 64 <= args.max_tokens <= 4096:
         raise ValueError("真实冒烟输出上限必须在64至4096之间")
@@ -206,7 +207,7 @@ def main() -> None:
                         time.sleep(0.5)
                         response = client.get(f"/text-generations/{job['id']}"); response.raise_for_status()
                         job = response.json()["textGeneration"]
-                    record_smoke(job, time.monotonic() - started)
+                    record_smoke(job, time.monotonic() - started, args.stage)
                     if job["status"] != "ready" or job["result"] is None or not job["usage"].get("settled"):
                         raise RuntimeError(f"真实文本任务未完成：{job['status']}，任务{job['id']}")
                     RESULTS[task].model_validate(job["result"])
@@ -232,7 +233,7 @@ def main() -> None:
                 if len(response.json()["textGenerations"]) != len(completed):
                     raise ValueError("重启后任务数量不一致或出现重复提交")
                 for job in completed:
-                    verification_checks["afterRestart"].append(verify_restart_record(job["id"], isolated_data, base_url, "--verify-after-restart", "--register"))
+                    verification_checks["afterRestart"].append(verify_restart_record(job["id"], isolated_data, base_url, "--verify-after-restart", "--register", "--stage", args.stage))
                 result_report = {"runId": run_id, "projectId": project_id, "dataDir": str(isolated_data), "contracts": args.tasks, "restartVerified": True, "resultDigests": {job["id"]: hashlib.sha256(json.dumps(job["result"], ensure_ascii=False, sort_keys=True).encode()).hexdigest() for job in completed}}
         finally:
             stop_service(process)

@@ -1,16 +1,28 @@
 'use client';
 
-import React, { PointerEvent, useRef, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import React, { createContext, PointerEvent, Suspense, useEffect, useRef, useState } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
 
-import AppNavigation from './AppNavigation';
+import AppNavigation, { useNativeWindow } from './AppNavigation';
 import ProjectCodexChat from './ProjectCodexChat';
 import MaterialChat from '@/app/_features/material-workspace/MaterialChat';
 import { useMaterialWorkspace } from '@/app/_features/material-workspace/store';
 import OpenFMVAiSettingsCenter from './OpenFMVAiSettingsCenter';
 import { stripLocaleFromPath } from '@/app/_utils/localePaths';
+import { isAssetWorkspaceOpen, useEditorStore } from '@/app/_store/useEditorStore';
+import { usePlayerStore } from '@/app/_store/usePlayerStore';
 
 type ResizeDirection = 'top' | 'right' | 'bottom' | 'left' | 'top-left' | 'top-right' | 'bottom-right' | 'bottom-left';
+
+export const ProjectChatControl = createContext<{ open: boolean; toggle: () => void } | null>(null);
+
+function OpenRequestedCodexChat({ onOpen }: { onOpen: (open: boolean) => void }) {
+  const params = useSearchParams();
+  useEffect(() => {
+    if (params.get('id') && params.get('connectCodex') === '1') onOpen(true);
+  }, [onOpen, params]);
+  return null;
+}
 
 export default function AppWindowFrame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -18,16 +30,23 @@ export default function AppWindowFrame({ children }: { children: React.ReactNode
   const [showChat, setShowChat] = useState(false);
   const materialScope = useMaterialWorkspace((state) => state.scope);
   const materialChatOpen = useMaterialWorkspace((state) => state.chatOpen);
-  const chatVisible = materialScope ? materialChatOpen : showChat;
+  const assetWorkspaceOpen = useEditorStore(isAssetWorkspaceOpen) && pathWithoutLocale === '/editor';
+  const isPreviewPlaying = usePlayerStore((state) => state.isPlaying);
+  const nativeWindow = useNativeWindow();
+  const usesProjectNavigation = pathWithoutLocale === '/editor' || pathWithoutLocale === '/nodes';
+  const showApplicationHeader = nativeWindow || !usesProjectNavigation;
+  const usesStandaloneMaterials = Boolean(materialScope && !usesProjectNavigation);
+  const chatVisible = usesStandaloneMaterials ? materialChatOpen : showChat;
+  const projectChatControl = { open: showChat, toggle: () => setShowChat((current) => !current) };
   const [showSettings, setShowSettings] = useState(false);
   const [chatFloating, setChatFloating] = useState(false);
-  const [chatPosition, setChatPosition] = useState({ x: 620, y: 16 });
+  const [chatPosition, setChatPosition] = useState({ x: 620, y: usesProjectNavigation ? 76 : 16 });
   const [chatSize, setChatSize] = useState({ width: 420, height: 760 });
   const dragStateRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const resizeStateRef = useRef<{ pointerId: number; direction: ResizeDirection; startX: number; startY: number; originX: number; originY: number; originWidth: number; originHeight: number } | null>(null);
 
   const toggleChat = () => {
-    if (materialScope) useMaterialWorkspace.setState({ chatOpen: !materialChatOpen });
+    if (usesStandaloneMaterials) useMaterialWorkspace.setState({ chatOpen: !materialChatOpen });
     else setShowChat((current) => !current);
   };
 
@@ -37,12 +56,15 @@ export default function AppWindowFrame({ children }: { children: React.ReactNode
   };
 
   const closeChat = () => {
-    if (materialScope) useMaterialWorkspace.setState({ chatOpen: false });
+    if (usesStandaloneMaterials) useMaterialWorkspace.setState({ chatOpen: false });
     setShowChat(false);
     setChatFloating(false);
   };
 
   const toggleChatFloating = () => {
+    if (!chatFloating && usesProjectNavigation && chatPosition.y < 76) {
+      setChatPosition({ ...chatPosition, y: 76 });
+    }
     setChatFloating((current) => !current);
   };
 
@@ -161,6 +183,14 @@ export default function AppWindowFrame({ children }: { children: React.ReactNode
     </>
   ) : null;
 
+  if (['/', '/works', '/account', '/privacy', '/terms'].includes(pathWithoutLocale) || pathWithoutLocale.startsWith('/works/')) {
+    return <>{children}</>;
+  }
+
+  if (!nativeWindow && (pathWithoutLocale === '/projects' || pathWithoutLocale.startsWith('/settings/'))) {
+    return <>{children}</>;
+  }
+
   if (pathWithoutLocale.startsWith('/asset-studio')) {
     return (
       <div className="relative h-[100dvh] overflow-hidden bg-[#111] text-openfmv-text">
@@ -187,23 +217,25 @@ export default function AppWindowFrame({ children }: { children: React.ReactNode
   }
 
   return (
-    <div className="h-[100dvh] overflow-hidden bg-[#181818] text-openfmv-text">
-      <AppNavigation chatOpen={chatVisible} onOpenSettings={openSettings} onToggleChat={toggleChat} />
-      <div className="relative h-[calc(100dvh-3.5rem)] overflow-hidden">
-        {children}
-        {showSettings && <OpenFMVAiSettingsCenter onClose={() => setShowSettings(false)} />}
-        {chatVisible && (
+    <div className={`h-[100dvh] overflow-hidden bg-[#181818] text-openfmv-text${usesProjectNavigation ? ' scene-project-frame' : ''}`}>
+      {pathWithoutLocale === '/editor' && <Suspense><OpenRequestedCodexChat onOpen={setShowChat} /></Suspense>}
+      {showApplicationHeader && <AppNavigation chatOpen={chatVisible} onOpenSettings={openSettings} onToggleChat={toggleChat} windowControlsOnly={usesProjectNavigation} />}
+      <div className={showApplicationHeader ? 'relative h-[calc(100dvh-3.5rem)] overflow-hidden' : 'relative h-full overflow-hidden'}>
+        <ProjectChatControl.Provider value={projectChatControl}>{children}</ProjectChatControl.Provider>
+        {showSettings && showApplicationHeader && <OpenFMVAiSettingsCenter onClose={() => setShowSettings(false)} />}
+        {chatVisible && !assetWorkspaceOpen && !(usesStandaloneMaterials && pathWithoutLocale === '/studio') && (
           <aside
+            hidden={usesProjectNavigation && isPreviewPlaying}
             onPointerDown={startChatDrag}
             onPointerDownCapture={startChatResize}
             onPointerMove={moveChatDrag}
             onPointerMoveCapture={moveChatResize}
             onPointerUp={stopChatDrag}
             onPointerCancel={stopChatDrag}
-            className={chatFloating ? 'absolute z-[130] h-[760px] max-h-[calc(100%-1rem)] w-[420px] max-w-[calc(100vw-1rem)] overflow-hidden rounded-[12px] border border-white/10 bg-[#111113] shadow-[0_24px_80px_rgba(0,0,0,0.42)]' : 'absolute right-0 top-0 z-[130] h-full w-[430px] max-w-[calc(100vw-1rem)] overflow-hidden border-l border-white/10 bg-[#111113] shadow-none'}
+            className={chatFloating ? 'absolute z-[130] h-[760px] max-h-[calc(100%-1rem)] w-[420px] max-w-[calc(100vw-1rem)] overflow-hidden rounded-[12px] border border-white/10 bg-[#111113] shadow-[0_24px_80px_rgba(0,0,0,0.42)]' : `absolute right-0 z-[130] max-w-[calc(100vw-1rem)] overflow-hidden border-l border-white/10 bg-[#111113] shadow-none ${usesProjectNavigation ? 'scene-project-chat-dock' : 'top-0 h-full w-[430px]'}`}
             style={chatFloating ? { left: chatPosition.x, top: chatPosition.y, width: chatSize.width, height: chatSize.height } : undefined}
           >
-            {materialScope ? <MaterialChat onClose={closeChat} /> : <ProjectCodexChat floating={chatFloating} onToggleFloating={toggleChatFloating} onClose={closeChat} />}
+            {usesStandaloneMaterials ? <MaterialChat onClose={closeChat} /> : <ProjectCodexChat floating={chatFloating} onToggleFloating={toggleChatFloating} onClose={closeChat} />}
             {chatResizeHandles}
           </aside>
         )}

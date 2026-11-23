@@ -7,6 +7,7 @@ import { ChevronLeft, FileText, Image as ImageIcon, Music, Plus, Search, Upload,
 
 import { useProjectSessionStore } from '@/app/_features/project-session/store';
 import { useMaterialWorkspace } from '@/app/_features/material-workspace/store';
+import { useEditorStore } from '@/app/_store/useEditorStore';
 import { getAssetSource } from '@/app/_utils/assetIdentity';
 import { useResolvedMediaSrc } from '@/app/_hooks/useResolvedMediaSrc';
 import { OpenFMVAsset } from '@/app/_types';
@@ -15,11 +16,15 @@ import { Button } from '@/app/_components/ui/button';
 import { Input } from '@/app/_components/ui/input';
 import { PickerAsset } from './canvas/assetBinding';
 import type { MaterialCanvasHandle } from '../workbench/StudioPage';
+import { refreshCloudProjects } from '@/app/_utils/cloudApi';
 import { syncProjectSession } from '@/app/_utils/syncProjectSession';
+import './material-shell.css';
 
 const MaterialCanvas = dynamic(() => import('@/app/_features/material-workspace/MaterialWorkspace'), { ssr: false });
+const MaterialChat = dynamic(() => import('@/app/_features/material-workspace/MaterialChat'), { ssr: false });
 
 type AssetFilter = 'all' | OpenFMVAsset['type'];
+type AssetScope = 'project' | 'all';
 
 interface AssetPickerProps {
   isOpen: boolean;
@@ -85,6 +90,9 @@ const AssetPreview = ({ asset }: { asset: OpenFMVAsset }) => {
 
 export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = false, importBehavior = 'select' }: AssetPickerProps) {
   const t = useTranslations('assets');
+  const isWorkspace = importBehavior === 'library';
+  const assetWorkspaceView = useEditorStore((state) => state.assetWorkspaceView);
+  const setAssetWorkspaceView = useEditorStore((state) => state.setAssetWorkspaceView);
   const inputRef = useRef<HTMLInputElement>(null);
   const currentProjectId = useProjectSessionStore((state) => state.projectId);
   const saveProjectSession = useProjectSessionStore((state) => state.saveNow);
@@ -92,7 +100,12 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
   const [projectAssets, setProjectAssets] = useState<ProjectAsset[]>([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<AssetFilter>('all');
-  const [view, setView] = useState<'library' | 'generate'>('library');
+  const [assetScope, setAssetScope] = useState<AssetScope>('project');
+  const [loadingAllProjects, setLoadingAllProjects] = useState(false);
+  const [assetScopeError, setAssetScopeError] = useState('');
+  const [pickerView, setPickerView] = useState<'library' | 'generate'>('library');
+  const view = isWorkspace ? assetWorkspaceView : pickerView;
+  const setView = isWorkspace ? setAssetWorkspaceView : setPickerView;
   const [error, setError] = useState('');
   const [materialScope, setMaterialScope] = useState<{ projectId: string; sceneId: string } | null>(null);
   const [switchingScene, setSwitchingScene] = useState(false);
@@ -102,7 +115,9 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
   const activeScene = scenes.find((node) => node.selected)?.id || scenes[0]?.id;
   const materialScene = materialScope?.projectId === currentProjectId && scenes.some((scene) => scene.id === materialScope.sceneId) ? materialScope.sceneId : activeScene;
   const materialLoading = useMaterialWorkspace((state) => state.loading);
+  const materialChatOpen = useMaterialWorkspace((state) => state.chatOpen);
   const useNativeAssetPicker = canUseNativeAssetPicker();
+  const showAllProjects = !currentProjectId || assetScope === 'all';
 
   const refreshProjectAssets = useCallback(() => {
     const projects = listLocalProjects();
@@ -128,12 +143,31 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
   const filteredAssets = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return projectAssets
+      .filter(({ projectId }) => showAllProjects || projectId === currentProjectId)
       .filter(({ asset }) => filter === 'all' || asset.type === filter)
       .filter(({ asset, projectTitle }) => {
         if (!normalizedQuery) return true;
         return asset.name.toLowerCase().includes(normalizedQuery) || asset.type.includes(normalizedQuery) || projectTitle.toLowerCase().includes(normalizedQuery);
       });
-  }, [filter, projectAssets, query]);
+  }, [currentProjectId, filter, projectAssets, query, showAllProjects]);
+
+  async function changeAssetScope(next: AssetScope) {
+    setAssetScope(next);
+    setAssetScopeError('');
+    if (next === 'project' || window.openfmv || loadingAllProjects) {
+      refreshProjectAssets();
+      return;
+    }
+    setLoadingAllProjects(true);
+    try {
+      await refreshCloudProjects();
+      refreshProjectAssets();
+    } catch (problem) {
+      setAssetScopeError(problem instanceof Error ? problem.message : '无法读取全部项目素材');
+    } finally {
+      setLoadingAllProjects(false);
+    }
+  }
 
   const persistAssetToCurrentProject = async (asset: OpenFMVAsset) => {
     const targetProjectId = currentProjectId ?? (await saveProjectSession())?.id;
@@ -192,7 +226,7 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
 
   const importButtonClassName = 'inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-white/15 bg-white/[0.055] px-3 text-xs font-medium text-openfmv-sub transition-colors hover:border-openfmv-accent hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-50';
 
-  async function changeView(next: 'library' | 'generate') {
+  async function changeView(next: typeof view) {
     setError('');
     const sceneId = materialScene;
     if (view === 'generate') await materialRef.current?.save();
@@ -224,14 +258,34 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
   }
   if (!isOpen) return null;
 
+  const showGenerator = view === 'generate' && Boolean(currentProjectId && materialScene);
+  const dockedChat = isWorkspace && showGenerator && materialChatOpen;
+  const scenePicker = <label className="scene-material-scene">
+    <span>剧情场景</span>
+    <select aria-label="素材制作剧情场景" value={materialScene ?? ''} disabled={switchingScene || materialLoading || !currentProjectId || scenes.length === 0} onChange={(event) => { void changeMaterialScene(event.target.value).catch((problem: Error) => setError(problem.message)); }}>
+      {scenes.length === 0 && <option value="">暂无剧情场景</option>}
+      {scenes.map((scene) => <option key={scene.id} value={scene.id}>{typeof scene.data.title === 'string' ? scene.data.title : '未命名剧情场景'}</option>)}
+    </select>
+    {switchingScene && <span role="status">正在切换…</span>}
+  </label>;
+
   return (
-    <div className="pointer-events-none fixed inset-0 z-[90]">
-      <div data-testid="editor-materials" className={`pointer-events-auto absolute bottom-5 left-5 top-24 flex max-w-[calc(100vw-2.5rem)] flex-col overflow-hidden rounded-[22px] border border-white/10 bg-[#171717]/96 shadow-[0_30px_120px_rgba(0,0,0,0.58)] backdrop-blur-3xl ${view === 'generate' ? 'right-5 md:right-[450px]' : 'w-[390px]'}`}>
-        <div className="flex items-center gap-3 border-b border-white/10 px-4 py-4">
+    <div className={isWorkspace ? 'scene-material-shell' : 'pointer-events-none fixed inset-0 z-[90]'}>
+      <section data-testid="editor-materials" aria-label={t('title')} className={isWorkspace ? 'scene-material-full' : `pointer-events-auto absolute bottom-5 left-5 top-24 flex max-w-[calc(100vw-2.5rem)] flex-col overflow-hidden rounded-[22px] border border-white/10 bg-[#171717]/96 shadow-[0_30px_120px_rgba(0,0,0,0.58)] backdrop-blur-3xl ${view === 'generate' ? 'right-5 md:right-[450px]' : 'w-[390px]'}`}>
+        <div className={isWorkspace ? 'scene-material-rail' : 'flex items-center gap-3 border-b border-white/10 px-4 py-4'} data-testid={isWorkspace ? 'materials-rail' : undefined}>
+          {!isWorkspace && (
           <Button type="button" onClick={() => { void close().catch((problem: Error) => setError(problem.message)); }} variant="icon" size="compactIcon" className="rounded-full" title={t('back')}>
             <ChevronLeft size={19} />
           </Button>
-          <h2 className="min-w-0 flex-1 text-xl font-semibold text-white">{t('title')}</h2>
+          )}
+          <h2 className={isWorkspace ? 'scene-material-rail-title' : 'min-w-0 flex-1 text-xl font-semibold text-white'}>{t('title')}</h2>
+          {isWorkspace && <nav className="scene-material-rail-tabs" aria-label="素材视图">
+            <button type="button" data-testid="materials-library-tab" aria-pressed={view === 'library'} onClick={() => { if (view !== 'library') void changeView('library').catch((problem: Error) => setError(problem.message)); }}>项目素材</button>
+            <button type="button" data-testid="materials-generate-tab" aria-pressed={view === 'generate'} disabled={!currentProjectId} onClick={() => { if (view !== 'generate') void changeView('generate').catch((problem: Error) => setError(problem.message)); }}>生成素材</button>
+          </nav>}
+          {isWorkspace ? <button type="button" className="scene-material-import" disabled={isImporting} onClick={() => { void handleChooseFile(); }}>
+            <Upload size={16} aria-hidden="true" />{isImporting ? t('importing') : t('importAsset')}
+          </button> : <>
           {useNativeAssetPicker ? (
             <Button type="button" onClick={() => void handleChooseFile()} disabled={isImporting} variant="glass" size="sm">
               <Plus size={17} />
@@ -247,14 +301,25 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
           <Button type="button" onClick={() => { void close().catch((problem: Error) => setError(problem.message)); }} variant="icon" size="compactIcon" title={t('close')}>
             <X size={18} />
           </Button>
+          </>}
         </div>
 
-        <div className="flex gap-2 border-b border-white/10 px-4 py-2"><button data-testid="materials-library-tab" className="rounded px-3 py-2 text-sm" onClick={() => { void changeView('library').catch((problem: Error) => setError(problem.message)); }}>项目素材</button><button data-testid="materials-generate-tab" className="rounded bg-white/10 px-3 py-2 text-sm" disabled={!currentProjectId} onClick={() => { void changeView('generate').catch((problem: Error) => setError(problem.message)); }}>生成素材</button></div>
-        {view === 'generate' && <label className="flex items-center gap-3 border-b border-white/10 px-4 py-2 text-sm"><span className="shrink-0">剧情场景</span><select aria-label="素材制作剧情场景" className="min-w-0 flex-1 rounded border border-white/15 bg-[#232326] px-3 py-2 text-white disabled:opacity-50" value={materialScene || ''} disabled={switchingScene || materialLoading || !currentProjectId || scenes.length === 0} onChange={(event) => { void changeMaterialScene(event.target.value).catch((problem: Error) => setError(problem.message)); }}>{scenes.length === 0 && <option value="">暂无剧情场景</option>}{scenes.map((scene) => <option key={scene.id} value={scene.id}>{typeof scene.data.title === 'string' ? scene.data.title : '未命名剧情场景'}</option>)}</select>{switchingScene && <span role="status">正在保存并切换…</span>}</label>}
+        {!isWorkspace && <div className="flex flex-wrap gap-2 border-b border-white/10 px-4 py-2">
+          <button type="button" data-testid="materials-library-tab" aria-pressed={view === 'library'} className="rounded px-3 py-2 text-sm aria-pressed:bg-white/10" onClick={() => { void changeView('library').catch((problem: Error) => setError(problem.message)); }}>项目素材</button>
+          <button type="button" data-testid="materials-generate-tab" aria-pressed={view === 'generate'} className="rounded px-3 py-2 text-sm aria-pressed:bg-white/10" disabled={!currentProjectId} onClick={() => { void changeView('generate').catch((problem: Error) => setError(problem.message)); }}>生成素材</button>
+        </div>}
+        {(isWorkspace || useNativeAssetPicker) && <input ref={inputRef} type="file" accept="image/*,video/*,audio/*,.txt,.md" className="hidden" onChange={(event) => { void handleFiles(event.target.files); }} />}
         {error && <p role="alert" className="px-4 py-2 text-sm text-red-300">{error}</p>}
-        {view === 'generate' && currentProjectId && materialScene ? <div className="min-h-0 flex-1" inert={switchingScene}><MaterialCanvas key={`${currentProjectId}:${materialScene}`} projectId={currentProjectId} sceneId={materialScene} saveRef={materialRef} /></div> : <>
-        <div className="space-y-4 border-b border-white/10 p-4">
-          <div className="relative">
+        {showGenerator && currentProjectId && materialScene ? <div className={isWorkspace ? 'scene-material-split' : 'min-h-0 flex-1'} data-chat-open={dockedChat || undefined}>
+          <div className="h-full min-h-0 min-w-0" inert={switchingScene}><MaterialCanvas key={`${currentProjectId}:${materialScene}`} projectId={currentProjectId} sceneId={materialScene} saveRef={materialRef} scenePicker={scenePicker} showChatButton={!isWorkspace} /></div>
+          {dockedChat && <aside className="scene-material-chat-dock" aria-label="素材制作对话"><MaterialChat onClose={() => useMaterialWorkspace.setState({ chatOpen: false })} /></aside>}
+        </div> : view === 'generate' ? <div className="scene-material-no-scene">{scenePicker}<p>添加剧情场景后，即可制作素材。</p></div> : <>
+        <div className={isWorkspace ? 'scene-material-library-tools' : 'space-y-4 border-b border-white/10 p-4'}>
+          {currentProjectId && <div role="group" aria-label="素材范围" className="flex flex-wrap items-center gap-2">
+            <button type="button" aria-pressed={!showAllProjects} className="min-h-9 rounded-md px-3 text-sm text-openfmv-sub hover:bg-white/10 aria-pressed:bg-white/[0.16] aria-pressed:text-white" onClick={() => { void changeAssetScope('project'); }}>本项目</button>
+            <button type="button" aria-pressed={showAllProjects} className="min-h-9 rounded-md px-3 text-sm text-openfmv-sub hover:bg-white/10 aria-pressed:bg-white/[0.16] aria-pressed:text-white" onClick={() => { void changeAssetScope('all'); }}>全部项目</button>
+          </div>}
+          <div className={isWorkspace ? 'scene-material-library-search relative' : 'relative'}>
             <Search size={17} className="absolute left-4 top-1/2 -translate-y-1/2 text-openfmv-muted" />
             <Input
               value={query}
@@ -263,7 +328,7 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
               className="h-12 rounded-[18px] border-white/10 bg-black/20 pl-11 text-white placeholder:text-openfmv-muted focus-visible:ring-white/20"
             />
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className={isWorkspace ? 'scene-material-library-filters flex flex-wrap gap-2' : 'flex flex-wrap gap-2'}>
             {assetFilters.map((item) => (
               <Button
                 key={item}
@@ -279,10 +344,11 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
           </div>
         </div>
 
-        {useNativeAssetPicker && <input ref={inputRef} type="file" accept="image/*,video/*,audio/*,.txt,.md" className="hidden" onChange={(event) => { void handleFiles(event.target.files); }} />}
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          {filteredAssets.length === 0 ? (
+        <div className={isWorkspace ? 'scene-material-library-content' : 'min-h-0 flex-1 overflow-y-auto p-4'}>
+          {isWorkspace && <h3>{showAllProjects ? '全部项目素材' : '本项目素材'}</h3>}
+          {showAllProjects && loadingAllProjects && <p role="status" className="mb-3 text-sm text-openfmv-muted">正在读取全部项目素材…</p>}
+          {showAllProjects && assetScopeError && <p role="alert" className="mb-3 text-sm text-red-300">{assetScopeError}</p>}
+          {filteredAssets.length === 0 && !(showAllProjects && (loadingAllProjects || assetScopeError)) ? (
             <div className="flex h-full flex-col items-center justify-center rounded-[18px] border border-dashed border-white/12 bg-white/[0.035] px-6 text-center">
               <div className="mb-4 grid h-14 w-14 place-items-center rounded-[18px] border border-white/10 bg-white/[0.08] text-openfmv-sub">
                 <Upload size={25} />
@@ -295,7 +361,7 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
               </Button>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className={isWorkspace ? 'scene-material-library-grid' : 'space-y-2'}>
               {filteredAssets.map(({ asset, projectId, projectTitle }) => {
                 const typeLabel = t(`type.${asset.type}`);
                 const detailItems = asset.type === 'text'
@@ -307,9 +373,9 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
                     key={`${projectId}-${asset.id}`}
                     type="button"
                     onClick={() => selectAsset(asset)}
-                    className="group grid w-full grid-cols-[64px_minmax(0,1fr)_30px] items-center gap-3 rounded-[16px] border border-white/10 bg-white/[0.045] p-2.5 text-left outline-none transition hover:border-white/22 hover:bg-white/[0.075] focus-visible:border-openfmv-accent/70 focus-visible:ring-2 focus-visible:ring-openfmv-accent/20"
+                    className={isWorkspace ? 'scene-material-library-card group' : 'group grid w-full grid-cols-[64px_minmax(0,1fr)_30px] items-center gap-3 rounded-[16px] border border-white/10 bg-white/[0.045] p-2.5 text-left outline-none transition hover:border-white/22 hover:bg-white/[0.075] focus-visible:border-openfmv-accent/70 focus-visible:ring-2 focus-visible:ring-openfmv-accent/20'}
                   >
-                    <div className="relative grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-[13px] border border-white/10 bg-black/[0.32] text-openfmv-sub">
+                    <div className={isWorkspace ? 'scene-material-library-thumb' : 'relative grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-[13px] border border-white/10 bg-black/[0.32] text-openfmv-sub'}>
                       <AssetPreview asset={asset} />
                       <span className="absolute bottom-1 left-1 rounded-[7px] border border-white/10 bg-black/[0.62] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-white/86">
                         {typeLabel}
@@ -326,9 +392,9 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
                         </div>
                       )}
                     </div>
-                    <span className="grid h-8 w-8 place-items-center rounded-openfmv-tool border border-white/10 bg-white/[0.05] text-openfmv-muted transition group-hover:border-openfmv-accent/60 group-hover:bg-openfmv-accent/12 group-hover:text-white">
+                    {!isWorkspace && <span className="grid h-8 w-8 place-items-center rounded-openfmv-tool border border-white/10 bg-white/[0.05] text-openfmv-muted transition group-hover:border-openfmv-accent/60 group-hover:bg-openfmv-accent/12 group-hover:text-white">
                       <Plus size={15} />
-                    </span>
+                    </span>}
                   </button>
                 );
               })}
@@ -336,7 +402,7 @@ export default function AssetPicker({ isOpen, onClose, onSelect, allowAudio = fa
           )}
         </div>
         </>}
-      </div>
+      </section>
     </div>
   );
 }

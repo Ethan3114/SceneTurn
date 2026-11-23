@@ -45,6 +45,15 @@ export type CanvasNodeText = {
 };
 
 export type CanvasNodeMetadata = {
+    productionTool?: 'director' | 'audio-edit';
+    audioMode?: 'music';
+    audioSettings?: import('../production/media-edit').AudioSettings;
+    editSettings?: import('../production/media-edit').EditSettings;
+    directorScene?: import('../production/director-scene').DirectorScene;
+    characterDesign?: { name: string; face: string; body: string; outfit: string; notes: string; reference: string; authorized: boolean };
+    scriptVersion?: "current" | "legacy";
+    filmGuidance?: Partial<Record<'style' | 'palette' | 'composition' | 'rhythm' | 'camera' | 'lens' | 'focal' | 'aperture', string>>;
+    scriptRows?: { id: string; duration: number | null; title: string; visual: string; action: string; dialogue: string }[];
     publicMaterialRole?: string;
     creativeArtifact?: Record<string, unknown>;
     agentWorkspace?: "project" | "scene";
@@ -74,8 +83,11 @@ export type CanvasNodeMetadata = {
     plotSpawnOf?: string;
     generationType?: CanvasImageGenerationType;
     model?: string;
+    modelProfileId?: string;
     reasoningEffort?: "auto" | "low" | "medium" | "high" | "xhigh";
     size?: string;
+    imageWidth?: number;
+    imageHeight?: number;
     quality?: string;
     background?: string;
     count?: number;
@@ -84,6 +96,12 @@ export type CanvasNodeMetadata = {
     primaryTextId?: string;
     seconds?: string;
     vquality?: string;
+    videoSourceMode?: "text" | "frames" | "reference" | "edit" | "extend";
+    firstFrameNodeId?: string;
+    lastFrameNodeId?: string;
+    referenceVideoNodeId?: string;
+    videoReferenceImageNodeIds?: string[];
+    videoRatio?: string;
     generateAudio?: string;
     watermark?: string;
     videoMode?: string;

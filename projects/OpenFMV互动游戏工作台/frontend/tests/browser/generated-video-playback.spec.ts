@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { enterManualStudio } from './manual-studio';
+import { createProjectFromList, enterManualStudio } from './manual-studio';
 
 const product = path.resolve('..');
 const manifest = z.object({ videos: z.array(z.object({ generationId: z.string(), assetId: z.string(), path: z.string(), sha256: z.string().length(64) }).strict()).length(3) }).strict();
@@ -20,8 +20,7 @@ test('三段真实首尾帧成片通过受保护媒体接口在画布内播放',
   await page.getByTestId('auth-password').fill(crypto.randomUUID());
   await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill('三段真实Wan视频播放验证');
-  await page.getByTestId('project-create').click();
+  await createProjectFromList(page, '三段真实Wan视频播放验证');
   await enterManualStudio(page);
   const projectId = new URL(page.url()).searchParams.get('id');
   if (!projectId) throw new Error('真实项目缺少标识');

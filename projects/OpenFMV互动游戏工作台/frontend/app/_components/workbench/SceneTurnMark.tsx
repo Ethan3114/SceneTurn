@@ -1,0 +1,8 @@
+export default function SceneTurnMark({ className, size = 26, monochrome = false }: { className?: string; size?: number; monochrome?: boolean }) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill={monochrome ? '#FFFFFF' : '#FFF2DE'} d="M22 3.5H9.2C5.15 3.5 2.5 5.61 2.5 8.72C2.5 11.56 4.69 13.17 8.28 13.17H10.36L14.68 9.5H8.93C7.93 9.5 7.36 9.14 7.36 8.53C7.36 7.87 7.95 7.5 8.94 7.5H17.33L22 3.5Z" />
+      <path fill={monochrome ? '#C7C7C7' : '#FFD197'} d="M2 20.5H14.8C18.85 20.5 21.5 18.39 21.5 15.28C21.5 12.44 19.31 10.83 15.72 10.83H14.95L10.63 14.5H15.07C16.07 14.5 16.64 14.86 16.64 15.47C16.64 16.13 16.05 16.5 15.06 16.5H6.67L2 20.5Z" />
+    </svg>
+  );
+}

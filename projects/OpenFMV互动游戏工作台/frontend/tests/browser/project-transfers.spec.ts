@@ -3,12 +3,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createProjectFromList } from './manual-studio';
 
 const product = path.resolve('..');
-const directory = path.join(product, '.intermediate/project-transfer-smoke-20261116');
 
-test('完整项目备份与重复导入，前端网页游玩及固定游戏包互动分支', async ({ page, context, browser }) => {
+test('完整项目备份与重复导入，前端网页游玩及固定游戏包互动分支', async ({ page, context, browser }, testInfo) => {
   test.setTimeout(240000);
+  const captureEvidence = !process.env.OPENFMV_TEST_BASE_URL;
+  const directory = captureEvidence ? path.join(product, '.intermediate/project-transfer-smoke-20261116') : testInfo.outputPath('transfers');
   const source = JSON.parse(await readFile(path.join(product, '.intermediate/media-sequence-smoke-20261116/browser-media.json'), 'utf8'));
   await mkdir(directory, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -18,8 +20,7 @@ test('完整项目备份与重复导入，前端网页游玩及固定游戏包�
   await page.getByTestId('auth-password').fill(crypto.randomUUID());
   await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill('三段真实视频互动导出验证');
-  await page.getByTestId('project-create').click();
+  await createProjectFromList(page, '三段真实视频互动导出验证');
   await expect(page).toHaveURL(/\/editor\?id=/);
   const projectId = new URL(page.url()).searchParams.get('id');
   if (!projectId) throw new Error('项目缺少标识');
@@ -82,7 +83,7 @@ test('完整项目备份与重复导入，前端网页游玩及固定游戏包�
   const backupFile = path.join(directory, `browser-backup-${crypto.randomUUID()}.zip`);
   await (await backupDownload).saveAs(backupFile);
   await dialog.getByTestId('game-export-prepare').click();
-  const gameCard = dialog.locator('[data-transfer-id]').filter({ hasText: '私有游戏版本' }).first();
+  const gameCard = dialog.locator('[data-transfer-id]').filter({ hasText: '固定游戏版本' }).first();
   await expect(gameCard).toHaveAttribute('data-transfer-status', 'awaiting_confirmation');
   const gameId = await gameCard.getAttribute('data-transfer-id');
   await gameCard.getByTestId('transfer-confirm').click();
@@ -96,7 +97,7 @@ test('完整项目备份与重复导入，前端网页游玩及固定游戏包�
     await page.setViewportSize({ width, height: 1000 });
     expect(await dialog.evaluate((element) => element.getBoundingClientRect().width <= innerWidth)).toBe(true);
     expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-    await page.screenshot({ path: path.join(product, `docs/evidence/阶段2-4/项目备份与固定版本-${width}px.png`) });
+    if (captureEvidence) await page.screenshot({ path: path.join(product, `docs/evidence/阶段2-4/项目备份与固定版本-${width}px.png`) });
   }
   await dialog.getByRole('button', { name: '关闭导出窗口' }).click();
   let onlineDownloads = 0;
@@ -146,7 +147,7 @@ test('完整项目备份与重复导入，前端网页游玩及固定游戏包�
     expect(await page.getByTestId('web-game-page').evaluate((element) => element.scrollWidth <= innerWidth)).toBe(true);
     expect(await page.getByTestId('web-game-frame').evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThan(500);
     expect(await page.getByTestId('web-game-frame').evaluate((element) => element.getBoundingClientRect().bottom <= innerHeight)).toBe(true);
-    await page.screenshot({ path: path.join(product, `docs/evidence/阶段2-4/网页游玩-${width}px.png`) });
+    if (captureEvidence) await page.screenshot({ path: path.join(product, `docs/evidence/阶段2-4/网页游玩-${width}px.png`) });
   }
   const anonymous = await browser.newContext();
   try {
@@ -154,13 +155,44 @@ test('完整项目备份与重复导入，前端网页游玩及固定游戏包�
     await denied.goto(fixedUrl);
     await expect(denied.getByRole('alert')).toBeVisible();
     await expect(denied.getByTestId('web-game-frame')).toHaveCount(0);
+    if (!captureEvidence && gameId) {
+      await test.step('公开作品搜索、先导片、互动影院和访问撤销', async () => {
+        const publicationTitle = `公开影院验证 ${crypto.randomUUID()}`;
+        const endpoint = `/api/v1/transfers/${gameId}/publication`;
+        const published = await page.request.put(endpoint, { data: {
+          published: true, title: publicationTitle, description: '本机公开作品验证', trailerAssetId: assetIds[0],
+        } });
+        expect(published.status()).toBe(200);
+        const { publication } = await published.json();
+        await denied.goto('/zh-CN/works');
+        await expect(denied.locator('.st-public')).toHaveCSS('background-color', 'rgb(13, 13, 13)');
+        await denied.getByRole('searchbox', { name: '搜索作品' }).fill('没有匹配的测试作品');
+        await expect(denied.getByText('没有匹配的作品', { exact: true })).toBeVisible();
+        await denied.getByRole('searchbox', { name: '搜索作品' }).fill(publicationTitle);
+        await denied.getByRole('link', { name: publicationTitle }).click();
+        await expect(denied.getByRole('heading', { name: publicationTitle })).toBeVisible();
+        await denied.getByRole('link', { name: '观看先导片' }).click();
+        await expect(denied.locator('video')).toBeVisible();
+        await expect.poll(() => denied.locator('video').evaluate((video: HTMLVideoElement) => video.readyState)).toBeGreaterThan(0);
+        await denied.goto(`/zh-CN/works/${publication.slug}`);
+        await denied.getByRole('link', { name: '开始游戏' }).click();
+        const publicPlayer = denied.frameLocator('iframe');
+        await publicPlayer.locator('[data-next]').click();
+        await publicPlayer.locator(`[data-timeline-clip="${normal}"]`).click();
+        await publicPlayer.locator(`[data-timeline-clip="${qte}"]`).click();
+        await expect(publicPlayer.getByRole('heading', { name: '完成结局', exact: true })).toBeVisible();
+        expect((await page.request.put(endpoint, { data: { published: false } })).status()).toBe(200);
+        await denied.reload();
+        await expect(denied.getByText('作品暂不可访问', { exact: true })).toBeVisible();
+      });
+    }
   } finally { await anonymous.close(); }
   expect(onlineDownloads).toBe(0);
   expect(onlineErrors).toEqual([]);
   await page.getByRole('link', { name: '返回编辑', exact: true }).click();
   await expect(page.getByTestId('project-play-current')).toBeVisible();
   await page.goto('/zh-CN/projects');
-  await page.getByText('导入与恢复完整项目', { exact: true }).click();
+  await page.getByTestId('project-import-open').click();
   await page.getByTestId('project-import-file').setInputFiles(backupFile);
   const imported = page.locator('[data-transfer-id]').filter({ hasText: '项目导入' }).first();
   await expect(imported).toHaveAttribute('data-transfer-status', 'awaiting_confirmation');
@@ -202,7 +234,7 @@ test('完整项目备份与重复导入，前端网页游玩及固定游戏包�
   await expect(offline.getByRole('heading', { name: '超时结局', exact: true })).toBeVisible();
   expect(requests.every((url) => url.startsWith('file:'))).toBe(true);
   expect(errors).toEqual([]);
-  await offline.screenshot({ path: path.join(product, 'docs/evidence/阶段2-4/独立游戏包-QTE超时结局.png') });
+  if (captureEvidence) await offline.screenshot({ path: path.join(product, 'docs/evidence/阶段2-4/独立游戏包-QTE超时结局.png') });
   await context.setOffline(false);
   await writeFile(path.join(directory, 'browser-proof.json'), JSON.stringify({ verifiedAt: new Date().toISOString(), projectId, importedProjectId,
     jobIds: [backupId, gameId, importId], offlinePlayback: true, normalButton: true, qteSuccess: true, qteTimeout: true,

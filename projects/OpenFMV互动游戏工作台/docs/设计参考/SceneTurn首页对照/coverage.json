@@ -1,0 +1,42 @@
+{
+  "pages": 2,
+  "boards": 4,
+  "textLayers": 110,
+  "imageAssets": 12,
+  "gradients": 9,
+  "links": 0,
+  "frames": [
+    {
+      "id": "openfmv-home-source",
+      "title": "OpenFMV · 官网原页参考",
+      "node": "1:2",
+      "w": 1440,
+      "h": 8500,
+      "page": "01 官网参考与首页提案"
+    },
+    {
+      "id": "sceneturn-home-rebuild",
+      "title": "SceneTurn · 首页提案",
+      "node": "1:22",
+      "w": 1440,
+      "h": 3812,
+      "page": "01 官网参考与首页提案"
+    },
+    {
+      "id": "home-demo-beacon",
+      "title": "首页体验 · 灯火未灭",
+      "node": "1:492",
+      "w": 1440,
+      "h": 900,
+      "page": "02 首页互动结果"
+    },
+    {
+      "id": "home-demo-gate",
+      "title": "首页体验 · 闸门关闭",
+      "node": "1:523",
+      "w": 1440,
+      "h": 900,
+      "page": "02 首页互动结果"
+    }
+  ]
+}

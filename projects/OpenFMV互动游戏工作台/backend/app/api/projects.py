@@ -1,16 +1,16 @@
 import copy
 import time
 
-from fastapi import APIRouter, Depends, Response
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query, Response
+from sqlalchemy import func, select, true
 from sqlalchemy.orm import Session
 from pydantic import Field
 
 from app.api.deps import current_user, get_db
 from app.core.errors import AppError
 from app.core.config import get_settings
-from app.models import Canvas, Project, User, new_id
-from app.schemas import CanvasResult, CanvasSave, CanvasSnapshot, ProjectCreate, ProjectEnvelope, ProjectList, ProjectSave, SceneCreate
+from app.models import Canvas, Project, ProjectVersion, User, new_id
+from app.schemas import CanvasNode, CanvasResult, CanvasSave, CanvasSnapshot, ProjectCreate, ProjectEnvelope, ProjectList, ProjectSave, SceneCreate
 from app.services.canvas_delivery import material_canvas_ids, public_canvas, public_project_envelope, restore_canvas_private_data
 from app.services.projects import create_project_record, empty_canvas, get_operation, iso_timestamp, lock_write, project_envelope, record_project_version, require_project, require_revision, require_scene, save_operation, scene_node, validate_project_assets
 from app.tools.story_tools import TimelineEdit, owned_asset, put_media_clip
@@ -25,6 +25,29 @@ class TimelineAssetInput(TimelineEdit):
     expected_revision: int
     start_time: float | None = Field(default=None, ge=0, le=86400, allow_inf_nan=False)
     duration: float | None = Field(default=None, gt=0, le=86400, allow_inf_nan=False)
+
+
+@router.get("/projects/{project_id}/canvases/{scene_id}/nodes/{node_id}/versions")
+def canvas_node_versions(project_id: str, scene_id: str, node_id: str, before: int | None = Query(None, ge=1),
+                         user: User = Depends(current_user), session: Session = Depends(get_db)):
+    project = require_project(session, project_id, user.id)
+    require_scene(project, scene_id)
+    scenes = func.json_each(ProjectVersion.canvases_json).table_valued("value").alias("saved_scene")
+    nodes = func.json_each(scenes.c.value, "$.nodes").table_valued("value").alias("saved_node")
+    query = (select(ProjectVersion.revision, nodes.c.value).select_from(ProjectVersion).join(scenes, true()).join(nodes, true())
+             .where(ProjectVersion.project_id == project_id, ProjectVersion.owner_id == user.id,
+                    func.json_extract(scenes.c.value, "$.sceneId") == scene_id, func.json_extract(nodes.c.value, "$.id") == node_id))
+    if before is not None:
+        query = query.where(ProjectVersion.revision < before)
+    records = session.execute(query.order_by(ProjectVersion.revision.desc()).limit(13)).all()
+    allowed = material_canvas_ids(session, project_id, user.id, scene_id)[scene_id]
+    items = []
+    for revision, value in records[:12]:
+        node = CanvasNode.model_validate_json(value).model_dump(by_alias=True, exclude_unset=True)
+        page = public_canvas({"nodes": [node], "connections": []}, allowed)
+        if page["nodes"]:
+            items.append({"revision": revision, "node": page["nodes"][0]})
+    return {"versions": items, "before": records[11].revision if len(records) > 12 else None}
 
 
 @router.post("/projects/{project_id}/timeline-assets", response_model=ProjectEnvelope, response_model_exclude_unset=True)

@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import Field
@@ -11,14 +11,16 @@ from app.models import Generation, User
 from app.schemas import ProjectEnvelope, WireModel
 from app.services.canvas_delivery import public_project_envelope
 from app.services.generation import adopt_generation, confirm_generation, create_join_generation, generation_view, quote_generation, require_generation, resume_generation, retry_generation_quote
-from app.services.material_delivery import is_material_generation, material_generation_ids, public_material_generation
+from app.services.material_delivery import is_material_generation, material_generation_ids, material_video_artifacts, public_material_generation
 from app.services.projects import require_project
+from app.services.wan import MAX_REFERENCE_IMAGES
 
 
 router = APIRouter(tags=["generations"])
 
 
 class GenerationQuote(WireModel):
+    model_profile_id: str | None = Field(default=None, min_length=1, max_length=100)
     scene_id: str = Field(min_length=1, max_length=100)
     source_node_id: str = Field(min_length=1, max_length=100)
     output_node_id: str | None = Field(default=None, min_length=1, max_length=100)
@@ -26,6 +28,12 @@ class GenerationQuote(WireModel):
     prompt: str = Field(max_length=20000)
     duration: int = Field(default=5, ge=2, le=30, strict=True)
     resolution: Literal["480P", "720P", "1080P"] = "720P"
+    ratio: Literal["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"] | None = None
+    first_frame_node_id: str | None = Field(default=None, min_length=1, max_length=100)
+    last_frame_node_id: str | None = Field(default=None, min_length=1, max_length=100)
+    reference_video_node_id: str | None = Field(default=None, min_length=1, max_length=100)
+    reference_image_node_ids: list[Annotated[str, Field(min_length=1, max_length=100)]] | None = Field(default=None, max_length=MAX_REFERENCE_IMAGES)
+    video_input_mode: Literal["text", "reference", "edit", "extend"] | None = None
     operation_id: str = Field(min_length=1, max_length=100)
 
 
@@ -104,11 +112,16 @@ class GenerationList(WireModel):
     generations: list[GenerationView | MaterialGenerationView]
 
 
-def visible_generation(session, generation, material_ids=None):
+def visible_generation(session, generation, material_ids=None, artifacts=None):
     value = generation_view(generation)
     if material_ids is None:
         material_ids = material_generation_ids(session, generation.project_id, generation.owner_id)
-    return public_material_generation(value) if is_material_generation(value, material_ids) else value
+    if not is_material_generation(value, material_ids):
+        return value
+    request = value["input"].get("request") or {}
+    if artifacts is None and request.get("videoArtifactNodeId") and not request.get("shotSummary"):
+        artifacts = material_video_artifacts(session, generation.project_id, generation.owner_id, generation.scene_id)
+    return public_material_generation(value, artifacts)
 
 
 @router.post("/projects/{project_id}/generations/quote", response_model=GenerationResult, status_code=201)
@@ -134,7 +147,9 @@ def list_generations(project_id: str, user: User = Depends(current_user), sessio
     require_project(session, project_id, user.id)
     generations = session.scalars(select(Generation).where(Generation.project_id == project_id, Generation.owner_id == user.id).order_by(Generation.created_at.desc())).all()
     material_ids = material_generation_ids(session, project_id, user.id)
-    return {"generations": [visible_generation(session, generation, material_ids) for generation in generations]}
+    requests = [generation.input_json.get("request") or {} for generation in generations]
+    artifacts = material_video_artifacts(session, project_id, user.id) if any(request.get("videoArtifactNodeId") and not request.get("shotSummary") for request in requests) else {}
+    return {"generations": [visible_generation(session, generation, material_ids, artifacts) for generation in generations]}
 
 
 @router.get("/generations/{generation_id}", response_model=GenerationResult)

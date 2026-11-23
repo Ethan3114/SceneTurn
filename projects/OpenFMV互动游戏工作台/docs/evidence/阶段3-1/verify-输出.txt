@@ -1,0 +1,276 @@
+verify.sh 自检  2026-11-23 12:08:30  产品：OpenFMV互动游戏工作台（/Users/ethan/Documents/idea-to-launch/projects/OpenFMV互动游戏工作台）
+
+================ 1. 自动化测试 ================
+........................................................................ [ 10%]
+........................................................................ [ 20%]
+........................................................................ [ 31%]
+........................................................................ [ 41%]
+........................................................................ [ 51%]
+........................................................................ [ 62%]
+........................................................................ [ 72%]
+..........................................EE............................ [ 83%]
+........................................................................ [ 93%]
+.............................................                            [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_join_real_worker_preserves_order_duration_audio_and_restart[order3] _
+
+tmp_path = PosixPath('/Users/ethan/Documents/idea-to-launch/projects/OpenFMV互动游戏工作台/.intermediate/pytest-default/test_join_real_worker_preserve3')
+request = <SubRequest 'media_service' for <Function test_join_real_worker_preserves_order_duration_audio_and_restart[order3]>>
+
+    @pytest.fixture
+    def media_service(tmp_path, request):
+        service = RestartableMediaService(tmp_path)
+        request.addfinalizer(service.stop)
+>       service.start()
+
+tests/test_media_tools.py:96: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_media_tools.RestartableMediaService object at 0x10b5d34a0>
+worker_enabled = False
+
+    def start(self, worker_enabled=False):
+        assert self.process is None
+        self.starts += 1
+        environment = os.environ.copy()
+        environment.update(
+            OPENFMV_DATA_DIR=str(self.data_dir), OPENFMV_TMP_DIR=str(self.directory / "media"),
+            OPENFMV_WORKER_ENABLED=str(worker_enabled).lower(), OPENFMV_POLL_INTERVAL="1",
+            OPENFMV_FRONTEND_ORIGIN=FRONTEND_ORIGIN, TMPDIR=str(self.temp_dir),
+            XDG_CACHE_HOME=str(self.directory / "cache"),
+            PYTHONPYCACHEPREFIX=str(self.directory / "pycache"),
+        )
+        log_path = self.directory / f"server-{self.starts}.log"
+        self.log = log_path.open("wb")
+        self.process = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(self.port), "--no-access-log"],
+            cwd=PRODUCT_ROOT / "backend", env=environment, stdin=subprocess.DEVNULL,
+            stdout=self.log, stderr=subprocess.STDOUT,
+        )
+        deadline = time.monotonic() + 45
+        while True:
+            assert self.process.poll() is None, f"真实测试服务启动失败：{log_path}"
+            with socket.socket() as probe:
+                probe.settimeout(0.2)
+                ready = probe.connect_ex(("127.0.0.1", self.port)) == 0
+            if ready:
+                break
+>           assert time.monotonic() < deadline, f"真实测试服务启动超时：{log_path}"
+E           AssertionError: 真实测试服务启动超时：/Users/ethan/Documents/idea-to-launch/projects/OpenFMV互动游戏工作台/.intermediate/pytest-default/test_join_real_worker_preserve3/server-1.log
+E           assert 656281.65730425 < 656281.596562416
+E            +  where 656281.65730425 = <built-in function monotonic>()
+E            +    where <built-in function monotonic> = time.monotonic
+
+tests/test_media_tools.py:78: AssertionError
+_ ERROR at setup of test_join_parallel_repeated_requests_and_worker_lease_use_one_result _
+
+tmp_path = PosixPath('/Users/ethan/Documents/idea-to-launch/projects/OpenFMV互动游戏工作台/.intermediate/pytest-default/test_join_parallel_repeated_re0')
+request = <SubRequest 'media_service' for <Function test_join_parallel_repeated_requests_and_worker_lease_use_one_result>>
+
+    @pytest.fixture
+    def media_service(tmp_path, request):
+        service = RestartableMediaService(tmp_path)
+        request.addfinalizer(service.stop)
+>       service.start()
+
+tests/test_media_tools.py:96: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_media_tools.RestartableMediaService object at 0x10b0a6930>
+worker_enabled = False
+
+    def start(self, worker_enabled=False):
+        assert self.process is None
+        self.starts += 1
+        environment = os.environ.copy()
+        environment.update(
+            OPENFMV_DATA_DIR=str(self.data_dir), OPENFMV_TMP_DIR=str(self.directory / "media"),
+            OPENFMV_WORKER_ENABLED=str(worker_enabled).lower(), OPENFMV_POLL_INTERVAL="1",
+            OPENFMV_FRONTEND_ORIGIN=FRONTEND_ORIGIN, TMPDIR=str(self.temp_dir),
+            XDG_CACHE_HOME=str(self.directory / "cache"),
+            PYTHONPYCACHEPREFIX=str(self.directory / "pycache"),
+        )
+        log_path = self.directory / f"server-{self.starts}.log"
+        self.log = log_path.open("wb")
+        self.process = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(self.port), "--no-access-log"],
+            cwd=PRODUCT_ROOT / "backend", env=environment, stdin=subprocess.DEVNULL,
+            stdout=self.log, stderr=subprocess.STDOUT,
+        )
+        deadline = time.monotonic() + 45
+        while True:
+            assert self.process.poll() is None, f"真实测试服务启动失败：{log_path}"
+            with socket.socket() as probe:
+                probe.settimeout(0.2)
+                ready = probe.connect_ex(("127.0.0.1", self.port)) == 0
+            if ready:
+                break
+>           assert time.monotonic() < deadline, f"真实测试服务启动超时：{log_path}"
+E           AssertionError: 真实测试服务启动超时：/Users/ethan/Documents/idea-to-launch/projects/OpenFMV互动游戏工作台/.intermediate/pytest-default/test_join_parallel_repeated_re0/server-1.log
+E           assert 656331.633673625 < 656331.629340125
+E            +  where 656331.633673625 = <built-in function monotonic>()
+E            +    where <built-in function monotonic> = time.monotonic
+
+tests/test_media_tools.py:78: AssertionError
+=========================== short test summary info ============================
+ERROR tests/test_media_tools.py::test_join_real_worker_preserves_order_duration_audio_and_restart[order3]
+ERROR tests/test_media_tools.py::test_join_parallel_repeated_requests_and_worker_lease_use_one_result
+691 passed, 2 errors in 1162.50s (0:19:22)
+
+ RUN  v1.6.0 /Users/ethan/Documents/idea-to-launch/projects/OpenFMV互动游戏工作台/frontend
+
+ ✓ tests/real/plot-shots.test.ts  (1 test) 5ms
+ ✓ tests/real/agent-branches.test.ts  (2 tests) 17ms
+ ✓ tests/real/media-time-precision.test.ts  (1 test) 552ms
+ ✓ __tests__/unit/nodeTimeline.test.ts  (93 tests) 165ms
+ ✓ tests/real/project-session-display.test.ts  (8 tests) 24ms
+ ✓ tests/real/story-merge.test.ts  (1 test) 1312ms
+ ✓ tests/real/canvas-merge.test.ts  (4 tests) 2195ms
+ ✓ tests/real/runtime-contract.test.ts  (3 tests) 1129ms
+
+ Test Files  8 passed (8)
+      Tests  113 passed (113)
+   Start at  12:27:56
+   Duration  3.43s (transform 2.39s, setup 1ms, collect 6.48s, tests 5.40s, environment 4ms, prepare 1.92s)
+
+结果：不通过（通过 691/693，退出码 1）；前端测试通过
+
+================ 2. 真实模型冒烟记录（docs/evidence/<阶段>/冒烟记录.md，须由冒烟脚本写入，格式见通用手册第十节） ================
+问题：以下代码文件比冒烟记录新，说明冒烟之后又改了代码，要重跑冒烟：
+backend/app/image_models.py
+backend/app/tools/project_tools.py
+backend/app/core/config.py
+backend/app/api/generations.py
+backend/app/api/canvas_images.py
+结果：待验（记录早于最近代码改动）
+
+================ 3. 密钥排除（扫描整个仓库会进 git 的文件，以及本产品的构建产物） ================
+通过：没有 .env 文件被 git 跟踪。
+通过：会进仓库的文件中未发现密钥样式字符串。
+通过：构建产物 projects/OpenFMV互动游戏工作台/frontend/.next 未发现密钥样式字符串。
+结果：通过
+
+================ 4. 数据重启恢复（verify.sh 自己起服务、写随机标记、杀进程、再起、读回；钩子 scripts/restart-check.sh 只提供 start/write/read/stop） ================
+通过：起服务（PID 96536）→ 写入随机标记 → 杀掉 → 再起（PID 96584）→ 按 ID c326374f-380f-4d33-a4d8-9d709b1c4afb 读回，标记一致。
+结果：通过（进程 96536→96584，随机标记读回一致）
+
+================ 5. 前端类型检查 / Lint / 生产构建 ================
+
+> openfmv@0.0.4 lint
+> eslint app electron i18n scripts shared __tests__ tests proxy.ts next.config.mjs postcss.config.js tailwind.config.js vitest.config.mts vitest.real.config.mts
+
+
+> openfmv@0.0.4 build
+> npm run ipc:build && node scripts/build.js
+
+
+> openfmv@0.0.4 ipc:build
+> node scripts/build-ipc-contract.js
+
+▲ Next.js 16.2.7 (Turbopack)
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: 1074790400
+  · proxyTimeout: 300000
+  · serverActions
+
+  Creating an optimized production build ...
+Browserslist: browsers data (caniuse-lite) is 9 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Turbopack build encountered 1 warnings:
+./next.config.mjs
+Encountered unexpected file in NFT list
+A file was traced that indicates that the whole project was traced unintentionally. Somewhere in the import trace below, there are:
+- filesystem operations (like path.join, path.resolve or fs.readFile), or
+- very dynamic requires (like require('./' + foo)).
+To resolve this, you can
+- remove them if possible, or
+- only use them in development, or
+- make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
+- add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar)
+
+Import trace:
+  App Route:
+    ./next.config.mjs
+    ./app/api/local-asset/route.ts
+
+
+✓ Compiled successfully in 29.5s
+  Running TypeScript ...
+  Finished TypeScript in 32.8s ...
+  Collecting page data using 9 workers ...
+  Generating static pages using 9 workers (0/80) ...
+  Generating static pages using 9 workers (20/80) 
+  Generating static pages using 9 workers (40/80) 
+  Generating static pages using 9 workers (60/80) 
+✓ Generating static pages using 9 workers (80/80) in 473ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ƒ /_not-found
+├ ƒ /[locale]
+├ ƒ /[locale]/account
+├ ƒ /[locale]/ai-debug
+├ ƒ /[locale]/asset-studio
+├ ƒ /[locale]/assets
+├ ƒ /[locale]/editor
+├ ƒ /[locale]/nodes
+├ ƒ /[locale]/play/[id]
+├ ƒ /[locale]/privacy
+├ ƒ /[locale]/projects
+├ ƒ /[locale]/settings/models
+├ ƒ /[locale]/settings/text
+├ ƒ /[locale]/settings/wan
+├ ƒ /[locale]/studio
+├ ƒ /[locale]/studio/guide
+├ ƒ /[locale]/terms
+├ ƒ /[locale]/works
+├ ƒ /[locale]/works/[slug]
+├ ƒ /[locale]/works/[slug]/play
+├ ƒ /[locale]/works/[slug]/trailer
+├ ƒ /account
+├ ƒ /ai-debug
+├ ƒ /api/ai-settings/agents
+├ ƒ /api/ai-settings/agents/[id]/test
+├ ƒ /api/local-asset
+├ ƒ /asset-studio
+├ ƒ /assets
+├ ƒ /editor
+├ ƒ /nodes
+├ ƒ /play/[id]
+├ ƒ /privacy
+├ ƒ /projects
+├ ƒ /settings/text
+├ ƒ /settings/wan
+├ ƒ /studio
+└ ƒ /terms
+
+
+ƒ Proxy (Middleware)
+
+ƒ  (Dynamic)  server-rendered on demand
+
+Prepared Next standalone assets.
+结果：通过
+
+================ 6. 文件齐全与位置（AGENTS.md 第 7 节的产出清单；根目录不放产品文件；前面阶段有没有被跳过） ================
+通过：根目录没有放错位置的文件。
+有：docs/阶段文档/前端适配声明.md
+有：docs/阶段文档/阶段3-1技术开发文档.md
+有：docs/项目状态.md
+有：README.md
+有：docs/evidence/阶段3-1/照着做清单.md
+有：docs/evidence/阶段3-1/是否表.md
+有：docs/evidence/阶段3-1/ 下 4 张截图
+通过：前面阶段（阶段0 阶段1 阶段2-1 阶段3-0）的产物都在。
+结果：通过
+
+================ 汇总（抄进是否表的就是这六行） ================
+是否表第 2 项  自动化测试：     不通过（通过 691/693，退出码 1）；前端测试通过
+是否表第 3 项  真实模型冒烟：   待验（记录早于最近代码改动）
+是否表第 4 项  前端检查与构建： 通过
+是否表第 5 项  密钥排除：       通过
+是否表第 6 项  重启后数据恢复： 通过（进程 96536→96584，随机标记读回一致）
+是否表第 10 项 文件齐全与位置： 通过
+总判定：有不通过、未配置或待验项，对应是否表只能填"否"（第 3 项填"待验"）。

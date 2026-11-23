@@ -1,8 +1,23 @@
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
-import { canvasThemes } from "./canvas-theme";
-import { useThemeStore } from "./use-theme-store";
+import { getBezierPath, Position as PortPosition } from "@xyflow/react";
+
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position } from "./canvas";
+
+function portAnchor(node: CanvasNodeData, side: ConnectionHandle["handleType"]): Position {
+    return {
+        x: node.position.x + (side === "source" ? node.width : 0),
+        y: node.position.y + node.height / 2,
+    };
+}
+
+function connectionCurve(source: Position, target: Position) {
+    const [path] = getBezierPath({
+        sourceX: source.x, sourceY: source.y, sourcePosition: PortPosition.Right,
+        targetX: target.x, targetY: target.y, targetPosition: PortPosition.Left,
+    });
+    return path;
+}
 
 export function ConnectionPath({
     connection,
@@ -19,24 +34,20 @@ export function ConnectionPath({
     onSelect: () => void;
     onContextMenu?: (event: ReactMouseEvent<SVGPathElement>) => void;
 }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const startX = from.position.x + from.width;
-    const startY = from.position.y + from.height / 2;
-    const endX = to.position.x;
-    const endY = to.position.y + to.height / 2;
-    const dx = Math.abs(endX - startX);
-    const curvature = Math.max(dx * 0.5, 50);
-    const pathD = `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`;
+    const [hovered, setHovered] = useState(false);
+    const path = connectionCurve(portAnchor(from, "source"), portAnchor(to, "target"));
 
     return (
-        <g>
+        <g className="fmv-canvas-connection" data-selected={active} data-hovered={hovered}>
             <path
                 data-connection-id={connection.id}
-                d={pathD}
+                d={path}
                 stroke="transparent"
-                strokeWidth="16"
+                strokeWidth="20"
                 fill="none"
                 style={{ cursor: "pointer", pointerEvents: "stroke" }}
+                onPointerEnter={() => setHovered(true)}
+                onPointerLeave={() => setHovered(false)}
                 onClick={(event) => {
                     event.stopPropagation();
                     onSelect();
@@ -47,32 +58,27 @@ export function ConnectionPath({
                     onContextMenu?.(event);
                 }}
             />
-            <path
-                d={pathD}
-                stroke={active ? theme.node.activeStroke : theme.node.muted}
-                strokeWidth={active ? 3 : 2}
-                strokeOpacity={active ? 1 : 0.82}
-                fill="none"
-                style={{ filter: active ? `drop-shadow(0 0 8px ${theme.node.activeStroke}66)` : undefined, pointerEvents: "none" }}
-            />
+            <path d={path} className="fmv-canvas-connection-stroke" fill="none" stroke="#86909c" strokeWidth="2" pointerEvents="none" />
+            {(hovered || active) && <g className="fmv-canvas-connection-current" fill="none" stroke="#64b4ff" pointerEvents="none" aria-hidden="true">
+                <path d={path} strokeWidth="12" strokeLinecap="round" strokeDasharray="36 64" strokeOpacity="0.06" />
+                <path d={path} strokeWidth="7" strokeLinecap="round" strokeDasharray="36 64" strokeOpacity="0.12" />
+                <path d={path} strokeWidth="4" strokeDasharray="36 64" strokeOpacity="0.15" />
+                {[0.176471, 0.214286, 0.272727, 0.375, 0.6].map((opacity, index) => {
+                    const offset = (index + 1) * 6;
+                    return <path key={offset} d={path} strokeWidth="4" strokeDasharray={`0 ${offset} ${36 - offset} 64`} strokeOpacity={opacity} />;
+                })}
+            </g>}
         </g>
     );
 }
 
 export function ActiveConnectionPath({ node, handle, mouseWorld, target }: { node?: CanvasNodeData; handle: ConnectionHandle; mouseWorld: Position; target?: CanvasNodeData }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
     if (!node) return null;
 
-    const startX = handle.handleType === "source" ? node.position.x + node.width : mouseWorld.x;
-    const startY = handle.handleType === "source" ? node.position.y + node.height / 2 : mouseWorld.y;
-    const endX = handle.handleType === "source" ? mouseWorld.x : node.position.x;
-    const endY = handle.handleType === "source" ? mouseWorld.y : node.position.y + node.height / 2;
-    const snappedStartX = handle.handleType === "target" && target ? target.position.x + target.width : startX;
-    const snappedStartY = handle.handleType === "target" && target ? target.position.y + target.height / 2 : startY;
-    const snappedEndX = handle.handleType === "source" && target ? target.position.x : endX;
-    const snappedEndY = handle.handleType === "source" && target ? target.position.y + target.height / 2 : endY;
-    const distance = Math.abs(snappedEndX - snappedStartX);
-    const pathD = `M ${snappedStartX} ${snappedStartY} C ${snappedStartX + distance * 0.5} ${snappedStartY}, ${snappedEndX - distance * 0.5} ${snappedEndY}, ${snappedEndX} ${snappedEndY}`;
+    const nearestSource = target ? portAnchor(target, "source") : mouseWorld;
+    const nearestTarget = target ? portAnchor(target, "target") : mouseWorld;
+    const source = handle.handleType === "source" ? portAnchor(node, "source") : nearestSource;
+    const destination = handle.handleType === "target" ? portAnchor(node, "target") : nearestTarget;
 
-    return <path d={pathD} stroke={theme.node.activeStroke} strokeWidth="2" fill="none" strokeDasharray="5,5" />;
+    return <path d={connectionCurve(source, destination)} className="fmv-canvas-connection-draft" stroke="#86909c" strokeWidth="2" fill="none" />;
 }

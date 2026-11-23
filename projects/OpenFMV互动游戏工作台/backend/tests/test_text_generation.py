@@ -312,7 +312,7 @@ def test_unconfigured_text_state_and_owner_session_survive_restart(text_service,
     assert response.json()["configured"] is False
     assert text_admin.get(f"/projects/{envelope['project']['id']}").json() == envelope
     assert text_admin.get(f"/projects/{envelope['project']['id']}/text-generations").json() == {"textGenerations": []}
-    assert database_rows(text_service, "SELECT version_num FROM alembic_version") == [("0012_project_transfers",)]
+    assert database_rows(text_service, "SELECT version_num FROM alembic_version") == [("0016_canvas_image_jobs",)]
     empty_generation_state(text_service)
 
 
@@ -331,7 +331,7 @@ def test_result_schema_rejects_invalid_structure(task, invalid):
 
 
 def test_each_text_task_has_deterministic_instructions_and_schema():
-    assert set(RESULTS) == {"text", "summary", "character", "prop", "scene", "plot", "shot"}
+    assert set(RESULTS) == {"text", "summary", "character", "prop", "scene", "plot", "shot", "translate"}
     for task, schema in RESULTS.items():
         instructions = task_instructions(task)
         assert json.dumps(schema.model_json_schema(), ensure_ascii=False) in instructions

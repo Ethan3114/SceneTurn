@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
-import { enterManualStudio } from './manual-studio';
+import { addCanvasNode, createProjectFromList, enterManualStudio } from './manual-studio';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -31,23 +31,22 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
   await page.getByTestId('auth-password').fill(crypto.randomUUID());
   await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill('报价失效与重新报价验证');
-  await page.getByTestId('project-create').click();
+  await createProjectFromList(page, '报价失效与重新报价验证');
   await enterManualStudio(page);
   const projectId = new URL(page.url()).searchParams.get('id');
-  await page.getByTestId('canvas-add-text').click();
+  await addCanvasNode(page, 'text');
   const textId = await page.getByTestId('canvas-node').last().getAttribute('data-node-id');
   expect(textId).toBeTruthy();
   const textNode = page.locator(`[data-testid="canvas-node"][data-node-id="${textId}"]`);
   await textNode.getByTestId('canvas-node-body').dblclick();
   await textNode.getByTestId('canvas-text').fill('镜头验证输入');
-  await page.getByTestId('canvas-add-config').click();
+  await addCanvasNode(page, 'video');
   const sourceId = await page.getByTestId('canvas-node').last().getAttribute('data-node-id');
   expect(sourceId).toBeTruthy();
   const sourceNode = page.locator(`[data-testid="canvas-node"][data-node-id="${sourceId}"]`);
   const header = await sourceNode.getByTestId('canvas-node-header').boundingBox();
   expect(header).not.toBeNull();
-  if (!header) throw new Error('生成配置节点标题栏未显示');
+  if (!header) throw new Error('视频生成节点标题栏未显示');
   await page.mouse.move(header.x + 80, header.y + 12);
   await page.mouse.down();
   await page.mouse.move(header.x + 80, header.y + 72, { steps: 12 });
@@ -64,8 +63,8 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
   await page.mouse.move(inputHandle.x + inputHandle.width / 2, inputHandle.y + inputHandle.height / 2, { steps: 12 });
   await page.mouse.up();
   await sourceNode.getByTestId('canvas-node-header').click();
-  await expect(sourceNode.getByTestId('canvas-node-body').getByTestId('generation-prompt')).toBeVisible();
-  await expect(sourceNode.locator('[data-node-panel] [contenteditable="true"]')).toHaveCount(0);
+  await expect(sourceNode.locator('[data-node-panel]').getByTestId('generation-prompt')).toBeVisible();
+  await expect(sourceNode.getByTestId('canvas-node-body').getByTestId('generation-prompt')).toHaveCount(0);
   await sourceNode.getByTestId('generation-prompt').fill(`清晨的空旷车站，固定镜头，阳光照进候车大厅。参考@[node:${textId}]。`);
   const firstQuoteResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/generations/quote'));
   await sourceNode.getByTestId('generation-quote').click();
@@ -79,16 +78,29 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
   expect(first.input.prompt).toContain('【文本1】');
   expect(first.input.prompt).toContain('镜头验证输入');
   expect(first.input.inputs.map((input) => input.nodeId)).toEqual([textId]);
-  await sourceNode.getByTestId('canvas-node-header').click();
+  const review = page.getByRole('dialog', { name: '核对视频生成' });
+  await expect(review.getByTestId('generation-confirm')).toBeEnabled();
+  await review.getByRole('button', { name: '返回编辑' }).click();
   const oldCard = page.locator(`[data-task-id="${first.id}"]`);
-  await expect(oldCard.getByTestId('generation-confirm')).toBeVisible();
+  await expect(oldCard.getByTestId('generation-open-review')).toBeVisible();
   expect(first.reservedCents).toBe(0);
   const initialViewport = await renderedViewport(sourceNode);
 
   const surface = page.getByTestId('canvas-surface');
-  const bounds = await surface.boundingBox();
-  if (!bounds) throw new Error('实际画布背景未显示');
-  const background = { x: bounds.x + bounds.width - 35, y: bounds.y + bounds.height - 35 };
+  const background = await surface.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const isBlank = (x: number, y: number) => {
+      const target = document.elementFromPoint(x, y);
+      return target && element.contains(target) && !target.closest('[data-node-id],[data-connection-id],[data-canvas-no-zoom]');
+    };
+    for (const offsetY of [80, 160, bounds.height / 2, bounds.height - 88]) {
+      for (const offsetX of [bounds.width - 45, bounds.width - 165, bounds.width / 2, 160]) {
+        const point = { x: bounds.x + offsetX, y: bounds.y + offsetY };
+        if (isBlank(point.x, point.y) && isBlank(point.x - 70, point.y - 40)) return point;
+      }
+    }
+    throw new Error('实际画布没有可平移的空白区域');
+  });
   await page.keyboard.down('Space');
   await page.mouse.move(background.x, background.y);
   await page.mouse.down();
@@ -101,10 +113,11 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
   expect(editedViewport.k).not.toBe(initialViewport.k);
   expect(editedViewport.x).not.toBe(initialViewport.x);
   expect(editedViewport.y).not.toBe(initialViewport.y);
-  await expect(page.getByTestId('save-status')).toContainText('未保存');
-  await expect(oldCard.getByTestId('quote-unsaved-message')).toHaveCount(0);
-  await expect(oldCard.getByTestId('generation-confirm')).toBeVisible();
-  await expect(oldCard.getByTestId('generation-confirm')).toBeEnabled();
+  await expect(page.getByTestId('save-status')).toHaveText('视口有未保存的调整');
+  await oldCard.getByTestId('generation-open-review').click();
+  await expect(review.getByTestId('quote-unsaved-message')).toHaveCount(0);
+  await expect(review.getByTestId('generation-confirm')).toBeEnabled();
+  await review.getByRole('button', { name: '返回编辑' }).click();
   expect(confirmRequests).toBe(0);
   const beforeReload = await sourceNode.boundingBox();
   const beforeSurface = await surface.boundingBox();
@@ -133,14 +146,15 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
   await sourceNode.getByTestId('canvas-node-header').click();
   await expect(oldCard).toHaveAttribute('data-quote-state', 'expired');
   await expect(oldCard.getByRole('heading', { name: '生成输入需要重新核对' })).toBeVisible();
-  await expect(oldCard.getByTestId('quote-expired-message')).toContainText(`版本 ${first.projectRevision}`);
-  await expect(oldCard.getByTestId('quote-expired-message')).toContainText(`版本 ${saved.revision}`);
-  await expect(oldCard.getByTestId('generation-confirm')).toHaveCount(0);
-  await expect(oldCard.getByTestId('quote-unsaved-message')).toHaveCount(0);
+  await oldCard.getByTestId('generation-open-review').click();
+  await expect(review.getByTestId('quote-expired-message')).toContainText(`版本 ${first.projectRevision}`);
+  await expect(review.getByTestId('quote-expired-message')).toContainText(`版本 ${saved.revision}`);
+  await expect(review.getByTestId('generation-confirm')).toHaveCount(0);
+  await expect(review.getByTestId('quote-unsaved-message')).toHaveCount(0);
 
   const nextQuoteResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/generations/quote'));
   const nextSaveResponse = page.waitForResponse((response) => response.request().method() === 'PUT' && new URL(response.url()).pathname.includes('/canvases/'));
-  await oldCard.getByRole('button', { name: '按当前输入重新核对', exact: true }).click();
+  await review.getByRole('button', { name: '按当前输入重新核对', exact: true }).click();
   const second = (await (await nextQuoteResponse).json()).generation as { id: string; projectRevision: number; status: string; reservedCents: number; outputNodeId: string };
   const nextSaved = await (await nextSaveResponse).json() as { revision: number };
   expect(second.id).not.toBe(first.id);
@@ -149,24 +163,27 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
   expect(second.outputNodeId).not.toBe(first.outputNodeId);
   expect(second.status).toBe('awaiting_confirmation');
   expect(second.reservedCents).toBe(0);
-  await sourceNode.getByTestId('canvas-node-header').click();
   const newCard = page.locator(`[data-task-id="${second.id}"]`);
-  await expect(newCard.getByTestId('generation-confirm')).toBeVisible();
+  await expect(review.getByTestId('generation-review')).toHaveAttribute('data-task-id', second.id);
+  await expect(review.getByTestId('generation-confirm')).toBeVisible();
+  await review.getByRole('button', { name: '返回编辑' }).click();
   await expect(oldCard).toBeVisible();
 
   await sourceNode.getByTestId('generation-prompt').fill('傍晚的空旷车站，固定镜头，灯光照亮候车大厅。');
   await expect(newCard).toHaveAttribute('data-quote-state', 'unsaved');
-  await expect(newCard.getByTestId('quote-unsaved-message')).toBeVisible();
-  await expect(newCard.getByTestId('quote-expired-message')).toHaveCount(0);
-  await expect(newCard.getByTestId('generation-confirm')).toHaveCount(0);
+  await newCard.getByTestId('generation-open-review').click();
+  await expect(review.getByTestId('quote-unsaved-message')).toBeVisible();
+  await expect(review.getByTestId('quote-expired-message')).toHaveCount(0);
+  await expect(review.getByTestId('generation-confirm')).toHaveCount(0);
   const finalQuoteResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/generations/quote'));
-  await newCard.getByRole('button', { name: '保存当前输入并重新核对', exact: true }).click();
+  await review.getByRole('button', { name: '保存当前输入并重新核对', exact: true }).click();
   const third = (await (await finalQuoteResponse).json()).generation as { id: string; status: string; reservedCents: number; input: { prompt: string } };
   expect(third.input.prompt).toContain('傍晚');
   expect(third.status).toBe('awaiting_confirmation');
   expect(third.reservedCents).toBe(0);
-  await sourceNode.getByTestId('canvas-node-header').click();
-  await expect(page.locator(`[data-task-id="${third.id}"]`).getByTestId('generation-confirm')).toBeVisible();
+  await expect(review.getByTestId('generation-review')).toHaveAttribute('data-task-id', third.id);
+  await expect(review.getByTestId('generation-confirm')).toBeVisible();
+  await review.getByRole('button', { name: '返回编辑' }).click();
   const response = await page.request.get(`/api/v1/projects/${projectId}/generations`);
   expect(response.ok()).toBe(true);
   const persisted = await response.json() as { generations: Array<{ id: string; status: string; reservedCents: number }> };
@@ -188,28 +205,16 @@ test('来源视频节点展示正式接口创建的待确认报价', async ({ pa
   await page.getByTestId('auth-password').fill(crypto.randomUUID());
   await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill('来源视频节点待确认布局验证');
-  await page.getByTestId('project-create').click();
+  await createProjectFromList(page, '来源视频节点待确认布局验证');
   await enterManualStudio(page);
   const projectId = new URL(page.url()).searchParams.get('id');
-  await page.getByTestId('canvas-add-video').click();
+  await addCanvasNode(page, 'video');
   const sourceId = await page.getByTestId('canvas-node').last().getAttribute('data-node-id');
   expect(sourceId).toBeTruthy();
   const sourceNode = page.locator(`[data-testid="canvas-node"][data-node-id="${sourceId}"]`);
-  await expect(sourceNode.getByTestId('generation-prompt')).toHaveCount(0);
+  await sourceNode.locator('[data-node-panel]').getByTestId('generation-prompt').fill('树林中的清晨，固定镜头，光线自然。');
   await page.getByTestId('canvas-save').click();
   await expect(page.getByTestId('save-status')).toContainText('已保存');
-  const prepared = await page.evaluate(async ({ id, sourceNodeId }) => {
-    const envelope = await (await fetch(`/api/v1/projects/${id}`)).json();
-    const canvas = envelope.canvases.find((item: { nodes: Array<{ id: string }> }) => item.nodes.some((node) => node.id === sourceNodeId));
-    if (!canvas) throw new Error('真实保存结果缺少来源视频节点');
-    const response = await fetch(`/api/v1/projects/${id}/canvases/${canvas.sceneId}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ connections: canvas.connections, viewport: canvas.viewport, expectedRevision: envelope.revision, operationId: crypto.randomUUID(), nodes: canvas.nodes.map((node: { id: string; metadata?: Record<string, unknown> }) => node.id === sourceNodeId ? { ...node, metadata: { ...node.metadata, prompt: '树林中的清晨，固定镜头，光线自然。' } } : node) }),
-    });
-    return response.status;
-  }, { id: projectId, sourceNodeId: sourceId });
-  expect(prepared).toBe(200);
   const stored = await page.request.get(`/api/v1/projects/${projectId}`);
   expect(stored.ok()).toBe(true);
   const envelope = await stored.json() as { canvases: Array<{ sceneId: string; nodes: Array<{ id: string; metadata: { composerContent?: string; prompt?: string } }> }> };
@@ -236,14 +241,17 @@ test('来源视频节点展示正式接口创建的待确认报价', async ({ pa
   await sourceNode.getByTestId('canvas-node-header').click();
   const task = sourceNode.locator(`[data-task-id="${generation.id}"]`);
   await expect(task).toBeVisible();
-  await expect(task.getByTestId('generation-confirm')).toBeVisible();
-  await expect(task.getByTestId('generation-confirm')).toBeEnabled();
-  const createConfig = sourceNode.getByTestId('generation-create-config');
-  await createConfig.click();
-  const config = page.getByTestId('canvas-node').last();
-  await expect(config.getByTestId('generation-config')).toBeVisible();
-  await expect(config.getByTestId('canvas-node-body').getByTestId('generation-prompt')).toContainText(prompt!);
-  await expect(config.locator('[data-node-panel] [contenteditable="true"]')).toHaveCount(0);
+  await task.getByTestId('generation-open-review').click();
+  const review = page.getByRole('dialog', { name: '核对视频生成' });
+  await expect(review.getByTestId('generation-confirm')).toBeEnabled();
+  await review.getByRole('button', { name: '返回编辑' }).click();
+  const panel = sourceNode.locator('[data-node-panel]');
+  await expect(panel.getByTestId('generation-config')).toBeVisible();
+  await expect(panel.getByTestId('generation-prompt')).toContainText(prompt!);
+  await panel.getByTestId('generation-model-trigger').click();
+  await expect(panel.getByRole('listbox', { name: '模型' })).toBeVisible();
+  await expect(sourceNode.getByTestId('generation-create-config')).toHaveCount(0);
+  await expect(page.getByTestId('canvas-node')).toHaveCount(1);
   expect(confirmRequests).toBe(0);
   await page.getByTestId('logout').click();
   await expect(page).toHaveURL(/\/account$/);
@@ -263,11 +271,10 @@ test('未连接的显式引用在节点内阻止报价和快捷提交', async ({
   await page.getByTestId('auth-password').fill(crypto.randomUUID());
   await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill('节点显式引用前置校验');
-  await page.getByTestId('project-create').click();
+  await createProjectFromList(page, '节点显式引用前置校验');
   await enterManualStudio(page);
   const projectId = new URL(page.url()).searchParams.get('id');
-  await page.getByTestId('canvas-add-config').click();
+  await addCanvasNode(page, 'video');
   const source = page.getByTestId('canvas-node').last();
   await page.getByTestId('canvas-save').click();
   await expect(page.getByTestId('save-status')).toContainText('已保存');
@@ -299,8 +306,7 @@ test('组合提示词超过20000字符时保留节点且不增加服务器版本
   await page.getByTestId('auth-password').fill(crypto.randomUUID());
   await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill('节点组合长度前置校验');
-  await page.getByTestId('project-create').click();
+  await createProjectFromList(page, '节点组合长度前置校验');
   await enterManualStudio(page);
   const projectId = new URL(page.url()).searchParams.get('id');
   const authored = await page.evaluate(async (id) => {
@@ -362,8 +368,7 @@ test('组合复制和取消组合保存真实内部连接、引用及素材身�
   await page.getByTestId('auth-password').fill(crypto.randomUUID());
   await page.getByTestId('auth-submit').click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByTestId('project-title').fill('组合与复制真实保存验证');
-  await page.getByTestId('project-create').click();
+  await createProjectFromList(page, '组合与复制真实保存验证');
   await enterManualStudio(page);
   const projectId = new URL(page.url()).searchParams.get('id');
   const uploadResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/v1/projects/${projectId}/assets`);

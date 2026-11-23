@@ -9,9 +9,11 @@ from app.creative_artifacts import image_prompt_items
 from app.image_models import ImageAccount, ImageJob
 from app.material_schemas import material_request_payload
 from app.models import Generation, new_id
-from app.services.image_queue import IMAGE_REQUEST_GAP_SECONDS, image_queue_awaits_result
+from app.services.connections import require_image_connection
+from app.services.image_queue import IMAGE_REQUEST_GAP_SECONDS, image_queue_awaits_result, uses_codex_image
 from app.services.projects import payload_digest, require_project, require_revision
 from app.services.material_references import frozen_reference_assets, reusable_boundary_frames, validate_reference_assets
+from app.services.providers import LEGACY_DEFAULTS, freeze_selection
 
 
 VISUAL_ROLES = {"character_designer", "scene_designer", "storyboarder"}
@@ -113,7 +115,13 @@ def pause_for_review(session, run, step, node, artifact, settings=None):
                 raise AppError(422, "STORYBOARD_SINGLE_FRAME_REQUIRED", "每个边界帧必须生成一张独立图片")
             for variant in range(spec["imageCount"]):
                 specifications.append((index, item, spec, width, height, variant, groups[position]))
-        if specifications:
+        selected_id = run.limits_json.get("modelSelection", {}).get("image") or LEGACY_DEFAULTS["image"]
+        image_selection = None
+        if specifications and selected_id != "sensetime-fast":
+            image_selection = freeze_selection(session, run.owner_id, require_project(session, run.project_id, run.owner_id), "image", selected_id)
+            if image_selection["providerId"] == "volcengine-ark" and any(min(item[3], item[4]) < 1024 or max(item[3], item[4]) > 4096 for item in specifications):
+                raise AppError(422, "ARK_IMAGE_SIZE_UNSUPPORTED", "Seedream当前接入要求宽高均为1024至4096，请调整生成规格")
+        if specifications and image_selection is None:
             accounts = session.scalars(select(ImageAccount).where(ImageAccount.owner_id == run.owner_id)).all()
             if len(accounts) != 3:
                 raise AppError(409, "IMAGE_ACCOUNTS_REQUIRED", "请配置三个商汤图片账号")
@@ -135,7 +143,7 @@ def pause_for_review(session, run, step, node, artifact, settings=None):
                 operation_id=f"{run.id}:{artifact_hash}:{index}:{variant}", label=item["label"] + (f" · {variant + 1}" if spec["imageCount"] > 1 else ""),
                 frame_key=artifact["keyframes"][index]["key"] if artifact["role"] == "storyboarder" else None,
                 status="awaiting_confirmation", request_json={"prompt": item["prompt"], "width": width, "height": height,
-                    "referenceAssets": selected_references, "referenceGroup": group},
+                    "referenceAssets": selected_references, "referenceGroup": group, **({"modelProfile": image_selection} if image_selection else {})},
                 reference_asset_ids=anchors, dependency_ids=[dependency.id] if dependency else [])
             session.add(job)
             jobs.append(job)
@@ -169,6 +177,7 @@ def public_review(session, run):
     if not review or review["status"] in {"approved", "revision_requested", "not_required"}:
         return None
     jobs = [session.get(ImageJob, identifier) for identifier in review["imageJobIds"]]
+    codex_images = any(uses_codex_image(job) for job in jobs)
     status = review["status"]
     if status == "generating" and jobs and all(job.status == "ready" for job in jobs):
         status = "review_images"
@@ -180,6 +189,10 @@ def public_review(session, run):
     else:
         message = "图片已生成，请查看画布并确认后继续。"
     if status == "generating":
+        codex_status = None
+        if codex_images:
+            from app.services.codex_images import material_connection_status
+            codex_status = material_connection_status(session, jobs[0])
         counts = {state: sum(job.status == state for job in jobs) for state in ("ready", "submission_unknown", "failed", "cancelled")}
         counts["timeout"] = sum(job.status == "failed" and job.error_code == "IMAGE_RESPONSE_TIMEOUT" for job in jobs)
         counts["no_account"] = sum(job.status == "failed" and job.error_code == "IMAGE_ALTERNATE_ACCOUNT_UNAVAILABLE" for job in jobs)
@@ -190,15 +203,25 @@ def public_review(session, run):
         if counts["no_account"]:
             problems.append(f"{counts['no_account']}张超时且无其他可用账号")
         if problems:
-            active = sum(job.status in {"queued", "claimed", "submitting", "response_saved"} for job in jobs)
+            active = sum(job.status in {"queued", "claimed", "submitting", "response_saved", "waiting_connection"} for job in jobs)
             message = f"图片已完成{counts['ready']}/{len(jobs)}张，" + "，".join(problems) + "。"
             if active:
                 message += f"另有{active}张仍在排队或处理中。"
             if counts["submission_unknown"]:
-                message += "回执最多等待3分钟，超时后尝试换账号。"
+                if codex_images:
+                    message += "请保持原本机 Codex 连接在线，以便核对已提交的回合。" if codex_status != "authorization_ended" else "原连接授权已失效，已提交的回合仍待核实，可以停止本轮制作。"
+                else:
+                    message += "付费图片的提交结果待核实，原预留继续保留。" if any(job.status == "submission_unknown" and job.request_json.get("modelProfile") for job in jobs) else "回执最多等待3分钟，超时后尝试换账号。"
             elif not active:
                 message += "请先核对未完成的图片。"
-        if any(job.status == "queued" for job in jobs):
+        if codex_images and not problems:
+            if codex_status == "authorization_ended":
+                message = "本次图片任务的原连接授权已失效，可以停止本轮制作并重新连接。"
+            elif codex_status == "offline":
+                message = "本次图片任务正在等待原本机 Codex 连接恢复，已保存的进度会继续使用。"
+            elif any(job.status == "queued" for job in jobs):
+                message = "图片已进入本机 Codex 队列，将按顺序生成。"
+        elif not codex_images and any(job.status == "queued" for job in jobs):
             if image_queue_awaits_result(session) and not counts["submission_unknown"]:
                 waiting = "上一单回执待返回，超时后队列会继续。"
                 message = message + waiting if problems else waiting
@@ -206,7 +229,10 @@ def public_review(session, run):
                 message = f"图片正在排队，上一单结束后至少间隔{IMAGE_REQUEST_GAP_SECONDS}秒再提交。"
     return {"id": review["id"], "nodeId": review["nodeId"], "status": status,
         "questions": unanswered[:5], "remainingQuestions": len(unanswered),
-        "imageCount": len(jobs), "images": [{"label": job.label, "width": job.request_json["width"], "height": job.request_json["height"]} for job in jobs],
+        "imageCount": len(jobs), "images": [{"label": job.label, "width": job.request_json["width"], "height": job.request_json["height"],
+            "model": job.request_json.get("modelProfile", {}).get("model", "sensenova-u1.5-fast")} for job in jobs],
+        "usesProjectQuota": any(job.request_json.get("modelProfile", {}).get("providerId") == "volcengine-ark" for job in jobs),
+        **({"requiresPersonalAccountConfirmation": True} if codex_images and status == "pending" else {}),
         "reusedImages": review.get("reusedFrames", []),
         "canConfirm": status in {"pending", "review_images"},
         "message": message}
@@ -277,9 +303,14 @@ def answer_review(session, conversation, body, settings=None):
     expected = {item["id"] for item in public["questions"]}
     if set(body.answers) != expected or any(not value.strip() for value in body.answers.values()):
         raise AppError(422, "MATERIAL_ANSWERS_REQUIRED", "请逐项回答全部待确认问题")
+    changed = bool(body.requested_changes.strip()) or any(body.answers[item["id"]].strip() != item["suggestedAnswer"].strip() for item in public["questions"])
+    connection = None
+    if not changed and public.get("requiresPersonalAccountConfirmation"):
+        if body.account_usage_confirmed is not True:
+            raise AppError(422, "CODEX_IMAGE_ACCOUNT_CONFIRMATION_REQUIRED", "请确认使用本人的 Codex 账户生成本批图片")
+        connection = require_image_connection(session, run.owner_id, run.project_id)
     review = {**review, "answers": {**review.get("answers", {}), **body.answers}, "operationId": body.operation_id,
         "answerPayload": material_request_payload(body), "answeredAt": time.time()}
-    changed = bool(body.requested_changes.strip()) or any(body.answers[item["id"]].strip() != item["suggestedAnswer"].strip() for item in public["questions"])
     answer_record = {"reviewId": review["id"], "nodeId": review["nodeId"], "artifactHash": review["artifactHash"],
         "questions": review["questions"], "answers": body.answers, "requestedChanges": body.requested_changes,
         "referenceAssets": reference_assets, "addedReferenceAssetIds": added_ids,
@@ -309,6 +340,8 @@ def answer_review(session, conversation, body, settings=None):
             job = session.get(ImageJob, identifier)
             if job.status != "awaiting_confirmation":
                 raise AppError(409, "IMAGE_CONFIRMATION_STATE", "图片任务已发生变化")
+            if connection is not None:
+                job.request_json = {**job.request_json, "codexConnectionId": connection.id}
             job.status, job.confirmed_at = "queued", time.time()
         review["status"] = "generating"
     else:

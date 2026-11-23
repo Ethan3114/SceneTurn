@@ -5,9 +5,11 @@ const withNextIntl = createNextIntlPlugin();
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     output: 'standalone',
+    ...(process.env.OPENFMV_NEXT_DIST_DIR ? { distDir: process.env.OPENFMV_NEXT_DIST_DIR } : {}),
     allowedDevOrigins: ['127.0.0.1'],
     async rewrites() {
-        return [{ source: '/api/v1/:path*', destination: 'http://127.0.0.1:8310/api/v1/:path*' }];
+        const origin = process.env.OPENFMV_API_ORIGIN || 'http://127.0.0.1:8310';
+        return [{ source: '/api/v1/:path*', destination: `${origin}/api/v1/:path*` }];
     },
     experimental: {
         // 允许1GiB文件及multipart边界，完整大小仍由后端校验。

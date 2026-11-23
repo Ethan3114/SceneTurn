@@ -18,12 +18,15 @@ from app.creative_artifacts import ARTIFACT_CONTRACT_VERSION, artifact_model
 from app.models import Budget, BudgetReservation, Canvas, Generation, Project, TextProviderSettings, User, new_id
 from app.services.agent_provider import DEFAULT_AGENT_PROTOCOL, JSON_AGENT_PROTOCOL, MATERIAL_JSON_AGENT_PROTOCOL, MATERIAL_NATIVE_AGENT_PROTOCOL, THINKING_JSON_PROTOCOLS, SUPPORTED_JSON_PROTOCOLS, SUPPORTED_NATIVE_PROTOCOLS, SUPPORTED_PLATFORM_PROTOCOLS, agent_business_tools, agent_request_body, agent_response_schema, agent_tools, complete_agent, decode_platform_message, decode_structured_scene_closure, is_json_protocol, json_syntax_details, provider_endpoint
 from app.services.context import retrieve_context, source_scope
+from app.services.connections import require_image_connection
 from app.services.projects import get_operation, iso_timestamp, lock_write, payload_digest, require_project, require_revision, require_scene, save_operation
 from app.services.prompts.agent import PROMPT_VERSION, agent_prompt, codex_prompt, json_agent_prompt, material_json_agent_prompt, material_planning_prompt, material_scene_artifact_prompt, native_agent_prompt
 from app.services.text_generation import _reserve, require_text_admin
 from app.services.text_provider import MODEL, TextProviderFailure, complete_text, cost_micros, current_price, model_aliases, peak_price
 from app.services.agent_provider import MATERIAL_STRUCTURED_RECOVERY_ROLES, native_batch_ids
 from app.services.prompts.agent import material_structured_artifact_prompt
+from app.services.providers import connection as model_connection, freeze_selection, frozen_key, profile as model_profile, project_defaults
+from app.services.qwen import MODEL as QWEN_MODEL, complete_qwen, endpoint as qwen_endpoint, request_body as qwen_request_body
 from app.tools.project_tools import LEGACY_TOOL_CATALOG_VERSION, TOOL_CATALOG_VERSION, WORKSPACE_TOOL_CATALOG_VERSION, MATERIAL_TOOL_CATALOG_VERSION, MATERIAL_ROLES, PROJECT_ROLE_TOOLS, SCENE_ROLES, READ_TOOLS, ROLE_TOOLS, _read_artifact, check_codex_connection, execute_tool, require_canvas, role_catalog, tool_catalog, validate_artifacts
 from app.tools.project_tools import MATERIAL_SOP_TOOL_CATALOG_VERSION, MATERIAL_CATALOG_VERSIONS
 
@@ -221,6 +224,10 @@ def create_run(session: Session, project_id: str, user: User, body: RunCreate, s
         lock_write(session)
     project = require_project(session, project_id, user.id)
     payload = body.model_dump(by_alias=True)
+    if body.model_profile_id is None:
+        payload.pop("modelProfileId")
+    if body.model_selection is None:
+        payload.pop("modelSelection")
     replay = get_operation(session, user.id, project_id, body.operation_id, "agent.create", payload)
     if replay is not None:
         return require_run(session, project_id, replay["runId"], user.id)
@@ -254,17 +261,32 @@ def create_run(session: Session, project_id: str, user: User, body: RunCreate, s
     if body.controller_node_id and body.workspace and nodes[body.controller_node_id].get("metadata", {}).get("agentWorkspace", "scene") != body.workspace:
         raise AppError(422, "AGENT_CONTROLLER_WORKSPACE_INVALID", "控制节点与任务所属画布不一致")
     source_scope(session, project_id, user.id, body.scene_id, body.branch_id)
+    selected_models = {**project_defaults(project), **(body.model_selection.model_dump(exclude_none=True) if body.model_selection else {})}
+    if body.model_profile_id is not None:
+        selected_models["text"] = body.model_profile_id
+    for kind, identifier in selected_models.items():
+        model_profile(identifier, kind)
+    if body.workspace == "materials":
+        if selected_models["image"] == "codex-image":
+            require_image_connection(session, user.id, project.id)
+        if not model_profile(selected_models["video"], "video")["capabilities"]["lastFrame"]:
+            raise AppError(422, "MODEL_LAST_FRAME_UNSUPPORTED", "请选择支持固定首尾帧的素材视频模型")
+    text_selection = None
     if body.executor == "platform":
         require_text_admin(user, settings)
-        provider = session.get(TextProviderSettings, "platform")
+        text_selection = freeze_selection(session, user.id, project, "text", selected_models["text"])
+        provider = session.get(TextProviderSettings, "platform") if text_selection["providerId"] == "deepseek" else model_connection(session, user.id, "aliyun-qwen")
         if provider is None or not provider.api_key_encrypted:
             raise AppError(503, "TEXT_NOT_CONFIGURED", "平台管理员尚未配置DeepSeek API Key")
     if body.limits.max_tokens > settings.text_max_output_tokens or body.limits.max_cost_micros > settings.max_generation_cents * 10000:
         raise AppError(422, "AGENT_LIMIT_EXCEEDED", "任务限制超过平台允许范围")
+    limits = {**_new_run_limits(body), "modelSelection": selected_models}
+    if text_selection and text_selection["providerId"] == "aliyun-qwen":
+        limits.update(model=text_selection["model"], textProviderSnapshot=text_selection)
     run = AgentRun(owner_id=user.id, project_id=project_id, scene_id=body.scene_id, branch_id=body.branch_id,
                    controller_node_id=body.controller_node_id, operation_id=body.operation_id, role=body.role,
                    executor=body.executor, goal=body.goal, target_ids_json=body.target_ids, created_ids_json=[],
-                   limits_json=_new_run_limits(body), initial_revision=project.revision,
+                   limits_json=limits, initial_revision=project.revision,
                    project_revision=project.revision, plan_json=[], status="queued" if body.executor == "platform" else "waiting_connection")
     session.add(run)
     session.flush()
@@ -284,6 +306,9 @@ def stop_run(session: Session, project_id: str, run_id: str, owner_id: str, oper
     run.stop_requested, run.updated_at = 1, time.time()
     if run.limits_json.get("materialContext", {}).get("requireHumanReview"):
         from app.image_models import ImageAccount, ImageJob
+        from app.services.codex_images import stop_material_images
+
+        stop_material_images(session, run)
         for job in session.scalars(select(ImageJob).where(ImageJob.run_id == run.id, ImageJob.status.in_(["queued", "awaiting_confirmation", "claimed"]))):
             if job.status == "claimed":
                 account = session.get(ImageAccount, job.account_id)
@@ -994,7 +1019,8 @@ def _validate_frozen_model(run: AgentRun, call: AgentCall) -> None:
     requested = call.input_json.get("model", body.get("model", MODEL))
     if requested != _run_model(run) or body and body.get("model") != requested:
         raise AppError(409, "AGENT_MODEL_CONFLICT", "本次模型与任务冻结请求不一致，原始记录已保留")
-    if call.model not in model_aliases(requested):
+    aliases = {QWEN_MODEL} if (run.limits_json.get("textProviderSnapshot") or {}).get("providerId") == "aliyun-qwen" and requested == QWEN_MODEL else model_aliases(requested)
+    if call.model not in aliases:
         raise AppError(409, "AGENT_MODEL_CONFLICT", "供应商实际模型与冻结请求不一致，原始记录已保留")
 
 
@@ -1559,7 +1585,9 @@ async def _execute_native_platform(settings: Settings, factory: sessionmaker, ru
         protocol = run.limits_json["providerProtocol"]
         catalog_version = run.limits_json.get("toolCatalogVersion", LEGACY_TOOL_CATALOG_VERSION)
         model = _run_model(run)
-        if model != MODEL:
+        text_snapshot = run.limits_json.get("textProviderSnapshot")
+        qwen = bool(text_snapshot and text_snapshot["providerId"] == "aliyun-qwen" and model == QWEN_MODEL)
+        if model != MODEL and not qwen:
             raise AppError(403, "MODEL_NOT_AUTHORIZED", "当前仅授权deepseek-flash发起新请求；该任务的原模型、回复和费用记录继续保留")
         review = (run.result_json or {}).get("materialReview") or {}
         if (catalog_version == MATERIAL_SOP_TOOL_CATALOG_VERSION and step is not None and step.role != "media_producer"
@@ -1581,7 +1609,7 @@ async def _execute_native_platform(settings: Settings, factory: sessionmaker, ru
                 return
         if len(calls) >= run.limits_json["maxSteps"]:
             raise AppError(409, "AGENT_STEP_LIMIT", "任务已达到确认的模型请求上限")
-        provider = session.get(TextProviderSettings, "platform")
+        provider = model_connection(session, run.owner_id, "aliyun-qwen") if qwen else session.get(TextProviderSettings, "platform")
         if provider is None or not provider.api_key_encrypted:
             raise AppError(503, "TEXT_NOT_CONFIGURED", "平台文字配置尚未完成")
         correction = _native_correction_info(session, run, step.id if step else None, calls)
@@ -1614,22 +1642,25 @@ async def _execute_native_platform(settings: Settings, factory: sessionmaker, ru
         messages = (_json_messages(run, step, role, context, calls, completed, scene_artifact_only=scene_artifact_only,
             material_artifact_only=material_artifact_only)
             if is_json_protocol(protocol) else _native_messages(run, step, role, context, calls, completed))
-        tools = agent_tools(role, planning, protocol=protocol, model=model, catalog_version=catalog_version)
+        if qwen and not is_json_protocol(protocol):
+            raise AppError(422, "QWEN_PROTOCOL_UNSUPPORTED", "千问角色任务需要结构化JSON协议")
+        tools = [] if qwen else agent_tools(role, planning, protocol=protocol, model=model, catalog_version=catalog_version)
         business_tools = agent_business_tools(role, planning, catalog_version=catalog_version)
         maximum = run.limits_json["maxTokens"]
         structured_schema = (artifact_model(role, reusable_frames=True).model_json_schema(by_alias=True)
             if scene_artifact_only or material_artifact_only else None)
-        request_body = agent_request_body(messages, maximum, tools, planning, settings, protocol=protocol, model=model,
+        request_body = qwen_request_body(messages, maximum) if qwen else agent_request_body(messages, maximum, tools, planning, settings, protocol=protocol, model=model,
             catalog_version=catalog_version, structured_response_schema=structured_schema)
         input_upper = len(json.dumps(request_body, ensure_ascii=False, separators=(",", ":")).encode()) + 2048
-        upper = cost_micros(0, input_upper, maximum, peak_price(model=model))
+        call_price = text_snapshot["price"] if qwen else current_price(time.time(), model=model)
+        upper = cost_micros(0, input_upper, maximum, call_price if qwen else peak_price(model=model))
         reserved = session.scalar(select(func.coalesce(func.sum(BudgetReservation.reserved_micros), 0)).where(BudgetReservation.id.in_([call.id for call in calls])))
         if sum(call.cost_micros or 0 for call in calls) + reserved + upper > run.limits_json["maxCostMicros"]:
             raise AppError(402, "AGENT_COST_LIMIT", "本次请求将超过已确认费用限制")
         _reserve(session, upper, settings)
-        call = AgentCall(id=new_id(), run_id=run.id, step_id=step.id if step else None, role=role, provider="deepseek", model=model,
+        call = AgentCall(id=new_id(), run_id=run.id, step_id=step.id if step else None, role=role, provider="aliyun-qwen" if qwen else "deepseek", model=model,
             status="submitting", input_json={"protocol": protocol, "toolCatalogVersion": catalog_version,
-                "providerEndpoint": provider_endpoint(protocol, structured_response=structured_schema is not None), "businessTools": business_tools,
+                "providerEndpoint": qwen_endpoint(text_snapshot["workspaceId"], text_snapshot["region"]) if qwen else provider_endpoint(protocol, structured_response=structured_schema is not None), "businessTools": business_tools,
                 "messages": messages, "tools": tools, "planning": planning, "model": model,
                 **({"responseSchema": structured_schema} if structured_schema is not None
                     else {"responseSchema": agent_response_schema(planning, protocol=protocol)} if is_json_protocol(protocol) else {}),
@@ -1637,7 +1668,8 @@ async def _execute_native_platform(settings: Settings, factory: sessionmaker, ru
                 **({"materialArtifactOnly": True} if material_artifact_only else {}),
                 "requestBody": request_body,
                 **({"requestTimeoutSeconds": settings.text_timeout} if protocol in THINKING_JSON_PROTOCOLS else {}),
-                "maxTokens": maximum, "inputTokenUpperBound": input_upper, "price": current_price(time.time(), model=model),
+                "maxTokens": maximum, "inputTokenUpperBound": input_upper, "price": call_price,
+                **({"textProviderSnapshot": text_snapshot} if qwen else {}),
                 "projectRevision": project.revision, "sceneId": run.scene_id, "providerRevision": provider.updated_at,
                 "promptVersion": PROMPT_VERSION,
                 **({"materialRevisionOperationId": _material_revision_request(run, step.id)["operationId"]}
@@ -1651,10 +1683,10 @@ async def _execute_native_platform(settings: Settings, factory: sessionmaker, ru
         run.started_at, run.updated_at = run.started_at or time.time(), time.time()
         if step is not None:
             step.status = "running"
-        key, call_id = decode_secret(provider.api_key_encrypted, settings), call.id
+        key, call_id = frozen_key(session, run.owner_id, text_snapshot, settings) if qwen else decode_secret(provider.api_key_encrypted, settings), call.id
         session.commit()
     try:
-        response = await complete_agent(key, messages, maximum, tools, planning, settings, protocol=protocol, model=model,
+        response = await complete_qwen(key, text_snapshot["workspaceId"], text_snapshot["region"], messages, maximum, settings) if qwen else await complete_agent(key, messages, maximum, tools, planning, settings, protocol=protocol, model=model,
             catalog_version=catalog_version, structured_response_schema=structured_schema)
     except TextProviderFailure as error:
         with factory() as session:

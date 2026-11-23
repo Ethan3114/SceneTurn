@@ -8,15 +8,13 @@ import enMessages from '@/messages/en.json';
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
 };
 
 export const metadata: Metadata = {
-  title: 'OpenFMV',
-  description: 'A local-first interactive movie editor',
+  title: 'SceneTurn',
+  description: '互动影像创作平台',
   icons: {
-    icon: '/logo.png',
+    icon: '/sceneturn/icon.svg',
   },
 };
 

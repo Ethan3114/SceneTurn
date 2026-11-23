@@ -9,6 +9,7 @@ from app.core.errors import AppError
 from app.media_models import MediaAdoption, MediaSequence
 from app.models import Asset, Canvas, Generation, new_id
 from app.services.media import resolve_asset_path
+from app.services.providers import LEGACY_DEFAULTS, profile, project_defaults
 from app.services.projects import get_operation, iso_timestamp, lock_write, payload_digest, record_project_version, require_project, require_revision, require_scene, save_operation
 
 
@@ -69,6 +70,13 @@ def create_sequence(session, project_id, scene_id, owner_id, body, settings):
         from app.services.materials import active_production, require_material
         conversation = require_material(session, project_id, scene_id, body.conversation_id, owner_id)
         run, _ = active_production(session, conversation)
+    selected_id = run.limits_json.get("modelSelection", {}).get("video", LEGACY_DEFAULTS["video"]) if run else project_defaults(project)["video"]
+    selected = profile(selected_id, "video")
+    capability = selected["capabilities"]
+    if not capability["lastFrame"]:
+        raise AppError(422, "MODEL_LAST_FRAME_UNSUPPORTED", "当前连续视频模型需要支持首尾帧")
+    if any(item.resolution not in capability["resolutions"] or not capability["minDuration"] <= item.duration <= capability["maxDuration"] for item in body.segments):
+        raise AppError(422, "MODEL_VIDEO_PARAMETERS_UNSUPPORTED", "所选模型不支持当前连续视频的清晰度或时长")
     frames = [checked_frame(session, identifier, owner_id, project_id, settings) for identifier in body.frame_asset_ids]
     canvas = session.scalar(select(Canvas).where(Canvas.project_id == project_id, Canvas.scene_id == scene_id, Canvas.owner_id == owner_id))
     if canvas is None:
@@ -95,7 +103,7 @@ def create_sequence(session, project_id, scene_id, owner_id, body, settings):
         ])
         snapshot["connections"].append({"id": new_id(), "fromNodeId": source_id, "toNodeId": output_id, "fromHandle": "right", "toHandle": "left"})
     frozen = {"schemaVersion": 1, "title": body.title, "frames": frames, "segments": segments,
-        "conversationId": body.conversation_id, "runId": run.id if run else None}
+        "conversationId": body.conversation_id, "runId": run.id if run else None, "modelProfileId": selected_id}
     sequence = MediaSequence(id=sequence_id, owner_id=owner_id, project_id=project_id, scene_id=scene_id,
         input_json=frozen, input_sha256=payload_digest(frozen))
     session.add(sequence)
@@ -149,7 +157,8 @@ def quote_segment(session, project_id, sequence_id, shot_key, owner_id, body, se
     request = {"sceneId": sequence.scene_id, "sourceNodeId": segment["sourceNodeId"], "outputNodeId": segment["outputNodeId"],
         "prompt": segment["prompt"], "duration": segment["duration"], "resolution": segment["resolution"],
         "boundaryFrames": boundary, "reservedClipId": segment["clipId"],
-        "operationId": hashlib.sha256(f"sequence:{body.operation_id}".encode()).hexdigest()}
+        "operationId": hashlib.sha256(f"sequence:{body.operation_id}".encode()).hexdigest(),
+        "modelProfileId": sequence.input_json.get("modelProfileId", "wan-3-0")}
     if clip is not None:
         request["clipId"] = clip["id"]
     generation = quote_generation(session, project_id, owner_id, request, settings, manage_transaction=False)

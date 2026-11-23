@@ -2,6 +2,145 @@
   "app": {
     "description": "로컬 우선 인터랙티브 영상 편집기"
   },
+  "home": {
+    "nav": {
+      "product": "제품",
+      "features": "기능",
+      "menu": "메뉴",
+      "studio": "스튜디오 열기",
+      "github": "GitHub",
+      "close": "닫기",
+      "label": "홈페이지 탐색"
+    },
+    "hero": {
+      "headlineFirst": "관객이 정하는",
+      "headlineSecond": "다음 장면",
+      "description": "인터랙티브 영상 제작 스튜디오. AI로 소재를 만들고 이야기를 여러 갈래로 구성해 관객이 직접 전개를 선택할 수 있는 작품을 공개하세요.",
+      "githubAccess": "GitHub 저장소를 보려면 접근 권한이 필요합니다.",
+      "explore": "SceneTurn 자세히 보기",
+      "artAlt": "《밀물의 끝》에 나오는 해안 방재 시설"
+    },
+    "product": {
+      "title": "무엇을 찍을지부터 관객의 선택까지",
+      "description": "소재를 만들고 내 컴퓨터의 Codex CLI로 이야기를 구성하고 상호작용을 추가한 뒤, 웹에서 플레이할 수 있는 영상으로 공개하세요.",
+      "trialLink": "관객이 되어 선택하기",
+      "material": {
+        "title": "AI로 소재 만들기",
+        "description": "아이디어를 적어 대본, 캐릭터 이미지, 스토리보드, 영상을 만드세요.",
+        "caption": "소재 생성 · 채팅으로 요청하기",
+        "alt": "소재 작업 공간에 생성 요청을 입력하고 해안 방재 시설의 참조 이미지를 선택한 화면"
+      },
+      "codex": {
+        "title": "Codex CLI로 이야기와 상호작용 편집",
+        "description": "한 문장으로 장면 순서를 정하고 컷을 조정하거나 선택 버튼과 시간 제한이 있는 상호작용을 추가하세요.",
+        "caption": "AI에게 묻기 · 내 컴퓨터의 Codex 연결",
+        "alt": "스토리 캔버스와 로컬 Codex 연결을 기다리며 분기 설정 요청을 입력한 대화 패널"
+      }
+    },
+    "trial": {
+      "heading": "《밀물의 끝》 체험하기",
+      "introduction": "항구의 비상 전력은 한 곳에만 쓸 수 있습니다. 등대를 켤까요, 수문을 닫을까요?",
+      "storyTitle": "밀물의 끝",
+      "startPrompt": "항구의 마지막 전력을 어디에 보낼지 선택하세요.",
+      "startLabel": "체험 시작",
+      "replayHint": "두 갈래가 있으며 다시 선택할 수 있습니다.",
+      "decisionTitle": "마지막 전력",
+      "decisionPrompt": "바닷물이 제어판을 덮칩니다. 비상 전력은 한 곳에만 쓸 수 있습니다. 등대를 켜면 구조선을 안내할 수 있고, 수문을 닫으면 저지대 마을을 지킬 수 있습니다.",
+      "signalLabel": "등대 켜기",
+      "signalHint": "아직 도착하지 못한 구조선에 항로를 비춰 주세요.",
+      "gateLabel": "수문 닫기",
+      "gateHint": "고립된 저지대 마을을 먼저 지키세요.",
+      "signalTitle": "되살아난 불빛",
+      "signalOutcome": "구조선이 등대 불빛을 따라 항구에 도착했습니다. 수문을 제때 닫지 못해 저지대 마을 주민들은 밤새 대피해야 합니다.",
+      "gateTitle": "닫힌 수문",
+      "gateOutcome": "저지대 마을은 밀려오는 바닷물을 피했습니다. 신호를 잃은 구조선은 날이 밝을 때까지 접안할 수 없습니다.",
+      "retryLabel": "다시 선택하기",
+      "backLabel": "체험 종료"
+    },
+    "features": {
+      "title": "한 작품을 보여 주는 네 가지 제작 화면",
+      "description": "기능을 바꿔 보며 SceneTurn에서 《밀물의 끝》을 제작한 실제 화면을 살펴보세요.",
+      "previewLabel": "SceneTurn 실제 화면",
+      "blueprint": {
+        "title": "스토리 캔버스",
+        "description": "노드를 연결해 도입부, 분기, 결말을 구성하세요.",
+        "previewTitle": "스토리 설계도 · 비상 전력과 두 갈래",
+        "imageAlt": "도입 장면이 두 이야기 분기와 두 결말에 연결된 스토리 캔버스"
+      },
+      "timeline": {
+        "title": "장면과 상호작용",
+        "description": "컷, 선택 버튼, 시간 제한이 있는 동작을 타임라인에 배치하세요.",
+        "previewTitle": "타임라인 · 선택지와 표시 시간 설정",
+        "imageAlt": "타임라인에서 등대 켜기 버튼을 선택하고 옆에 상호작용 설정이 표시된 화면"
+      },
+      "player": {
+        "title": "웹에서 플레이",
+        "description": "여러 분기를 플레이하며 선택에 따라 관객이 어디로 가는지 확인하세요.",
+        "previewTitle": "웹 플레이어 · 전력 사용처 선택",
+        "imageAlt": "등대 켜기와 수문 닫기 두 가지 선택지를 보여 주는 웹 플레이어"
+      },
+      "assets": {
+        "title": "프로젝트와 소재",
+        "description": "프로젝트의 영상과 소리를 관리하고 다른 프로젝트의 소재도 찾아보세요.",
+        "previewTitle": "소재 라이브러리 · 프로젝트의 이미지와 소리",
+        "imageAlt": "해안 방재 시설, 등대, 수문의 참조 이미지가 있는 소재 라이브러리"
+      }
+    },
+    "workflow": {
+      "title": "소재 준비부터 공유할 수 있는 작품까지",
+      "description": "한 프로젝트에서 소재를 준비하고 편집과 상호작용 설정을 거쳐 웹에서 플레이해 보세요.",
+      "material": {
+        "title": "소재 준비",
+        "description": "기존 클립을 가져오거나 AI로 대본과 영상 소재를 만드세요."
+      },
+      "story": {
+        "title": "이야기 구성",
+        "description": "캔버스나 내 컴퓨터의 Codex로 도입부, 장면, 결말을 연결하세요."
+      },
+      "interaction": {
+        "title": "상호작용 추가",
+        "description": "선택 버튼과 시간 제한이 있는 동작을 타임라인에 배치하세요."
+      },
+      "publish": {
+        "title": "플레이하고 공개",
+        "description": "여러 분기가 잘 작동하는지 확인한 뒤 원하는 버전을 공개하세요."
+      }
+    },
+    "faq": {
+      "title": "자주 묻는 질문",
+      "description": "제작을 시작하기 전에 소재, Codex 연결, 작품 공개 방법을 확인하세요.",
+      "settingsLabel": "모델 설정 보기",
+      "materials": {
+        "question": "이미 가지고 있는 소재로 시작할 수 있나요?",
+        "answer": "네. 프로젝트로 텍스트, 이미지, 오디오, 영상을 가져올 수 있습니다. ‘소재 → 소재 생성’에서 대본, 캐릭터 이미지, 스토리보드, 영상을 만들 수도 있습니다."
+      },
+      "models": {
+        "question": "소재를 생성하기 전에 무엇을 설정해야 하나요?",
+        "answer": "‘모델 설정’에서 내 계정으로 사용할 수 있는 모델을 확인하고 선택한 서비스를 설정하세요. 영상 생성을 요청하기 전에 첫 이미지와 마지막 이미지, 생성 설정을 확인할 수 있습니다."
+      },
+      "codex": {
+        "question": "내 컴퓨터의 Codex로 이야기를 구성하려면 어떻게 하나요?",
+        "answer": "프로젝트에서 ‘AI에게 묻기 → 내 Codex 연결’을 열고, 컴퓨터의 Codex CLI에 로그인해 페어링하세요. Codex는 권한을 부여한 장면, 타임라인, 상호작용을 수정할 수 있으며 직접 편집도 계속할 수 있습니다."
+      },
+      "play": {
+        "question": "플레이하려면 로그인하거나 소프트웨어를 설치해야 하나요?",
+        "answer": "공개된 작품은 링크로 브라우저에서 바로 열 수 있습니다. 내 프로젝트를 만들고 관리할 때는 로그인해야 합니다."
+      },
+      "publish": {
+        "question": "작품을 공개하면 어떤 내용이 보이나요?",
+        "answer": "선택한 버전과 공개용 표지, 예고편을 공개할 수 있습니다. 초안, 대화, 인증 정보는 프로젝트에 남습니다. 공개된 작품은 다시 내릴 수 있습니다."
+      }
+    },
+    "footer": {
+      "title": "나만의 인터랙티브 영상 제작 시작하기",
+      "works": "작품 갤러리"
+    },
+    "premiere": {
+      "label": "SceneTurn 프리미어",
+      "trailer": "예고편 보기",
+      "detail": "작품 상세"
+    }
+  },
   "navigation": {
     "askAi": "AI에게 묻기",
     "minimize": "최소화",
@@ -675,47 +814,75 @@
     "inputPlaceholder": "메시지를 입력하고 Ctrl/⌘ + Enter로 보내기",
     "send": "보내기"
   },
+  "materialModels": {
+    "title": "다음 제작 모델",
+    "description": "다음 제작에 사용할 모델을 선택하세요. 진행 중인 제작은 제출 당시의 모델을 계속 사용합니다.",
+    "choose": "{model} 모델 선택",
+    "projectDescription": "프로젝트 기본값을 선택하세요. 소재 생성에서 다음 제작에 다른 모델을 사용할 수 있습니다.",
+    "text": "텍스트",
+    "image": "이미지",
+    "video": "영상",
+    "textModel": "텍스트 모델",
+    "imageModel": "이미지 모델",
+    "videoModel": "영상 모델",
+    "currentModels": "현재 제작 모델",
+    "nextModels": "다음 제작 모델",
+    "personalCodex": "개인 Codex",
+    "localConnected": "로컬 연결 완료",
+    "localDisconnected": "이미지 생성을 지원하는 로컬 연결 대기 중",
+    "connect": "개인 Codex 연결",
+    "qwen": "Alibaba Cloud Model Studio · Qwen",
+    "sensetime": "SenseTime",
+    "ark": "Volcano Engine · Ark",
+    "wan": "Alibaba Cloud Model Studio",
+    "bothFrames": "시작 및 종료 프레임 지원",
+    "firstFrame": "시작 프레임 지원",
+    "requiresBothFrames": "이 제작에는 시작과 종료 프레임을 지원하는 모델이 필요합니다",
+    "unavailable": "현재 사용할 수 없음",
+    "usesDefaults": "초기 선택은 프로젝트 기본값을 따릅니다.",
+    "resetDefault": "프로젝트 기본값 복원",
+    "loading": "모델 및 연결 상태를 불러오는 중…",
+    "loadError": "모델 및 연결 상태를 불러오지 못했습니다.",
+    "retry": "다시 불러오기",
+    "cancel": "취소",
+    "apply": "다음 제작에 적용",
+    "applyDefault": "모델 선택",
+    "confirmPersonalUsage": "연결된 개인 Codex 계정의 사용량을 사용하여 이미지를 생성하는 데 동의합니다."
+  },
   "legal": {
+    "backHome": "홈으로 돌아가기",
+    "navigation": "개인정보와 이용 약관",
+    "skip": "본문으로 건너뛰기",
     "privacy": {
-      "eyebrow": "OpenFMV 로컬 에디터",
-      "title": "개인정보",
-      "description": "OpenFMV는 현재 계정, 클라우드 동기화, 호스팅 백엔드가 없는 로컬 우선 데스크톱 앱입니다.",
-      "localData": {
-        "title": "로컬 데이터",
-        "body": "프로젝트, 설정, 소재 인덱스는 기본적으로 이 기기에 저장됩니다."
+      "title": "개인정보 처리방침",
+      "description": "SceneTurn에서 로그인, 제작, 공개 재생에 데이터를 사용하는 방식을 안내합니다.",
+      "account": {
+        "title": "계정 및 제작 데이터",
+        "body": "이메일 주소는 가입과 로그인에 사용됩니다. 프로젝트, 소재, 작업 상태 및 제작 기록은 작업 공간에 저장되며 계정 권한에 따라 접근이 제한됩니다."
       },
-      "assets": {
-        "title": "소재 파일",
-        "body": "가져온 소재는 로컬 프로젝트 폴더 또는 브라우저 로컬 저장소에 복사됩니다."
+      "generation": {
+        "title": "생성 서비스 및 개인 Codex",
+        "body": "소재 생성에 필요한 프롬프트와 참조 소재는 선택한 서비스로 전송됩니다. 개인 Codex 연결은 페어링한 프로젝트로 제한되며 Codex 로그인 정보는 기기에 남습니다."
       },
-      "ai": {
-        "title": "AI 설정",
-        "body": "AI 채팅은 설정에서 선택한 로컬 CLI를 통해 실행됩니다."
-      },
-      "updates": {
-        "title": "변경",
-        "body": "향후 네트워크 기능을 추가하면 이 개인정보 안내도 함께 업데이트해야 합니다."
+      "publication": {
+        "title": "공개 작품",
+        "body": "특정 버전을 공개하면 방문자가 해당 버전의 재생 콘텐츠, 선택한 표지와 예고편을 볼 수 있습니다. 공개를 취소하면 이후 공개 접근 요청은 차단됩니다."
       }
     },
     "terms": {
-      "eyebrow": "OpenFMV 로컬 에디터",
       "title": "이용 약관",
-      "description": "현재 로컬 버전의 사용 범위를 설명합니다.",
-      "localFirst": {
-        "title": "로컬 우선",
-        "body": "OpenFMV는 로컬 창작 워크플로를 위한 앱이며 계정이나 클라우드 동기화를 포함하지 않습니다."
-      },
+      "description": "SceneTurn에서 인터랙티브 작품을 제작하고 공개할 때 소재, 생성 결과 및 공개 설정을 확인하세요.",
       "content": {
-        "title": "창작 콘텐츠",
-        "body": "가져온 소재와 생성 콘텐츠의 권리, 저장, 백업은 사용자 책임입니다."
+        "title": "작품과 소재",
+        "body": "업로드하는 소재를 사용할 권한이 있는지 확인하세요. 생성 결과를 채택하거나 작품을 공개하기 전에 내용을 검토하세요."
       },
-      "exports": {
-        "title": "내보내기",
-        "body": "내보낸 스토리 패키지는 사용자가 선택한 로컬 디렉터리에 기록됩니다."
+      "generation": {
+        "title": "생성과 확인",
+        "body": "동영상을 생성하기 전에 장면, 시작 및 끝 프레임, 설정을 확인하세요. 소재 라이브러리에서 결과를 미리 보고 사용할 버전을 선택할 수 있습니다."
       },
-      "responsibility": {
-        "title": "책임",
-        "body": "게시 전 인터랙션 흐름, 소재 경로, 내보내기 결과를 직접 테스트하세요."
+      "publication": {
+        "title": "공개와 취소",
+        "body": "공개하기 전에 이야기의 분기를 플레이해 보세요. 작품관에서는 공개를 확인한 고정 버전이 재생됩니다. 버전 설정에서 공개를 취소할 수 있습니다."
       }
     }
   },

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, get_db
 from app.connection_models import CodexConnection
-from app.connection_schemas import BridgeComplete, BridgeEvent, BridgeResult, BridgeToolCall, ConnectionClaimResult, ConnectionList, ConnectionRevoke, ConnectionView, HeartbeatResult, PairingClaim, PairingCreate, PairingResult
+from app.connection_schemas import BridgeComplete, BridgeEvent, BridgeResult, BridgeToolCall, ConnectionClaimResult, ConnectionHeartbeat, ConnectionList, ConnectionRevoke, ConnectionView, HeartbeatResult, PairingClaim, PairingCreate, PairingResult
 from app.core.errors import AppError
 from app.models import User
 from app.services import connections
@@ -41,8 +41,8 @@ def revoke_connection(project_id: str, identifier: str, body: ConnectionRevoke, 
 
 
 @router.post("/connections/heartbeat", response_model=HeartbeatResult)
-def heartbeat(connection: CodexConnection = Depends(current_connection), session: Session = Depends(get_db)):
-    return connections.heartbeat(session, connection)
+def heartbeat(body: ConnectionHeartbeat | None = None, connection: CodexConnection = Depends(current_connection), session: Session = Depends(get_db)):
+    return connections.heartbeat(session, connection, body.capabilities if body else None)
 
 
 @router.post("/connections/claim", response_model=BridgeResult)

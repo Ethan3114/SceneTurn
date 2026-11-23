@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException
 
 from app.api import accounts, agents, assets, connections, context, conversations, generations, materials, media_tools, payments, projects, text_generations, settings as provider_settings
-from app.api import media_candidates, transfers
+from app.api import canvas_images, codex_images, media_candidates, providers, publications, transfers
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.security import initialize_secret_store
@@ -115,3 +115,7 @@ def health(request: Request):
 
 for router in (accounts.router, projects.router, provider_settings.router, assets.router, payments.router, generations.router, media_tools.router, text_generations.router, agents.router, context.router, connections.router, conversations.router, materials.router, media_candidates.router, transfers.router):
     app.include_router(router, prefix="/api/v1")
+app.include_router(publications.router, prefix="/api/v1")
+app.include_router(providers.router, prefix="/api/v1")
+app.include_router(codex_images.router, prefix="/api/v1")
+app.include_router(canvas_images.router, prefix="/api/v1")

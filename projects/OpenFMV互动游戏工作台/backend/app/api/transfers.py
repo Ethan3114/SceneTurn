@@ -121,11 +121,16 @@ def retry(identifier: str, user: User = Depends(current_user), session: Session 
 
 @router.get("/transfers/{identifier}/play/{name:path}")
 def play(identifier: str, name: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    settings = get_settings()
-    value = require_transfer(session, identifier, user.id)
+    return FileResponse(game_file(require_transfer(session, identifier, user.id), name, get_settings()),
+                        headers={"Cache-Control": "private, no-store"})
+
+
+def game_file(value: TransferJob, name: str, settings) -> Path:
     if value.status != "ready" or value.kind != "game":
         raise AppError(404, "GAME_VERSION_NOT_FOUND", "固定游戏版本不可用")
     root = (settings.data_dir / value.private_json["directory"]).resolve()
+    if not root.is_relative_to(transfer_root(settings, value.id)):
+        raise AppError(404, "GAME_FILE_NOT_FOUND", "该版本缺少所需文件")
     name = checked_member(name)
     permitted = {"index.html", "game.json", *(item["path"] for item in value.private_json["files"])}
     target = (root / name).resolve()
@@ -136,7 +141,7 @@ def play(identifier: str, name: str, user: User = Depends(current_user), session
         raise AppError(409, "GAME_FILE_PROOF_MISSING", "该版本缺少播放文件的完整性记录，请重新导出")
     if target.stat().st_size != expected["bytes"] or file_sha256(target) != expected["sha256"]:
         raise AppError(409, "GAME_FILE_CHANGED", "该版本播放文件与固定内容不一致")
-    return FileResponse(target, headers={"Cache-Control": "private, no-store"})
+    return target
 
 
 @router.get("/transfers/{identifier}/source-history", response_model=SourceHistory)

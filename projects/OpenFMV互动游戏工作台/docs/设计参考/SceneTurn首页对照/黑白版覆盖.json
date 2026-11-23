@@ -1,0 +1,243 @@
+{
+  "pages": 2,
+  "boards": 29,
+  "textLayers": 1632,
+  "imageAssets": 9,
+  "gradients": 78,
+  "links": 514,
+  "frames": [
+    {
+      "id": "home-blueprint-faq-0",
+      "title": "首页 · 剧情画布",
+      "node": "1:2",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "play-choice",
+      "title": "试玩 · 最后一份电力",
+      "node": "1:170",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "play-signal",
+      "title": "结局 · 灯火重燃",
+      "node": "1:194",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "play-gate",
+      "title": "结局 · 闸门关上",
+      "node": "1:213",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-menu",
+      "title": "首页菜单",
+      "node": "1:232",
+      "w": 374,
+      "h": 228,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-timeline-faq-0",
+      "title": "首页 · 场景与互动",
+      "node": "1:245",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-player-faq-0",
+      "title": "首页 · 网页试玩",
+      "node": "1:413",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-assets-faq-0",
+      "title": "首页 · 项目与素材",
+      "node": "1:581",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-blueprint-faq--1",
+      "title": "首页 · 剧情画布 · 问答 0",
+      "node": "1:749",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-timeline-faq--1",
+      "title": "首页 · 场景与互动 · 问答 0",
+      "node": "1:915",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-player-faq--1",
+      "title": "首页 · 网页试玩 · 问答 0",
+      "node": "1:1081",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-assets-faq--1",
+      "title": "首页 · 项目与素材 · 问答 0",
+      "node": "1:1247",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-blueprint-faq-1",
+      "title": "首页 · 剧情画布 · 问答 2",
+      "node": "1:1413",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-timeline-faq-1",
+      "title": "首页 · 场景与互动 · 问答 2",
+      "node": "1:1581",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-player-faq-1",
+      "title": "首页 · 网页试玩 · 问答 2",
+      "node": "1:1749",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-assets-faq-1",
+      "title": "首页 · 项目与素材 · 问答 2",
+      "node": "1:1917",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-blueprint-faq-2",
+      "title": "首页 · 剧情画布 · 问答 3",
+      "node": "1:2085",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-timeline-faq-2",
+      "title": "首页 · 场景与互动 · 问答 3",
+      "node": "1:2253",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-player-faq-2",
+      "title": "首页 · 网页试玩 · 问答 3",
+      "node": "1:2421",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-assets-faq-2",
+      "title": "首页 · 项目与素材 · 问答 3",
+      "node": "1:2589",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-blueprint-faq-3",
+      "title": "首页 · 剧情画布 · 问答 4",
+      "node": "1:2757",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-timeline-faq-3",
+      "title": "首页 · 场景与互动 · 问答 4",
+      "node": "1:2925",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-player-faq-3",
+      "title": "首页 · 网页试玩 · 问答 4",
+      "node": "1:3093",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-assets-faq-3",
+      "title": "首页 · 项目与素材 · 问答 4",
+      "node": "1:3261",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-blueprint-faq-4",
+      "title": "首页 · 剧情画布 · 问答 5",
+      "node": "1:3429",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-timeline-faq-4",
+      "title": "首页 · 场景与互动 · 问答 5",
+      "node": "1:3597",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-player-faq-4",
+      "title": "首页 · 网页试玩 · 问答 5",
+      "node": "1:3765",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-assets-faq-4",
+      "title": "首页 · 项目与素材 · 问答 5",
+      "node": "1:3933",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "motion-spec",
+      "title": "首页正式前端动效",
+      "node": "1:4101",
+      "w": 1440,
+      "h": 900,
+      "page": "正式前端动效"
+    }
+  ],
+  "reactions": 514
+}

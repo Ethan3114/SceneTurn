@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends
+import time
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,9 +15,31 @@ from app.services.projects import get_operation, lock_write, save_operation
 from app.services.material_review import answer_review
 from app.services.text_generation import require_text_admin
 from app.image_models import ImageJob
+from app.schemas import WireModel
+from app.services.canvas_delivery import material_canvas_ids, public_canvas
 
 
 router = APIRouter(prefix="/projects/{project_id}/scenes/{scene_id}/material-conversations", tags=["material-conversations"])
+
+
+class NodeSelection(WireModel):
+    node_ids: list[str] = Field(min_length=1, max_length=20)
+
+
+class ConversationTitle(WireModel):
+    title: str = Field(min_length=1, max_length=160, pattern=r"\S")
+
+
+@router.post("/references")
+def selected_references(project_id: str, scene_id: str, body: NodeSelection, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    project = require_project(session, project_id, user.id)
+    require_scene(project, scene_id)
+    selected = set(body.node_ids)
+    nodes = [node for node in materials.canvas_nodes(session, project_id, scene_id, user.id) if node["id"] in selected and node["type"] not in {"agent", "group"}]
+    allowed = material_canvas_ids(session, project_id, user.id, scene_id)[scene_id]
+    visible = {n["id"] for n in public_canvas({"nodes": nodes, "connections": []}, allowed)["nodes"]}
+    return {"references": [{"nodeId": n["id"], "title": n.get("title") or "素材", "contentHash": materials.node_hash(n), "revision": project.revision}
+                           for n in nodes if n["id"] in visible]}
 
 
 @router.get("", response_model=MaterialList)
@@ -34,6 +58,16 @@ def create(project_id: str, scene_id: str, body: MaterialCreate, user: User = De
 @router.get("/{conversation_id}", response_model=MaterialEnvelope)
 def detail(project_id: str, scene_id: str, conversation_id: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
     return {"conversation": materials.view(session, materials.require_material(session, project_id, scene_id, conversation_id, user.id))}
+
+
+@router.patch("/{conversation_id}", response_model=MaterialEnvelope)
+def rename(project_id: str, scene_id: str, conversation_id: str, body: ConversationTitle, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    lock_write(session)
+    conversation = materials.require_material(session, project_id, scene_id, conversation_id, user.id)
+    conversation.title = body.title.strip()
+    conversation.updated_at = time.time()
+    session.commit()
+    return {"conversation": materials.view(session, conversation)}
 
 
 @router.post("/{conversation_id}/messages", response_model=MaterialEnvelope, status_code=202)

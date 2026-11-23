@@ -1,0 +1,45 @@
+.st-legal {
+  width: min(850px, calc(100% - 2rem));
+  min-height: calc(100dvh - 170px);
+  margin-inline: auto;
+  padding-block: clamp(2rem, 4vw, 3.4rem);
+}
+
+.st-legal-paper {
+  padding: clamp(1.5rem, 3.2vw, 2.3rem);
+  border: 1px solid var(--st-border);
+  border-radius: 0.88rem;
+  background: var(--st-panel);
+}
+
+.st-legal-paper h1 {
+  font-size: clamp(1.8rem, 3.6vw, 2.25rem);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.st-legal-paper p {
+  margin-top: 0.65rem;
+  color: var(--st-secondary);
+  font-size: 0.94rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.st-legal-section {
+  padding-block: 1.45rem;
+}
+
+.st-legal-section:first-of-type {
+  margin-top: 1.2rem;
+}
+
+.st-legal-section + .st-legal-section {
+  border-top: 1px solid var(--st-border);
+}
+
+.st-legal-section h2 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.5;
+}

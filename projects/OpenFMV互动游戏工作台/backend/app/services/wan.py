@@ -1,5 +1,7 @@
 import re
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 import httpx
@@ -13,6 +15,10 @@ MODEL = "wan3.0-video"
 REGION = "cn-beijing"
 PRICE_VERSION = "wan3.0-video-cn-beijing-2026-11-12-list"
 PRICES = {"480P": 30, "720P": 60, "1080P": 120}
+MAX_REFERENCE_IMAGES = 10
+VIDEO_INPUT_MODES = ("reference", "edit", "extend")
+UPLOAD_POLICY_URL = "https://dashscope.aliyuncs.com/api/v1/uploads"
+UPLOAD_BUCKET = re.compile(r"dashscope-file-[a-z0-9-]+\.oss-cn-beijing\.aliyuncs\.com")
 TaskStatus = Literal["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED", "UNKNOWN"]
 
 
@@ -45,6 +51,21 @@ class WanResponse(BaseModel):
     usage: WanUsage | None = None
 
 
+class WanUploadPolicy(BaseModel):
+    upload_host: str
+    upload_dir: str = Field(pattern=r"^dashscope-instant(?:/[A-Za-z0-9_-]+)+$")
+    max_file_size_mb: int = Field(ge=1)
+    oss_access_key_id: str = Field(min_length=1)
+    signature: str = Field(min_length=1)
+    policy: str = Field(min_length=1)
+    x_oss_object_acl: Literal["private"]
+    x_oss_forbid_overwrite: Literal["true"]
+
+
+class WanUploadGrant(BaseModel):
+    data: WanUploadPolicy
+
+
 @dataclass
 class WanFailure(Exception):
     code: str
@@ -69,6 +90,36 @@ def prices_view() -> dict:
     }
 
 
+def video_request(frozen_input: dict) -> dict:
+    if frozen_input["model"] != MODEL:
+        raise AppError(422, "WAN_MODEL_UNSUPPORTED", "本阶段只支持wan3.0-video")
+    mode = frozen_input.get("videoInputMode")
+    media = frozen_input.get("media", [])
+    kinds = [item["type"] for item in media]
+    has_video = "reference_video" in kinds
+    if mode is None:
+        valid_media = kinds in ([], ["first_frame"], ["first_frame", "last_frame"])
+    else:
+        valid_media = (mode in VIDEO_INPUT_MODES and bool(kinds) and (mode == "reference" or has_video)
+            and set(kinds) <= {"reference_image", "reference_video"} and kinds.count("reference_video") <= 1
+            and kinds.count("reference_image") <= MAX_REFERENCE_IMAGES)
+    if not valid_media:
+        raise AppError(422, "WAN_MEDIA_INVALID", "请检查固定帧或参考素材的组合")
+    instructions = {"edit": "根据下列要求编辑视频1。", "extend": "按下列要求延长视频1。"}
+    if mode == "reference":
+        reference_subject = "视频1" if has_video else "参考图片"
+        if has_video and "reference_image" in kinds:
+            reference_subject = "视频1及参考图片"
+        instructions["reference"] = f"以{reference_subject}为参考生成画面。"
+    payload = {"model": MODEL, "input": {"prompt": instructions.get(mode, "") + frozen_input["prompt"]},
+        "parameters": {"resolution": frozen_input["resolution"], "duration": frozen_input["duration"],
+            "ratio": frozen_input.get("ratio", "16:9"), "audio": bool(frozen_input.get("audio", True)),
+            "prompt_extend": bool(frozen_input.get("promptExtend", False)), "watermark": False}}
+    if media:
+        payload["input"]["media"] = media
+    return payload
+
+
 class WanClient:
     def __init__(self, settings: Settings, workspace_id: str, api_key: str, region: str = REGION):
         if not api_key:
@@ -78,35 +129,54 @@ class WanClient:
         self.timeout = settings.request_timeout
         self.submit_timeout = httpx.Timeout(self.timeout, write=settings.wan_submit_timeout, read=settings.wan_submit_timeout)
 
+    async def upload_reference_video(self, path: Path) -> str:
+        try:
+            async with httpx.AsyncClient(timeout=self.submit_timeout, trust_env=False, follow_redirects=False) as client:
+                reply = await client.get(UPLOAD_POLICY_URL, params={"action": "getPolicy", "model": MODEL},
+                    headers={"Authorization": f"Bearer {self.api_key}"})
+                if reply.status_code != 200:
+                    raise WanFailure("WAN_REFERENCE_UPLOAD_DENIED", "百炼未授权临时上传，请检查业务空间和模型权限")
+                grant = WanUploadGrant.model_validate_json(reply.content).data
+                host = httpx.URL(grant.upload_host)
+                if host.scheme != "https" or not UPLOAD_BUCKET.fullmatch(host.host) or host.port not in (None, 443) or host.path != "/" or host.userinfo or host.query or host.fragment:
+                    raise WanFailure("WAN_REFERENCE_UPLOAD_INVALID", "百炼临时存储地址未通过校验")
+                if path.stat().st_size > grant.max_file_size_mb * 1024 * 1024:
+                    raise WanFailure("WAN_REFERENCE_UPLOAD_TOO_LARGE", "原视频超过百炼当前允许的临时上传大小")
+                name = f"{uuid.uuid4().hex}.mp4"
+                key = f"{grant.upload_dir}/{name}"
+                form = {
+                    "OSSAccessKeyId": grant.oss_access_key_id,
+                    "Signature": grant.signature,
+                    "policy": grant.policy,
+                    "x-oss-object-acl": grant.x_oss_object_acl,
+                    "x-oss-forbid-overwrite": grant.x_oss_forbid_overwrite,
+                    "key": key,
+                    "success_action_status": "200",
+                }
+                with path.open("rb") as stream:
+                    uploaded = await client.post(host, data=form, files={"file": (name, stream, "video/mp4")})
+                if uploaded.status_code != 200:
+                    raise WanFailure("WAN_REFERENCE_UPLOAD_DENIED", "百炼临时存储没有接收原视频，请核实上传权限")
+                return f"oss://{key}"
+        except (ValueError, httpx.InvalidURL) as failure:
+            raise WanFailure("WAN_REFERENCE_UPLOAD_INVALID", "百炼临时上传凭证未通过校验") from failure
+        except (httpx.TransportError, OSError) as failure:
+            raise WanFailure("WAN_REFERENCE_UPLOAD_INTERRUPTED", "原视频临时上传中断，请重新准备生成") from failure
+
     async def submit(self, frozen_input: dict) -> WanResponse:
-        if frozen_input["model"] != MODEL:
-            raise AppError(422, "WAN_MODEL_UNSUPPORTED", "本阶段只支持wan3.0-video")
-        payload = {
-            "model": frozen_input["model"],
-            "input": {"prompt": frozen_input["prompt"]},
-            "parameters": {
-                "resolution": frozen_input["resolution"],
-                "duration": frozen_input["duration"],
-                "ratio": "16:9",
-                "audio": True,
-                "prompt_extend": False,
-                "watermark": False,
-            },
+        payload = video_request(frozen_input)
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "X-DashScope-Async": "enable",
         }
-        if frozen_input.get("media"):
-            media = frozen_input["media"]
-            if [item["type"] for item in media] != ["first_frame", "last_frame"]:
-                raise AppError(422, "WAN_BOUNDARIES_INVALID", "首尾帧视频必须同时提供已确认的首帧和尾帧")
-            payload["input"]["media"] = media
+        if any(item["url"].startswith("oss://dashscope-instant/") for item in payload["input"].get("media", [])):
+            headers["X-DashScope-OssResourceResolve"] = "enable"
         async with httpx.AsyncClient(timeout=self.submit_timeout, trust_env=False, follow_redirects=False) as client:
             try:
                 response = await client.post(
                     f"{self.base_url}/api/v1/services/aigc/video-generation/video-synthesis",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                        "X-DashScope-Async": "enable",
-                    },
+                    headers=headers,
                     json=payload,
                 )
             except httpx.TransportError as exc:

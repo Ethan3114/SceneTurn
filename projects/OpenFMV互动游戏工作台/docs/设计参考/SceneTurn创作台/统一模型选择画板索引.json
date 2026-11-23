@@ -1,0 +1,411 @@
+{
+  "pages": 1,
+  "boards": 50,
+  "textLayers": 1723,
+  "imageAssets": 4,
+  "gradients": 7,
+  "links": 450,
+  "frames": [
+    {
+      "id": "projects",
+      "title": "我的项目",
+      "node": "1:2",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "story",
+      "title": "剧情画布 · 场景属性",
+      "node": "1:59",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "story-codex",
+      "title": "剧情画布 · 本人 Codex",
+      "node": "1:632",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "timeline",
+      "title": "节点时间线 · 普通互动",
+      "node": "1:1197",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "timeline-qte",
+      "title": "节点时间线 · 限时互动",
+      "node": "1:1372",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "assets",
+      "title": "项目素材 · 素材库",
+      "node": "1:1552",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:1639",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-closed",
+      "title": "生成素材 · 收起对话",
+      "node": "1:1774",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-new-conversation",
+      "title": "生成素材 · 新对话",
+      "node": "1:1873",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "manual",
+      "title": "手动素材画布 · 节点与连线",
+      "node": "1:1976",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "manual-closed",
+      "title": "手动素材画布 · 收起对话",
+      "node": "1:2199",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "media-confirm",
+      "title": "视频生成待确认 · 首尾帧",
+      "node": "1:2396",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "media-confirm-closed",
+      "title": "视频生成待确认 · 收起对话",
+      "node": "1:2493",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "models",
+      "title": "模型设置 · 项目默认与服务连接",
+      "node": "1:2569",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "models-choose-text",
+      "title": "项目默认 · 文本模型",
+      "node": "1:2679",
+      "w": 568,
+      "h": 263,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "models-choose-image",
+      "title": "项目默认 · 图片模型",
+      "node": "1:2697",
+      "w": 568,
+      "h": 329,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "models-choose-video",
+      "title": "项目默认 · 视频模型",
+      "node": "1:2721",
+      "w": 568,
+      "h": 659,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "publish",
+      "title": "项目备份与固定版本 · 私有版本",
+      "node": "1:2775",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "project-new",
+      "title": "新建项目",
+      "node": "1:2875",
+      "w": 556,
+      "h": 366,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "project-import",
+      "title": "导入与恢复完整项目",
+      "node": "1:2888",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "account-menu",
+      "title": "创作台账户菜单",
+      "node": "1:2927",
+      "w": 328,
+      "h": 239,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "preview",
+      "title": "试玩 · 分支选择",
+      "node": "1:2941",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "preview-signal",
+      "title": "试玩 · 信标结局",
+      "node": "1:2967",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "preview-gate",
+      "title": "试玩 · 闸门结局",
+      "node": "1:2990",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "projects-1280",
+      "title": "我的项目 · 1280 像素",
+      "node": "1:3013",
+      "w": 1280,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "projects-no-poster",
+      "title": "我的项目 · 尚无封面",
+      "node": "1:3070",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "projects-empty",
+      "title": "我的项目 · 空状态",
+      "node": "1:3128",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models",
+      "title": "新一轮模型 · DeepSeek Flash / 商汤 Fast / Wan 3.0",
+      "node": "1:3172",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-deepseek-sensetime-seedance",
+      "title": "新一轮模型 · DeepSeek Flash / 商汤 Fast / Seedance 2.5",
+      "node": "1:3224",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-deepseek-seedream-wan",
+      "title": "新一轮模型 · DeepSeek Flash / Seedream 5.5 / Wan 3.0",
+      "node": "1:3276",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-deepseek-seedream-seedance",
+      "title": "新一轮模型 · DeepSeek Flash / Seedream 5.5 / Seedance 2.5",
+      "node": "1:3328",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-deepseek-codex-wan",
+      "title": "新一轮模型 · DeepSeek Flash / 个人 Codex / Wan 3.0",
+      "node": "1:3380",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-deepseek-codex-seedance",
+      "title": "新一轮模型 · DeepSeek Flash / 个人 Codex / Seedance 2.5",
+      "node": "1:3432",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-qwen-sensetime-wan",
+      "title": "新一轮模型 · Qwen3.8 Flash / 商汤 Fast / Wan 3.0",
+      "node": "1:3484",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-qwen-sensetime-seedance",
+      "title": "新一轮模型 · Qwen3.8 Flash / 商汤 Fast / Seedance 2.5",
+      "node": "1:3536",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-qwen-seedream-wan",
+      "title": "新一轮模型 · Qwen3.8 Flash / Seedream 5.5 / Wan 3.0",
+      "node": "1:3588",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-qwen-seedream-seedance",
+      "title": "新一轮模型 · Qwen3.8 Flash / Seedream 5.5 / Seedance 2.5",
+      "node": "1:3640",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-qwen-codex-wan",
+      "title": "新一轮模型 · Qwen3.8 Flash / 个人 Codex / Wan 3.0",
+      "node": "1:3692",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-models-qwen-codex-seedance",
+      "title": "新一轮模型 · Qwen3.8 Flash / 个人 Codex / Seedance 2.5",
+      "node": "1:3744",
+      "w": 894,
+      "h": 482,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-deepseek-sensetime-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:3796",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-deepseek-seedream-wan",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:3932",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-deepseek-seedream-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:4068",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-deepseek-codex-wan",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:4204",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-deepseek-codex-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:4340",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-qwen-sensetime-wan",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:4476",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-qwen-sensetime-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:4612",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-qwen-seedream-wan",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:4748",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-qwen-seedream-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:4884",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-qwen-codex-wan",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:5020",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    },
+    {
+      "id": "material-model-qwen-codex-seedance",
+      "title": "生成素材 · 岗位与对话",
+      "node": "1:5156",
+      "w": 1440,
+      "h": 900,
+      "page": "创作台 · 项目、剪辑与素材"
+    }
+  ],
+  "reactions": 450
+}

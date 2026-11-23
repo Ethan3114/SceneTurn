@@ -3688,7 +3688,7 @@ export default function NodeTimelineEditor({ onRequestMediaClip }: NodeTimelineE
 
   return (
     <>
-      <div className="flex h-full min-h-0 flex-col gap-[0.18rem] pt-[58px] text-white">
+      <div className="flex h-full min-h-0 flex-col gap-[0.18rem] pt-[var(--scene-material-bar-height,58px)] text-white">
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,250px)_minmax(420px,1fr)_minmax(210px,250px)] gap-[0.19rem] px-3 min-[1180px]:grid-cols-[minmax(250px,330px)_minmax(520px,1fr)_minmax(230px,330px)] min-[1440px]:grid-cols-[minmax(320px,460px)_minmax(640px,1fr)_minmax(320px,400px)]">
       <aside className="grid min-h-0 grid-cols-[48px_minmax(0,1fr)] overflow-hidden rounded-openfmv-tool border border-white/10 bg-[#171717] shadow-[0_18px_56px_rgba(0,0,0,0.30)]">
         <div className="flex flex-col border-r border-white/10 bg-[#141516]">

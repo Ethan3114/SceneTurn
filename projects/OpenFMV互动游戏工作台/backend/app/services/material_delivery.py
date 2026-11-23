@@ -1,6 +1,8 @@
 from sqlalchemy import func, select
 
 from app.agent_models import AgentRun, AgentStep
+from app.models import Canvas
+from app.services.projects import payload_digest
 
 
 def writer_body(artifact):
@@ -75,9 +77,36 @@ def is_material_generation(value, generation_ids):
         (source.get("boundaryFrames") or {}).get("runId") or value["id"] in generation_ids)
 
 
-def public_material_generation(value):
+def material_video_artifacts(session, project_id, owner_id, scene_id=None):
+    query = select(Canvas).where(Canvas.project_id == project_id, Canvas.owner_id == owner_id)
+    if scene_id is not None:
+        query = query.where(Canvas.scene_id == scene_id)
+    artifacts = {}
+    for canvas in session.scalars(query):
+        for node in canvas.data_json.get("nodes", []):
+            artifact = node.get("metadata", {}).get("creativeArtifact")
+            if isinstance(artifact, dict) and artifact.get("role") == "media_producer":
+                artifacts[(canvas.scene_id, node["id"])] = (payload_digest(artifact), artifact)
+    return artifacts
+
+
+def public_material_generation(value, artifacts=None):
     source = value["input"]
     visible_input = {key: source[key] for key in ("model", "duration", "resolution", "ratio", "count", "audio") if key in source}
+    request = source.get("request") or {}
+    summary = request.get("shotSummary")
+    if summary is None and artifacts is not None:
+        artifact = artifacts.get((value["sceneId"], request.get("videoArtifactNodeId")))
+        if artifact and artifact[0] == request.get("videoArtifactHash"):
+            shot_key = (source.get("boundaryFrames") or {}).get("shotKey")
+            shot = next((item for item in artifact[1].get("shots", []) if item.get("shotKey") == shot_key), None)
+            if shot:
+                prompt = shot.get("videoPrompt", {})
+                summary = {"title": f"{artifact[1]['title']} · {shot_key}"[:200], "action": prompt.get("actionTimeline"),
+                    "camera": prompt.get("cameraMovement"), "sound": prompt.get("audioRequirement")}
+    summary_fields = ("title", "action", "camera", "sound")
+    if isinstance(summary, dict) and all(isinstance(summary.get(key), str) for key in summary_fields):
+        visible_input["shotSummary"] = {key: summary[key] for key in summary_fields}
     if source.get("boundaryFrames"):
         boundaries = source["boundaryFrames"]
         visible_input["boundaryFrames"] = {"shotKey": boundaries["shotKey"],

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     text_timeout: float = Field(default=600, ge=5, le=600)
     text_max_output_tokens: int = Field(default=32768, ge=64, le=32768)
     text_admin_email: str = ""
+    comfy_trusted_audio_nodes: str = ""
 
     @property
     def database_url(self) -> str:

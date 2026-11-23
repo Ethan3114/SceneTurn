@@ -1,0 +1,67 @@
+{
+  "pages": 1,
+  "boards": 7,
+  "textLayers": 256,
+  "imageAssets": 7,
+  "gradients": 14,
+  "links": 63,
+  "frames": [
+    {
+      "id": "home-blueprint",
+      "title": "首页 · 剧情画布",
+      "node": "1:2",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-timeline",
+      "title": "首页 · 场景与互动",
+      "node": "1:146",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-player",
+      "title": "首页 · 网页试玩",
+      "node": "1:290",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "home-assets",
+      "title": "首页 · 项目与素材",
+      "node": "1:434",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "play-choice",
+      "title": "试玩 · 最后一份电力",
+      "node": "1:578",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "play-signal",
+      "title": "结局 · 灯火重燃",
+      "node": "1:602",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    },
+    {
+      "id": "play-gate",
+      "title": "结局 · 闸门关上",
+      "node": "1:621",
+      "w": 1440,
+      "h": 900,
+      "page": "SceneTurn 首页与试玩"
+    }
+  ],
+  "reactions": 63
+}

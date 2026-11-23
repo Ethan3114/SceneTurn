@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import { BridgeHttpError, ProjectApi } from "./api.js";
 import { CodexProtocol, type DynamicCall } from "./protocol.js";
+import { imageAccountAvailable, runNextImageJob } from "./image-runtime.js";
 import { checkpointSchema, productRoot, stateDirectory, writePrivateJson, type Checkpoint, type Credentials } from "./storage.js";
 
 const toolSchema = z.object({ name: z.string(), description: z.string(), inputSchema: z.unknown() }).passthrough();
@@ -69,8 +70,14 @@ export async function runBridge(credentials: Credentials, once: boolean): Promis
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   try {
+    const imagesEnabled = await imageAccountAvailable();
+    await api.post("/connections/heartbeat", { capabilities: imagesEnabled ? ["native_image_v1"] : [] });
     while (!ending) {
       await api.post("/connections/heartbeat");
+      if (imagesEnabled && await runNextImageJob(credentials)) {
+        if (once) return;
+        continue;
+      }
       const claim = claimSchema.parse(await api.post("/connections/claim")).result;
       if (claim === null) {
         if (once) return;
