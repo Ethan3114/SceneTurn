@@ -209,7 +209,7 @@ export async function runBridge(credentials: Credentials, once: boolean): Promis
         const dynamicTools = claim.tools.map((tool) => ({ type: "function", name: tool.name, description: tool.description, inputSchema: tool.inputSchema }));
         const settings = { cwd, sandbox: "read-only", approvalPolicy: "never" };
         const thread = threadResponse.parse(await protocol.request(checkpoint.threadId ? "thread/resume" : "thread/start", {
-          ...settings, ...(checkpoint.threadId ? { threadId: checkpoint.threadId, excludeTurns: true } : { dynamicTools, serviceName: "openfmv-workbench", developerInstructions: "只使用OpenFMV项目工具完成本次授权任务。工具输入直接遵循所给Schema，本机连接绑定当前读取的项目版本和唯一操作标识。禁止其他文件、命令、网络和外部服务操作。" }),
+          ...settings, ...(checkpoint.threadId ? { threadId: checkpoint.threadId, excludeTurns: true } : { dynamicTools, serviceName: "sceneturn", developerInstructions: "只使用 SceneTurn 项目工具完成本次授权任务。工具输入直接遵循所给Schema，本机连接绑定当前读取的项目版本和唯一操作标识。禁止其他文件、命令、网络和外部服务操作。" }),
         }));
         checkpoint.threadId = thread.thread.id;
         model = thread.model;

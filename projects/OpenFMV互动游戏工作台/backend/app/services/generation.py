@@ -10,14 +10,16 @@ import uuid
 from decimal import ROUND_CEILING, Decimal
 
 from pydantic import ValidationError
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.agent_models import AgentRun, AgentStep
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.security import decode_secret
-from app.models import Asset, Budget, Canvas, Generation, Operation, Project, ProviderSettings
+from app.db import json_array_items
+from app.image_models import ImageJob
+from app.models import Asset, Budget, Canvas, Generation, Operation, Project, ProviderSettings, TextGeneration
 from app.services import canvas_video_inputs
 from app.services.media import download_video, resolve_asset_path
 from app.services.projects import iso_timestamp, lock_write, require_project, require_revision
@@ -151,7 +153,7 @@ def _ready_video_resources(session: Session, project: Project, scene_id: str) ->
             continue
         seen.add(node_id)
         if task.status == "ready" and task.asset_id is not None and task.owner_id == project.owner_id and task.project_id == project.id and task.generation_id == task.id and task.mime_type.startswith("video/"):
-            resources[node_id] = {"assetId": task.asset_id, "generationId": task.id}
+            resources[node_id] = {"assetId": task.asset_id, "generationId": task.id, "sourceNodeId": task.source_node_id}
     return resources
 
 
@@ -184,8 +186,72 @@ def _resource_input(node: dict, ready_videos: dict[str, dict]) -> dict | None:
     if storage_key:
         result["storageKey"] = storage_key
     if binding is not None:
-        result.update(binding)
+        result.update(assetId=binding["assetId"], generationId=binding["generationId"])
     return result
+
+
+def _historical_result_sources(session: Session, project: Project, scene_id: str, nodes: list[dict]) -> dict[str, str]:
+    owners = {}
+    metadata = [item for node in nodes if isinstance(item := node.get("metadata"), dict)]
+    text_ids = {value for item in metadata if isinstance(value := item.get("textGenerationId"), str)}
+    image_ids = {value for item in metadata if isinstance(value := item.get("imageGenerationId"), str)}
+    if text_ids:
+        owners.update(session.execute(select(TextGeneration.output_node_id, TextGeneration.source_node_id).where(
+            TextGeneration.id.in_(text_ids), TextGeneration.owner_id == project.owner_id, TextGeneration.project_id == project.id,
+            TextGeneration.scene_id == scene_id, TextGeneration.status == "ready",
+        )).all())
+    if image_ids:
+        owners.update(session.execute(select(ImageJob.request_json["canvas"]["outputNodeId"].as_string(), ImageJob.node_id).where(
+            ImageJob.id.in_(image_ids), ImageJob.owner_id == project.owner_id, ImageJob.project_id == project.id,
+            ImageJob.scene_id == scene_id, ImageJob.run_id.is_(None), ImageJob.status == "ready",
+        )).all())
+    return owners
+
+
+def _linked_output_ids(connections: list[dict], nodes: list[dict]) -> dict[str, list[str]]:
+    ordered_nodes = {node["id"]: position for position, node in enumerate(nodes)}
+    links: dict[str, list[str]] = {}
+    for edge in connections:
+        if "fromNodeId" in edge and "toNodeId" in edge:
+            links.setdefault(edge["fromNodeId"], []).append(edge["toNodeId"])
+    for linked_ids in links.values():
+        linked_ids.sort(key=lambda identifier: ordered_nodes.get(identifier, -1))
+    return links
+
+
+def _connected_resource(node: dict, nodes_by_id: dict[str, dict], output_links: dict[str, list[str]], ready_videos: dict[str, dict],
+        historical_sources: dict[str, str]) -> dict | None:
+    metadata = _node_metadata(node)
+    source_type = node.get("type")
+    output_type = metadata.get("generationMode") if source_type == "config" else source_type
+    current_id = metadata.get("outputNodeId")
+    if source_type == "config" and output_type is None and isinstance(current_id, str):
+        output_type = nodes_by_id.get(current_id, {}).get("type")
+    if output_type in ("text", "image", "video") and (source_type == "config" or isinstance(current_id, str)):
+        linked_ids = output_links.get(node["id"], [])
+        output_ids = [current_id] if isinstance(current_id, str) and current_id in linked_ids else []
+        output_ids.extend(identifier for identifier in reversed(linked_ids) if identifier != current_id)
+        for identifier in output_ids:
+            output = nodes_by_id.get(identifier)
+            if output is None or output["type"] != output_type:
+                continue
+            result = _node_metadata(output)
+            if result.get("creativeArtifact") or result.get("publicMaterialRole"):
+                continue
+            video_receipt = ready_videos.get(identifier, {})
+            result_source = historical_sources.get(identifier) or video_receipt.get("sourceNodeId") or result.get("inlineResultOf")
+            if result_source is not None and result_source != node["id"]:
+                continue
+            if identifier != current_id and result_source != node["id"]:
+                continue
+            if ((output_type == "text" and not result.get("content"))
+                    or (output_type == "image" and not result.get("storageKey"))
+                    or (output_type == "video" and not (result.get("storageKey") or video_receipt))):
+                continue
+            resource = _resource_input(output, ready_videos)
+            if resource is not None:
+                return {**resource, "nodeId": node["id"], "title": node.get("title", "")}
+    return _resource_input(node, ready_videos)
 
 
 def _flatten_inputs(inputs: list[dict]) -> list[dict]:
@@ -276,7 +342,18 @@ def _canvas_composition(session: Session, project: Project, scene_id: str, sourc
     canvas = session.scalar(select(Canvas).where(Canvas.project_id == project.id, Canvas.scene_id == scene_id, Canvas.owner_id == project.owner_id))
     if canvas is None:
         raise AppError(404, "CANVAS_NOT_FOUND", "请先保存所属剧情画布")
-    nodes = canvas.data_json["nodes"]
+    return _canvas_composition_snapshot(canvas.data_json, source_node_id, raw_prompt, output_node_id,
+        ready_videos=_ready_video_resources(session, project, scene_id),
+        historical_sources=_historical_result_sources(session, project, scene_id, canvas.data_json["nodes"]),
+        generation_mode=generation_mode, output_type=output_type, video_media=video_media, ignore_unassigned_media=ignore_unassigned_media,
+        include_connected_text=include_connected_text, text_image_input=text_image_input)
+
+
+def _canvas_composition_snapshot(data: dict, source_node_id: str, raw_prompt: str, output_node_id: str | None,
+        *, ready_videos: dict[str, dict], historical_sources: dict[str, str], generation_mode: str = "video", output_type: str = "video",
+        video_media: tuple = (), ignore_unassigned_media: bool = False, include_connected_text: bool = False,
+        text_image_input: bool = False) -> tuple[dict, str, dict]:
+    nodes = data["nodes"]
     nodes_by_id = {node["id"]: node for node in nodes}
     source = nodes_by_id.get(source_node_id)
     if source is None:
@@ -291,8 +368,8 @@ def _canvas_composition(session: Session, project: Project, scene_id: str, sourc
     if output_node_id is not None and (output is None or output_node_id == source_node_id or output.get("type") != output_type):
         raise AppError(422, "GENERATION_OUTPUT_INVALID", "结果节点必须位于同一剧情画布，与来源不同且符合生成类型")
 
-    connections = canvas.data_json.get("connections", [])
-    ready_videos = _ready_video_resources(session, project, scene_id)
+    connections = data.get("connections", [])
+    output_links = _linked_output_ids(connections, nodes)
 
     def connected_inputs(target_id: str) -> tuple[list[dict], list[dict]]:
         resources: list[dict] = []
@@ -304,18 +381,10 @@ def _canvas_composition(session: Session, project: Project, scene_id: str, sourc
             if node is None:
                 raise AppError(422, "GENERATION_REFERENCE_MISSING", "来源节点引用的素材节点不存在")
             if node.get("type") == "group":
-                children = [resource for child in nodes if _node_metadata(child).get("groupId") == node["id"] and (resource := _resource_input(child, ready_videos)) is not None]
+                children = [resource for child in nodes if _node_metadata(child).get("groupId") == node["id"] and (resource := _connected_resource(child, nodes_by_id, output_links, ready_videos, historical_sources)) is not None]
                 resource = {"nodeId": node["id"], "type": "group", "title": node.get("title", ""), "children": children} if children else None
-            elif node.get("type") == "config" and _node_metadata(node).get("generationMode") == "image":
-                output_id = _node_metadata(node).get("outputNodeId")
-                image = nodes_by_id.get(output_id, {}) if isinstance(output_id, str) else {}
-                resource = None
-                if image.get("type") == "image" and _node_metadata(image).get("storageKey") and any(
-                    edge.get("fromNodeId") == node["id"] and edge.get("toNodeId") == output_id for edge in connections
-                ):
-                    resource = _resource_input({**image, "id": node["id"], "title": node.get("title", "")}, ready_videos)
             else:
-                resource = _resource_input(node, ready_videos)
+                resource = _connected_resource(node, nodes_by_id, output_links, ready_videos, historical_sources)
             if resource is not None:
                 resources.append(resource)
                 links.append(connection)
@@ -325,7 +394,7 @@ def _canvas_composition(session: Session, project: Project, scene_id: str, sourc
     inputs: list[dict] = []
     input_connections: list[dict] = []
     config = None
-    if config_connection is not None and source.get("type") != "config" and not (source.get("type") == "text" and metadata.get("generationMode") == "text"):
+    if config_connection is not None and source.get("type") != "config" and not metadata.get("outputNodeId") and not (source.get("type") == "text" and metadata.get("generationMode") == "text"):
         config = nodes_by_id[config_connection["toNodeId"]]
         config_inputs, config_links = connected_inputs(config["id"])
         for resource, connection in zip(config_inputs, config_links, strict=True):
@@ -512,12 +581,12 @@ def retry_generation_quote(session: Session, generation_id: str, owner_id: str, 
     if not hmac.compare_digest(original.input_hash, original_hash):
         raise AppError(409, "CONFIRMATION_INPUT_INVALID", "原视频报价输入与确认摘要不一致，请重新核对")
     operation_id = hashlib.sha256(f"generation-retry:{original.id}".encode()).hexdigest()
-    receipt = func.json_each(AgentStep.tool_results_json).table_valued("value", joins_implicitly=True)
+    receipt = json_array_items(session, AgentStep.tool_results_json, joins_implicitly=True)
     step = session.scalars(select(AgentStep).join(AgentRun, AgentRun.id == AgentStep.run_id).where(
         AgentRun.owner_id == owner_id, AgentRun.project_id == original.project_id, AgentRun.scene_id == original.scene_id,
         AgentRun.limits_json["workspace"].as_string() == "materials", AgentStep.role == "media_producer",
-        func.json_extract(receipt.c.value, "$.tool") == "submit_generation",
-        func.json_extract(receipt.c.value, "$.result.generation.id") == original.id,
+        receipt.c.value["tool"].as_string() == "submit_generation",
+        receipt.c.value["result"]["generation"]["id"].as_string() == original.id,
     )).unique().one_or_none()
     if step is None:
         raise AppError(409, "VIDEO_RETRY_UNAVAILABLE", "原镜头缺少可核对的素材制作记录")
@@ -581,15 +650,18 @@ def create_join_generation(session: Session, project_id: str, owner_id: str, pay
         raise AppError(422, "GENERATION_OUTPUT_INVALID", "拼接结果需要绑定同一剧情画布中的独立视频节点")
     ready_videos = _ready_video_resources(session, project, payload["sceneId"])
     selected = {}
-    for connection in canvas.data_json.get("connections", []):
+    connections = canvas.data_json.get("connections", [])
+    output_links = _linked_output_ids(connections, nodes)
+    for connection in connections:
         if connection["toNodeId"] != source["id"]:
             continue
         reference = by_id[connection["fromNodeId"]]
         members = [node for node in nodes if _node_metadata(node).get("groupId") == reference["id"]] if reference["type"] == "group" else [reference]
         for member in members:
-            if member["type"] != "video":
+            if member["type"] != "video" and not (member["type"] == "config" and _node_metadata(member).get("generationMode") == "video"):
                 raise AppError(422, "VIDEO_JOIN_INPUT_INVALID", "拼接成片需要连接视频素材，输入按连线和组合内的顺序排列")
-            asset_id = _node_metadata(member).get("storageKey") or ready_videos.get(member["id"], {}).get("assetId")
+            resource = _connected_resource(member, by_id, output_links, ready_videos, {}) or {}
+            asset_id = resource.get("storageKey") or resource.get("assetId")
             asset = session.scalar(select(Asset).where(Asset.id == asset_id, Asset.owner_id == owner_id, Asset.project_id == project_id)) if asset_id else None
             if asset is None or not asset.mime_type.startswith("video/") or not asset.duration_ms or not asset.width or not asset.height:
                 raise AppError(422, "VIDEO_JOIN_INPUT_NOT_READY", "请等待所有参考视频完成并保存为当前项目的素材")

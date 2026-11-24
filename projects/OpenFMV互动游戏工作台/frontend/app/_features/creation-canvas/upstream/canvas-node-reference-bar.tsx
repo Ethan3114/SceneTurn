@@ -8,12 +8,12 @@ import { getNodeDefinition } from "./node-registry";
 import { getGroupResourceNodes } from "./canvas-resource-references";
 import { getImagePreviewRevision, previewUrlFor, subscribeImagePreviews } from "../media";
 import { useThemeStore } from "./use-theme-store";
-import { CanvasNodeType, type CanvasNodeData } from "./canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "./canvas";
 
-export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDisconnect, onStartSelection }: { nodeId: string; nodes: CanvasNodeData[]; connectedNodes: CanvasNodeData[]; onDisconnect?: (fromNodeId: string, toNodeId: string) => void; onStartSelection?: (nodeId: string) => void }) {
+export function CanvasNodeReferenceBar({ nodeId, nodes, connections, connectedNodes, onDisconnect, onStartSelection }: { nodeId: string; nodes: CanvasNodeData[]; connections?: CanvasConnection[]; connectedNodes: CanvasNodeData[]; onDisconnect?: (fromNodeId: string, toNodeId: string) => void; onStartSelection?: (nodeId: string) => void }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const references = connectedNodes.flatMap((sourceNode) => (sourceNode.type === CanvasNodeType.Group ? getGroupResourceNodes(sourceNode.id, nodes) : [sourceNode]).map((node) => ({ node, sourceNodeId: sourceNode.id })));
+    const references = connectedNodes.flatMap((sourceNode) => (sourceNode.type === CanvasNodeType.Group ? getGroupResourceNodes(sourceNode.id, nodes, connections) : [sourceNode]).map((node) => ({ node, sourceNodeId: sourceNode.id })));
     return (
         <div className="mb-2">
             <div className="mb-1.5 text-[11px] font-medium" style={{ color: theme.node.muted }}>{t("canvas.references.title")}</div>

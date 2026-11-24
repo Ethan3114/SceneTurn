@@ -110,6 +110,13 @@ class Session(Base):
     created_at: Mapped[float] = mapped_column(Float, default=time.time)
 
 
+class LoginFailure(Base):
+    __tablename__ = "login_failures"
+    source_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    failure_count: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[float] = mapped_column(Float, index=True)
+
+
 class Project(Base):
     __tablename__ = "projects"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

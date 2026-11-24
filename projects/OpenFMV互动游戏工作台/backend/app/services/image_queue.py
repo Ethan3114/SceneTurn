@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 import time
 from pathlib import Path
 
@@ -20,15 +21,18 @@ from app.image_models import ImageAccount, ImageJob
 from app.models import Asset, Budget, BudgetReservation, new_id
 from app.services.ark import image_request as ark_image_request, seedream_cost_micros, submit_image as submit_ark_image
 from app.services.canvas_images import bind_output
+from app.services.durable_files import materialize_file, persist_file
 from app.services.media import resolve_asset_path
 from app.services.material_references import validate_reference_assets
 from app.services.projects import iso_timestamp, lock_write, payload_digest, record_project_version, require_project, require_scene
+from app.services.object_storage import private_storage
 from app.services.sensetime import IMAGE_RECEIPT_TIMEOUT_SECONDS, MAX_IMAGE_BYTES, MODEL, decode_image, submit_image
 from app.services.providers import frozen_key
 
 
 logger = logging.getLogger("openfmv")
 IMAGE_REQUEST_GAP_SECONDS = 5
+MAX_IMAGE_RECEIPT_BYTES = MAX_IMAGE_BYTES * 2 + 1024 * 1024
 
 
 def require_image_worker(task):
@@ -93,13 +97,37 @@ def _settle_image(session, job, actual):
     reservation.reserved_micros, reservation.cost_micros, reservation.status, reservation.updated_at = 0, actual, "settled", time.time()
 
 
-def _release_expired_requests(session, now):
+def _receipt_key(job_id):
+    return f"image-responses/{job_id}.json"
+
+
+def _has_saved_receipt(settings, job_id):
+    if settings is None:
+        return False
+    key = _receipt_key(job_id)
+    storage = private_storage(settings)
+    if storage is None:
+        return (settings.data_dir / key).is_file()
+    try:
+        storage.object_size(key)
+    except AppError as error:
+        if error.code != "STORAGE_OBJECT_MISSING":
+            raise
+        return False
+    return True
+
+
+def _release_expired_requests(session, now, settings):
     expired = session.execute(select(ImageAccount, ImageJob).join(ImageJob, ImageAccount.active_job_id == ImageJob.id).where(
         ImageJob.status == "submission_unknown",
         func.coalesce(ImageJob.submitted_at, ImageJob.updated_at) <= now - IMAGE_RECEIPT_TIMEOUT_SECONDS)).all()
     for account, job in expired:
         if (job.account_id, job.owner_id) != (account.id, account.owner_id):
             raise ValueError("图片账号占用记录损坏")
+        if _has_saved_receipt(settings, job.id):
+            job.status, job.response_relpath = "response_saved", _receipt_key(job.id)
+            account.status = "available"
+            continue
         attempts = job.request_json.get("expiredAttempts", [])
         job.request_json = {**job.request_json, "expiredAttempts": [*attempts, {
             "accountId": account.id, "attempt": job.attempt_count, "submittedAt": job.submitted_at,
@@ -129,9 +157,15 @@ def shared_image_request_busy(session):
     return last_result is not None and now < last_result + IMAGE_REQUEST_GAP_SECONDS
 
 
-def claim_job(session):
+def claim_job(session, settings=None):
     lock_write(session)
-    _release_expired_requests(session, time.time())
+    _release_expired_requests(session, time.time(), settings)
+    if settings is not None:
+        saved = session.scalar(select(ImageJob.id).where(_cloud_image_job(), ImageJob.status == "response_saved")
+                               .order_by(ImageJob.updated_at, ImageJob.id).limit(1))
+        if saved is not None:
+            session.commit()
+            return saved
     if session.scalar(select(ImageAccount.id).where(ImageAccount.active_job_id.is_not(None)).limit(1)) is not None:
         session.commit()
         return None
@@ -182,9 +216,8 @@ def recover_jobs(session, settings=None):
         if job.status == "claimed":
             job.status = "queued"
         else:
-            saved_path = settings.data_dir.resolve() / "image-responses" / f"{job.id}.json" if settings else None
-            if saved_path and saved_path.is_file():
-                job.status, job.response_relpath = "response_saved", f"image-responses/{job.id}.json"
+            if _has_saved_receipt(settings, job.id):
+                job.status, job.response_relpath = "response_saved", _receipt_key(job.id)
             elif job.status == "submitting":
                 job.status, job.error_code = "submission_unknown", "IMAGE_SUBMISSION_UNKNOWN"
     for account in session.scalars(select(ImageAccount).where(ImageAccount.active_job_id.is_not(None))):
@@ -194,9 +227,8 @@ def recover_jobs(session, settings=None):
         if job.status == "claimed":
             job.status, job.account_id, account.active_job_id = "queued", None, None
         elif job.status in {"submitting", "submission_unknown"}:
-            saved_path = settings.data_dir.resolve() / "image-responses" / f"{job.id}.json" if settings else None
-            if saved_path and saved_path.is_file():
-                job.status, job.response_relpath = "response_saved", f"image-responses/{job.id}.json"
+            if _has_saved_receipt(settings, job.id):
+                job.status, job.response_relpath = "response_saved", _receipt_key(job.id)
                 account.status = "available"
             elif job.status == "submitting":
                 job.status, job.error_code = "submission_unknown", "IMAGE_SUBMISSION_UNKNOWN"
@@ -227,14 +259,30 @@ def _finish_failure(session, job, code, *, unknown=False, quota=False):
     session.commit()
 
 
-def _private_write(path, raw):
+def _private_write(settings, path, raw, content_type):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.parent.chmod(0o700)
-    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    with os.fdopen(descriptor, "wb") as stream:
-        stream.write(raw)
-        stream.flush()
-        os.fsync(stream.fileno())
+    if path.is_file():
+        if path.read_bytes() != raw:
+            raise ValueError("已保存图片数据与本次真实返回不一致")
+    else:
+        stream = tempfile.NamedTemporaryFile(dir=path.parent, prefix=".image-", suffix=".part", delete=False)
+        part = Path(stream.name)
+        try:
+            with stream:
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+            part.replace(path)
+        finally:
+            part.unlink(missing_ok=True)
+    try:
+        persist_file(settings, path, content_type)
+    except AppError as error:
+        if error.code != "STORAGE_OBJECT_EXISTS":
+            raise
+        key = path.relative_to(settings.data_dir.resolve()).as_posix()
+        private_storage(settings).materialize(key, path, max_bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
 
 
 def finalize_response(session, job, settings):
@@ -251,10 +299,10 @@ def finalize_response(session, job, settings):
         session.refresh(run)
         if (run.owner_id, run.project_id, run.scene_id) != (job.owner_id, job.project_id, job.scene_id):
             raise ValueError("图片任务归属与创作任务不一致")
-    expected_path = settings.data_dir.resolve() / "image-responses" / f"{job.id}.json"
+    expected_path = settings.data_dir.resolve() / _receipt_key(job.id)
     if (settings.data_dir.resolve() / job.response_relpath).resolve() != expected_path:
         raise ValueError("图片响应文件位置无效")
-    response = json.loads(expected_path.read_bytes())
+    response = json.loads(materialize_file(settings, expected_path, max_bytes=MAX_IMAGE_RECEIPT_BYTES).read_bytes())
     if _paid_image(job) and response.get("model") not in {None, job.request_json["modelProfile"]["model"]}:
         raise ValueError("图片响应模型与已确认模型不一致")
     raw = decode_image(response, job.request_json["width"], job.request_json["height"])
@@ -265,7 +313,8 @@ def finalize_response(session, job, settings):
         if (asset is None or (asset.owner_id, asset.project_id, asset.relpath, asset.mime_type) != (job.owner_id, job.project_id, relpath, "image/png")
                 or asset.sha256 != hashlib.sha256(raw).hexdigest() or asset.bytes != len(raw)
                 or (asset.width, asset.height) != (job.request_json["width"], job.request_json["height"])
-                or not image_path.is_file() or image_path.read_bytes() != raw):
+                or not materialize_file(settings, image_path, max_bytes=len(raw), sha256=asset.sha256).is_file()
+                or image_path.read_bytes() != raw):
             raise ValueError("已登记图片与原响应不一致")
         session.commit()
         return
@@ -280,11 +329,7 @@ def finalize_response(session, job, settings):
     frozen = job.request_json.get("referenceAssets", [])
     if frozen:
         validate_reference_assets(session, project, [item["assetId"] for item in frozen], settings, frozen)
-    if image_path.exists():
-        if image_path.read_bytes() != raw:
-            raise ValueError("持久图片与响应不一致")
-    else:
-        _private_write(image_path, raw)
+    _private_write(settings, image_path, raw, "image/png")
     asset_id = new_id()
     asset = Asset(id=asset_id, owner_id=job.owner_id, project_id=job.project_id,
         generation_id=None, name=f"{job.label[:180]}.png", relpath=relpath, poster_relpath=None,
@@ -320,11 +365,14 @@ def _submission_digest(job):
         "dependencyIds": job.dependency_ids, "artifactHash": job.artifact_hash})
 
 
-def _submitted_job(session, job_id, submission):
+def _submitted_job(session, job_id, submission, *, receipt_received=False):
     job = session.get(ImageJob, job_id)
     account = session.get(ImageAccount, submission["accountId"])
-    if (job is None or account is None or job.status != "submitting" or job.account_id != account.id
-            or account.owner_id != job.owner_id or account.active_job_id != job.id or account.status != "available"
+    valid_states = {("submitting", "available")}
+    if receipt_received:
+        valid_states.add(("submission_unknown", "quarantined"))
+    if (job is None or account is None or (job.status, account.status) not in valid_states or job.account_id != account.id
+            or account.owner_id != job.owner_id or account.active_job_id != job.id
             or job.attempt_count != submission["attemptCount"] or job.submitted_at != submission["submittedAt"]
             or _submission_digest(job) != submission["inputSha256"]):
         raise ValueError("图片提交状态或账号占用已经变化")
@@ -410,11 +458,11 @@ async def _execute_ark_job(job_id, settings, session_factory):
         lock_write(session)
         job = _submitted_ark_job(session, job_id, submission)
         if response.status_code >= 300:
-            _private_write(settings.data_dir.resolve() / "image-responses" / f"{job.id}-error.json", response.content)
+            _private_write(settings, settings.data_dir.resolve() / "image-responses" / f"{job.id}-error.json", response.content, "application/json")
             _finish_failure(session, job, "IMAGE_PROVIDER_REJECTED", unknown=not (400 <= response.status_code < 500 and response.status_code != 408))
             return
-        response_relpath = f"image-responses/{job.id}.json"
-        _private_write(settings.data_dir.resolve() / response_relpath, response.content)
+        response_relpath = _receipt_key(job.id)
+        _private_write(settings, settings.data_dir.resolve() / response_relpath, response.content, "application/json")
         job.response_relpath, job.status, job.updated_at = response_relpath, "response_saved", time.time()
         session.commit()
     _finalize_saved(job_id, settings, session_factory)
@@ -504,15 +552,12 @@ async def _execute_job(job_id, settings, session_factory):
         return
     with session_factory() as session:
         lock_write(session)
-        job, _account = _submitted_job(session, job_id, submission)
-        response_relpath = f"image-responses/{job.id}.json"
+        job, account = _submitted_job(session, job_id, submission, receipt_received=True)
+        response_relpath = _receipt_key(job.id)
         response_path = settings.data_dir.resolve() / response_relpath
-        if response_path.exists():
-            if response_path.read_bytes() != response.content:
-                raise ValueError("已保存响应与本次真实返回不一致")
-        else:
-            _private_write(response_path, response.content)
+        _private_write(settings, response_path, response.content, "application/json")
         job.response_relpath, job.status, job.updated_at = response_relpath, "response_saved", time.time()
+        account.status = "available"
         session.commit()
     _finalize_saved(job_id, settings, session_factory)
 
@@ -548,7 +593,7 @@ async def image_worker_loop(settings, session_factory, stop_event):
         await execute_job(identifier, settings, session_factory)
     while not stop_event.is_set():
         with session_factory() as session:
-            identifier = claim_job(session)
+            identifier = claim_job(session, settings)
         if identifier is None:
             await asyncio.sleep(0.5)
         else:

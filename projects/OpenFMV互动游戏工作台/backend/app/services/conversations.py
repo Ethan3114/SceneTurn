@@ -15,6 +15,11 @@ SKILL_NAMES = ["openfmv-story", "openfmv-layout", "openfmv-timeline", "openfmv-i
 BUSY = {"queued", "running", "stopping", "waiting_connection", "waiting_confirmation", "conflict", "submission_unknown"}
 
 
+def editing_run_limits(conversation_id: str, context: dict) -> dict:
+    return {"maxSteps": 40, "maxTokens": 32768, "maxCostMicros": 10000000, "deliveryMode": "tool_action", "workspace": "project",
+            "toolCatalogVersion": "R4", "conversationId": conversation_id, "editingContext": context, "skills": SKILL_NAMES}
+
+
 def require_conversation(session, project_id, conversation_id, owner_id):
     require_project(session, project_id, owner_id)
     value = session.scalar(select(ProjectConversation).where(ProjectConversation.id == conversation_id, ProjectConversation.project_id == project_id, ProjectConversation.owner_id == owner_id))
@@ -75,17 +80,17 @@ def send_message(session: Session, project_id: str, conversation_id: str, user: 
     if not set(body.context.selected_node_ids) <= node_ids or not set(body.context.selected_clip_ids) <= clip_ids:
         raise AppError(422, "CHAT_CONTEXT_INVALID", "选中对象已经变化，请读取当前项目后重试")
     counts = session.scalar(select(func.count()).select_from(ConversationMessage).where(ConversationMessage.conversation_id == conversation_id))
+    context = body.context.model_dump(by_alias=True)
     run = AgentRun(owner_id=user.id, project_id=project_id, scene_id=scene_id, operation_id=body.operation_id, role="director", executor="codex", goal=body.content,
         target_ids_json=[item["id"] for item in scenes], created_ids_json=[], initial_revision=project.revision, project_revision=project.revision, plan_json=[], status="waiting_connection",
-        thread_id=conversation.thread_id or (active.thread_id if active else None), limits_json={"maxSteps": 40, "maxTokens": 32768, "maxCostMicros": 10000000, "deliveryMode": "tool_action", "workspace": "project",
-            "toolCatalogVersion": "R4", "conversationId": conversation_id, "editingContext": body.context.model_dump(by_alias=True), "skills": SKILL_NAMES})
+        thread_id=conversation.thread_id or (active.thread_id if active else None), limits_json=editing_run_limits(conversation_id, context))
     if active and run.thread_id:
         run.limits_json = {**run.limits_json, "codexThreadUsageBaseline": (active.result_json or {}).get("usage", {}).get("threadTotals") if (active.result_json or {}).get("usage") else None}
     session.add(run)
     session.flush()
     sequence = (session.scalar(select(func.max(ConversationMessage.sequence)).where(ConversationMessage.conversation_id == conversation_id)) or 0) + 2
     session.add(ConversationMessage(owner_id=user.id, project_id=project_id, conversation_id=conversation_id, operation_id=body.operation_id, sequence=sequence,
-        role="user", content=body.content, context_json=body.context.model_dump(by_alias=True), run_id=run.id))
+        role="user", content=body.content, context_json=context, run_id=run.id))
     conversation.active_run_id, conversation.updated_at = run.id, time.time()
     if counts == 0:
         conversation.title = body.content[:60]

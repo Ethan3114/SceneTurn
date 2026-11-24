@@ -101,11 +101,11 @@ export default function LocalAboutPanel() {
       {isAboutPanelOpen && (
         <div
           role="dialog"
-          aria-label={`OpenFMV ${getAboutLabel(locale, 'about')}`}
+          aria-label={`SceneTurn ${getAboutLabel(locale, 'about')}`}
           className="absolute bottom-8 left-4 w-[236px] rounded-openfmv-panel border border-white/10 bg-[#202020]/96 p-2 text-openfmv-text shadow-[0_22px_80px_rgba(0,0,0,0.44)] backdrop-blur-2xl"
         >
           <div className="px-3 pb-2 pt-2">
-            <div className="text-sm font-semibold text-white">OpenFMV</div>
+            <div className="text-sm font-semibold text-white">SceneTurn</div>
             <div className="mt-1 text-xs font-medium text-openfmv-muted">{getAboutLabel(locale, 'about')}</div>
           </div>
           <div className="grid grid-cols-2 gap-1 border-t border-white/[0.08] pt-2">
@@ -137,7 +137,7 @@ export default function LocalAboutPanel() {
         onClick={() => setIsAboutPanelOpen((value) => !value)}
         className="inline-flex h-7 items-center gap-2 text-xs font-semibold text-openfmv-muted transition hover:text-white"
       >
-        <span>OpenFMV</span>
+        <span>SceneTurn</span>
         <span className="text-white/[0.18]">·</span>
         <span>{getAboutLabel(locale, 'about')}</span>
       </button>

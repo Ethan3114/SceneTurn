@@ -177,6 +177,7 @@ class ProjectListItem(WireModel):
     revision: int
     created_at: str
     updated_at: str
+    archived_at: str | None = None
 
 
 class ProjectList(WireModel):

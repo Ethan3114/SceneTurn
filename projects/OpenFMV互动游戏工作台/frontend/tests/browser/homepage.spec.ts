@@ -15,7 +15,7 @@ test('桌面首页使用已确认的导航、剧照与创作入口', async ({ pa
     await expect(header.getByRole('link', { name: '常见问题', exact: true })).toHaveCount(0);
     const hero = page.locator('section[aria-labelledby="sceneturn-home-heading"]');
     await expect(hero.getByRole('link', { name: /试玩|体验/ })).toHaveCount(0);
-    await expect(hero.getByRole('link', { name: 'GitHub' })).toHaveAttribute('href', 'https://github.com/Ethan3114/openfmv-workbench');
+    await expect(hero.getByRole('link', { name: 'GitHub' })).toHaveAttribute('href', 'https://github.com/Ethan3114/SceneTurn');
     await expect(page.locator('footer').getByRole('link', { name: '作品馆' })).toHaveAttribute('href', '/zh-CN/works');
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
 

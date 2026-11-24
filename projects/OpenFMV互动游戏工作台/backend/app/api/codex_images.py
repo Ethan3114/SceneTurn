@@ -17,6 +17,7 @@ from app.models import Asset, User
 from app.services import codex_images
 from app.services.material_references import validate_reference_assets
 from app.services.media import resolve_asset_path, save_upload
+from app.services.object_storage import private_storage
 from app.services.projects import require_project
 
 
@@ -92,8 +93,11 @@ async def result(identifier: str, metadata: str = Form(max_length=2000), file: U
         return {"job": codex_images.persist_result(session, connection, identifier, body, source, media)}
     finally:
         session.rollback()
+        storage = private_storage(settings)
         for stored in {item.relpath: item for item in (source, media)}.values():
             if session.scalar(select(Asset.id).where(Asset.relpath == stored.relpath)) is None:
                 for path in (stored.relpath, stored.poster_relpath):
                     if path:
-                        resolve_asset_path(settings, path).unlink()
+                        if storage is not None:
+                            await asyncio.to_thread(storage.delete, path)
+                        (settings.data_dir / path).unlink(missing_ok=True)

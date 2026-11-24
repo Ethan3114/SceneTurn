@@ -11,6 +11,7 @@ import { getProductionMessage, type MaterialNode } from '@/app/_utils/materialAp
 import type { MaterialCanvasHandle } from '@/app/_components/workbench/StudioPage';
 import { taskLabels } from '@/app/_features/creation-canvas/GenerationTaskCard';
 import { useResolvedMediaSrc } from '@/app/_hooks/useResolvedMediaSrc';
+import { useTaskPolling } from '@/app/_hooks/useTaskPolling';
 import { materialRoles, useMaterialWorkspace } from './store';
 import MediaCandidates from './MediaCandidates';
 import './materials.css';
@@ -21,9 +22,24 @@ const imageStatuses: Record<string, string> = { awaiting_confirmation: '等待�
 const roleOrder = ['writer', 'scene_designer', 'character_designer', 'storyboarder', 'media_producer', 'sound_designer'];
 const outputRoles = roleOrder.map((id) => materialRoles.find((role) => role.id === id)!);
 const statusesInProgress = new Set(['queued', 'running', 'waiting_confirmation']);
+const activeRunStatuses = new Set(['queued', 'running', 'stopping']);
+const activeImageStatuses = new Set(['queued', 'claimed', 'submitting', 'response_saved']);
+const activeVideoStatuses = new Set(['queued', 'submitting', 'processing', 'downloading']);
 const videoReceipt = z.object({ tool: z.literal('submit_generation'), result: z.object({ generation: z.object({ id: z.string() }) }) });
 const videoBoundary = z.object({ frames: z.array(z.object({ type: z.enum(['first_frame', 'last_frame']), assetId: z.string() })) });
 const shotSummary = z.object({ title: z.string(), action: z.string(), camera: z.string(), sound: z.string() });
+
+function isActiveVideo(task: GenerationView) {
+  return activeVideoStatuses.has(task.status) || (task.status === 'submission_unknown' && Boolean(task.remoteTaskId));
+}
+
+async function refreshConversation() {
+  const state = useMaterialWorkspace.getState();
+  try { await state.refresh(); }
+  catch (problem) {
+    if (useMaterialWorkspace.getState().conversation === state.conversation) useMaterialWorkspace.setState({ error: problem instanceof Error ? problem.message : '素材对话读取失败' });
+  }
+}
 
 function RoleStatus({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'good' | 'warn' | 'neutral' }) {
   const Icon = tone === 'good' ? Check : tone === 'warn' ? Clock : Info;
@@ -117,9 +133,24 @@ export default function MaterialWorkspace({ projectId, sceneId, saveRef, scenePi
   const [manual, setManual] = useState(false);
   const [zoom, setZoom] = useState(1);
   const manualRef = useRef<MaterialCanvasHandle>(null);
+  const refreshVideos = useRef<(() => Promise<void>) | null>(null);
   const conversationId = value?.id;
   const latestMessage = getProductionMessage(value);
   const run = latestMessage?.run;
+  const runId = run?.id;
+  const tasks = videoResults?.runId === runId ? videoResults?.tasks : undefined;
+  const videoIds = [...new Set(run?.steps.flatMap((step) => {
+    if (!Array.isArray(step.toolResults)) return [];
+    return step.toolResults.flatMap((receipt) => {
+      const parsed = videoReceipt.safeParse(receipt);
+      return parsed.success ? [parsed.data.result.generation.id] : [];
+    });
+  }))].join(',');
+  const imageReview = value?.pendingReview;
+  const retryingSenseNova = imageReview?.status === 'generating' && imageReview.images.some(({ model }) => model === 'sensenova-u1.5-fast');
+  const activeImages = value?.nodes.some((node) => node.delivery?.images.some((image) => activeImageStatuses.has(image.status)
+    || (retryingSenseNova && imageReview.nodeId === node.id && image.status === 'submission_unknown')));
+  const activeVideos = tasks?.some(isActiveVideo);
 
   useEffect(() => {
     void open({ projectId, sceneId });
@@ -132,34 +163,41 @@ export default function MaterialWorkspace({ projectId, sceneId, saveRef, scenePi
     return () => { saveRef.current = null; useMaterialWorkspace.setState({ savePending: async () => {} }); };
   }, [manual, saveRef]);
   useEffect(() => {
-    if (manual || !conversationId) return;
-    let pending = false;
-    const timer = window.setInterval(() => {
-      if (pending) return;
-      pending = true;
-      void useMaterialWorkspace.getState().refresh().catch((problem: Error) => useMaterialWorkspace.setState({ error: problem.message })).finally(() => { pending = false; });
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [manual, conversationId]);
+    if (manual) return;
+    return useMaterialWorkspace.subscribe((state, previous) => {
+      if (!previous.chatOpen && state.chatOpen && state.conversation?.projectId === projectId && state.conversation.sceneId === sceneId) {
+        void refreshConversation();
+        void refreshVideos.current?.();
+      }
+    });
+  }, [manual, projectId, sceneId]);
+  useTaskPolling(!manual && Boolean(conversationId && (activeRunStatuses.has(run?.status || '') || activeImages)), 2000, refreshConversation);
 
   useEffect(() => {
-    if (!run || !conversationId) return;
-    const ids = new Set(run.steps.flatMap((step) => {
-      if (!Array.isArray(step.toolResults)) return [];
-      return step.toolResults.flatMap((receipt) => {
-        const parsed = videoReceipt.safeParse(receipt);
-        return parsed.success ? [parsed.data.result.generation.id] : [];
-      });
-    }));
-    if (!ids.size) return;
-    let cancelled = false;
-    void getGenerations(projectId).then(({ generations }) => {
-      if (cancelled || useMaterialWorkspace.getState().conversation?.id !== conversationId) return;
-      const tasks = generations.filter((task) => task.sceneId === sceneId && (ids.has(task.id) || (task.retryOf && ids.has(task.retryOf))));
-      useMaterialWorkspace.setState({ videoResults: { runId: run.id, tasks } });
-    }).catch((problem: Error) => { if (!cancelled) useMaterialWorkspace.setState({ error: problem.message }); });
-    return () => { cancelled = true; };
-  }, [conversationId, projectId, run, sceneId]);
+    if (manual || !runId || !conversationId || !videoIds) return;
+    const ids = new Set(videoIds.split(','));
+    let request = 0;
+    const load = async () => {
+      const current = ++request;
+      const previous = useMaterialWorkspace.getState().videoResults;
+      try {
+        const { generations } = await getGenerations(projectId);
+        const state = useMaterialWorkspace.getState();
+        if (current !== request || state.conversation?.id !== conversationId || getProductionMessage(state.conversation)?.run.id !== runId || state.videoResults !== previous) return;
+        const tasks = generations.filter((task) => task.sceneId === sceneId && (ids.has(task.id) || (task.retryOf && ids.has(task.retryOf))));
+        useMaterialWorkspace.setState({ videoResults: { runId, tasks } });
+        const settledTask = previous?.runId === runId && previous.tasks.some((task) => isActiveVideo(task)
+          && tasks.some((next) => next.id === task.id && !isActiveVideo(next)));
+        if (settledTask) await refreshConversation();
+      } catch (problem) {
+        if (current === request && useMaterialWorkspace.getState().conversation?.id === conversationId) useMaterialWorkspace.setState({ error: problem instanceof Error ? problem.message : '视频任务读取失败' });
+      }
+    };
+    refreshVideos.current = load;
+    void load();
+    return () => { request++; refreshVideos.current = null; };
+  }, [conversationId, manual, projectId, runId, sceneId, videoIds]);
+  useTaskPolling(!manual && Boolean(conversationId && activeVideos), 2000, () => refreshVideos.current?.());
 
   async function switchManual() {
     if (manual) await manualRef.current?.save();
@@ -168,7 +206,6 @@ export default function MaterialWorkspace({ projectId, sceneId, saveRef, scenePi
   }
   const brief = latestMessage?.directorBrief ?? value?.directorBrief;
   const steps = run?.steps ?? [];
-  const tasks = videoResults?.runId === run?.id ? videoResults?.tasks : undefined;
   const pendingVideo = tasks?.find((task) => task.status === 'awaiting_confirmation');
   const reviewTask = tasks?.find((task) => task.id === videoReviewTaskId);
   const closeVideoReview = () => useMaterialWorkspace.setState({ videoReviewTaskId: null });
@@ -218,7 +255,7 @@ export default function MaterialWorkspace({ projectId, sceneId, saveRef, scenePi
               <button type="button" className="material-role-primary" onClick={() => useMaterialWorkspace.getState().openVideoReview(video.id)}><ArrowRight size={16} aria-hidden="true" />核对视频镜头</button>
             </div> : nodes.length === 0 && <p className="material-role-waiting">{active ? '正在制作' : '等待制作安排'}</p>}
             {active && ['character_designer', 'scene_designer', 'storyboarder'].includes(role.id) && value && !value.capabilities.image && <p className="material-capability">请检查图片模型的服务连接</p>}
-            {role.id === 'media_producer' && value && <MediaCandidates key={value.id} projectId={projectId} sceneId={sceneId} conversationId={value.id} />}
+            {role.id === 'media_producer' && value && <MediaCandidates key={value.id} projectId={projectId} sceneId={sceneId} conversationId={value.id} onGenerationConfirmed={(id) => tasks?.some((task) => task.id === id) ? refreshVideos.current?.() : undefined} />}
           </section>;
         })}
       </div></div>

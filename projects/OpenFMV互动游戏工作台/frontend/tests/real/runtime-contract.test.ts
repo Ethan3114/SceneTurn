@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, inject, it } from 'vitest';
 import { compileRuntimeGraph, createRuntimeState, getRuntimeSnapshot } from '@/app/_utils/graphRuntime';
 import type { OpenFMVProject } from '@/app/_types';
 import { createStore } from 'zustand/vanilla';
@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 import { getAssetSource } from '@/app/_utils/assetIdentity';
 
-const origin = 'http://127.0.0.1:8310/api/v1';
+const origin = inject('isolatedApiOrigin');
 
 describe('真实项目与前端运行时契约', () => {
   it('读取真实服务创建的项目，编译其NodeTimeline并保存后恢复', async () => {
@@ -83,8 +83,7 @@ describe('真实项目与前端运行时契约', () => {
   });
 
   it('真实视频上传后的素材路径与时间线引用保持同一标识', async () => {
-    const directory = process.env.TMPDIR;
-    if (!directory) throw new Error('真实媒体测试必须显式设置TMPDIR。');
+    const directory = inject('isolatedApiScratch');
     const mediaDirectory = await mkdtemp(path.join(directory, 'frontend-media-'));
     const mediaPath = path.join(mediaDirectory, 'timeline.mp4');
     await promisify(execFile)('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=12', '-t', '1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', mediaPath]);

@@ -6,13 +6,15 @@
 
 阶段3-1实现首页、作品馆、作品详情、网页播放器和模型设置。首页支持两条分支试玩、功能预览切换与折叠问答。在项目「导出 → 项目备份与游戏导出」确认固定版本后，可以选择作品馆发布、封面和先导片。首页先导片通过启动环境的 `SCENETURN_PREMIERE_PUBLICATION_SLUG` 指定含真实先导片的公开作品。[SceneTurn 产品设计总稿](https://www.figma.com/design/1yAfX7nImYlNHvbRyegJ78) · [阶段3-1照着做清单](docs/evidence/阶段3-1/照着做清单.md)
 
+阶段3-2使用 1280 和 1440 像素宽度验证桌面工作台。隔离项目使用真实成片，检查保存冲突、键盘试玩、媒体读取、固定版本、备份恢复和独立游戏包。[阶段3-2操作清单](docs/evidence/阶段3-2/照着做清单.md)
+
 [《裂盏》编辑器](http://127.0.0.1:3210/zh-CN/editor?id=42ddc399-3985-443a-9962-ea10bb3fc367)可试玩三场实际成片。「夜试斗气」的两个选项分别进入「稳住斗气」和「裂盏失手」，后者可返回开场重试。网页游玩、备份、导入与重启复核见[阶段2-4验收清单](docs/evidence/阶段2-4/照着做清单.md)。
 
 [真实Flash总画布工作流证明](.intermediate/agent-smoke/c25f0100-536e-4a90-b45c-bf7564c0e590/proof.json)：19次实际请求、供应商预估0.250127元、费用预留清零，完成视频裁切、普通按钮、QTE、场景正文及图片制作节点；运行程序核对三次跳转，实际服务重启后项目和任务一致。媒体使用既有真实视频，本次新增媒体模型请求为零。
 
 ## GitHub进度保存
 
-代码、项目文档、设计文件和阶段验收记录保存在私有仓库https://github.com/Ethan3114/openfmv-workbench。仓库保留工具包目录结构，产品位于projects/OpenFMV互动游戏工作台/，根目录包含流程管家、验证脚本和对应手册。公开来源的设计参考图随设计文档保存。依赖、生成缓存、本机作品数据库、生成媒体及凭据保留在本机；在其他电脑恢复时需要安装依赖，并通过完整项目备份恢复创作数据。
+SceneTurn 的源码与公开项目资料保存在 GitHub。仓库根目录包含流程管家、验证脚本和手册，产品文件位于 `projects/OpenFMV互动游戏工作台/`。可使用完整项目备份在其他电脑恢复创作数据。[SceneTurn GitHub 仓库](https://github.com/Ethan3114/SceneTurn)
 
 当前完整剧情样例以《斗破苍穹》为题材，先查找已有剧情与媒体素材，再设计开头、中间剧情、选择点和两条后续线路，确认后细化每段视频制作清单。视频生成前的图文方案、实际图片及修正由代理自主判断并通过平台执行，视频生成前由本人核对首尾帧、镜头内容和参数并确认。
 
@@ -34,10 +36,27 @@ backend/.venv/bin/python scripts/preview.py status
 注销或重启电脑后重新启动当前预览：
 
 ```bash
-backend/.venv/bin/python scripts/preview.py start --web-root "$PWD/.intermediate/frontend-canvas-review-fixes"
+backend/.venv/bin/python scripts/preview.py start --web-root "$PWD/.intermediate/frontend-stage3-2-final"
 ```
 
 停止本产品预览使用backend/.venv/bin/python scripts/preview.py stop。重复启动相同配置保持现有进程；更换独立构建目录前先停止当前预览。端口被其他进程占用时，启动命令会明确失败，维护者核实该进程后处理。
+
+正式网页的容器入口是 `frontend/Dockerfile`。在本产品目录运行 `docker build --platform linux/amd64 -t sceneturn-web frontend` 构建，镜像服务端口为 3000。启动时给网页容器设置 `BACKEND_URL`，由平台向前后端分别注入相同的 `PROXY_SHARED_SECRET`。构建过程无需生产配置。本机预览默认连接 8310。生产数据库、媒体持久存储和 HTTPS 的验收安排在阶段 4。
+
+阶段 4 的后端容器可在本机用独立 SQLite 数据卷验收。先生成仅包含运行文件的构建目录，再以该目录构建，防止部署工具上传项目数据或本地配置。在本产品目录执行：
+
+```bash
+backend_context="$(backend/.venv/bin/python scripts/stage_backend_image_context.py)"
+docker build --platform linux/amd64 -t sceneturn-api:local "$backend_context"
+```
+
+后端容器监听 8080，包含 FFmpeg、ffprobe、中文字幕字体和游戏导出脚本。线上通过服务环境变量 `OPENFMV_MASTER_KEY` 注入固定的 Fernet 主密钥，供供应商凭据加密和 Codex 配对使用。同一环境重新部署或实例回收后使用相同密钥。本机预览继续读取数据目录中的主密钥。生产环境的数据库、媒体和系统旁白可用性以阶段 4 验收记录为准。[上线方案](docs/阶段文档/上线方案摘要.md)
+
+共享 CloudBase PostgreSQL 使用 HTTPS 网关。初始结构、行级权限和网关校验可在 `backend` 目录使用 Alembic 离线导出。输出用于新建独立的 `sceneturn` schema。开发预览仍使用本机数据库。正式网关切换需要完成业务路由和后台任务接入。
+
+~~~bash
+.venv/bin/python -m alembic -x deployment=cloudbase_gateway upgrade head --sql
+~~~
 
 登录后可在「我的项目」新建项目或进入独立的导入恢复页面。项目顶部可在「剧情编排」「时间线」「素材」之间切换。
 
@@ -78,7 +97,7 @@ backend/.venv/bin/python scripts/preview.py start --web-root "$PWD/.intermediate
 在终端进入本产品目录：
 
 ```bash
-cd /Users/ethan/Documents/idea-to-launch/projects/OpenFMV互动游戏工作台
+cd "projects/OpenFMV互动游戏工作台"
 mkdir -p .intermediate/tmp .intermediate/cache
 export TMPDIR="$PWD/.intermediate/tmp"
 export XDG_CACHE_HOME="$PWD/.intermediate/cache"
@@ -96,13 +115,13 @@ npm --prefix frontend ci --cache .intermediate/npm-cache
 
 ```bash
 backend/.venv/bin/python scripts/preview.py stop
-backend/.venv/bin/python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8310
+backend/.venv/bin/python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8310 --no-proxy-headers
 ```
 
 另一个终端窗口进入frontend并启动网页：
 
 ```bash
-cd /Users/ethan/Documents/idea-to-launch/projects/OpenFMV互动游戏工作台/frontend
+cd "projects/OpenFMV互动游戏工作台/frontend"
 export TMPDIR="$PWD/../.intermediate/tmp"
 export XDG_CACHE_HOME="$PWD/../.intermediate/cache"
 npm run dev
@@ -327,7 +346,7 @@ backend/.venv/bin/python -m pytest -q scripts/material_revision_validation.py --
 商汤使用原AI Studio的`sensenova-u1.5-fast`接口，三个账号轮换领取同一条持久队列的任务。原配置通过下列命令加密导入，输出不包含凭据。导入操作不会调用模型。
 
 ```bash
-backend/.venv/bin/python scripts/import_sensetime_accounts.py --source '../端侧AI-Studio/backend/.env' --email '1090444703@qq.com'
+backend/.venv/bin/python scripts/import_sensetime_accounts.py --source '../端侧AI-Studio/backend/.env' --email 'your-account@example.com'
 ```
 
 工作台在数据库事务内领取图片任务，三个商汤账号合计同时只运行一个本机请求。提交满180秒仍无回执时，保留该次尝试记录并释放本机占用。同一张图仍待生成时，原任务排队，至少等5秒后交给其他可用账号。单张图片对同一账号最多有一次超时尝试，三个账号用尽后显示超时。收到结果并完成登记或明确失败后，也等待至少5秒再领取下一单。间隔和已尝试的账号都保存在数据库，重启后继续生效。已停止或已完成的批次不再提交，已保存的素材继续保留。本机释放时，商汤是否仍在处理原请求可能无法确认。

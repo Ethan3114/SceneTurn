@@ -7,7 +7,7 @@ import { useLocale } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowRight, Film, FolderOpen, LayoutGrid, Play, Plus, Upload } from 'lucide-react';
 
-import { api, assetContentUrl, createCloudProject, projectList, type ProjectEnvelope, type ProjectSummary } from '@/app/_utils/cloudApi';
+import { api, assetContentUrl, createCloudProject, getCloudProject, projectList, saveCloudProject, type ProjectEnvelope, type ProjectSummary } from '@/app/_utils/cloudApi';
 import { getLocalizedPath } from '@/app/_utils/localePaths';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/app/_components/ui/dialog';
 import type { OpenFMVProject } from '@/app/_types';
@@ -44,8 +44,11 @@ export default function ProjectsPage({ view = 'list' }: { view?: 'list' | 'impor
   const [createError, setCreateError] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [restoring, setRestoring] = useState<string | null>(null);
   const createTrigger = useRef<HTMLButtonElement | null>(null);
-  const featured = projects?.[0];
+  const currentProjects = projects?.filter((project) => !project.archivedAt);
+  const archivedProjects = projects?.filter((project) => project.archivedAt) ?? [];
+  const featured = currentProjects?.[0];
   const featuredId = featured?.id;
   const featuredRevision = featured?.revision;
   const coverSource = featuredCover?.id === featuredId && featuredCover?.revision === featuredRevision ? featuredCover?.source : undefined;
@@ -103,6 +106,38 @@ export default function ProjectsPage({ view = 'list' }: { view?: 'list' | 'impor
     }
   }
 
+  async function restoreProject(id: string) {
+    setRestoring(id);
+    setError('');
+    try {
+      const { project } = await getCloudProject(id);
+      const metadata = { ...project.metadata };
+      delete metadata.archivedAt;
+      await saveCloudProject({ ...project, metadata });
+      setProjects((await projectList()).projects);
+    } catch (problem: unknown) {
+      setError(errorText(problem));
+    } finally {
+      setRestoring(null);
+    }
+  }
+
+  function projectRow(project: ProjectSummary) {
+    return <article className="fmv-project-row" data-testid="project-item" key={project.id}>
+      <ProjectPoster source={project.id === featuredId ? coverSource : undefined} size="row" />
+      <div className="fmv-project-row-info">
+        <h4><Link href={editorPath(project.id)}>{project.title}</Link></h4>
+        <p className="fmv-project-note">版本 {project.revision}</p>
+      </div>
+      <div className="fmv-project-actions">
+        <Link href={playerPath(project.id)} className="fmv-project-action" data-testid="project-play"><Play size={16} aria-hidden="true" />网页试玩</Link>
+        <Link href={editorPath(project.id)} className="fmv-project-action">打开项目<ArrowRight size={16} aria-hidden="true" /></Link>
+        {project.archivedAt && <button type="button" className="fmv-project-action" disabled={restoring !== null}
+          onClick={() => { void restoreProject(project.id); }}>{restoring === project.id ? '正在恢复…' : '移回项目列表'}</button>}
+      </div>
+    </article>;
+  }
+
   if (!user) return <main className="fmv-loading">{userError || '正在读取账号…'}</main>;
 
   if (view === 'import') return <WorkspaceShell user={user} title="创作台" projectLibrary>
@@ -133,7 +168,7 @@ export default function ProjectsPage({ view = 'list' }: { view?: 'list' | 'impor
         </header>
         {error && <p role="alert" className="fmv-project-error">{error} <button type="button" className="fmv-project-action" onClick={refreshProjects}>重新加载</button></p>}
         {!projects && !error && <p className="fmv-project-note fmv-project-loading" role="status">正在读取项目…</p>}
-        {projects?.length === 0 && <section className="fmv-project-empty">
+        {currentProjects?.length === 0 && <section className="fmv-project-empty">
           <FolderOpen size={32} aria-hidden="true" />
           <h3>还没有项目</h3>
           <p className="fmv-project-note">从新的剧情开始，或导入一份完整项目备份。</p>
@@ -156,20 +191,14 @@ export default function ProjectsPage({ view = 'list' }: { view?: 'list' | 'impor
             </div>
           </article>
         </section>}
-        {projects && projects.length > 0 && <section className="fmv-project-list" aria-labelledby="fmv-project-list-title">
+        {currentProjects && currentProjects.length > 0 && <section className="fmv-project-list" aria-labelledby="fmv-project-list-title">
           <h3 id="fmv-project-list-title">项目列表</h3>
-          {projects.map((project) => <article className="fmv-project-row" data-testid="project-item" key={project.id}>
-            <ProjectPoster source={project.id === featuredId ? coverSource : undefined} size="row" />
-            <div className="fmv-project-row-info">
-              <h4><Link href={editorPath(project.id)}>{project.title}</Link></h4>
-              <p className="fmv-project-note">版本 {project.revision}</p>
-            </div>
-            <div className="fmv-project-actions">
-              <Link href={playerPath(project.id)} className="fmv-project-action" data-testid="project-play"><Play size={16} aria-hidden="true" />网页试玩</Link>
-              <Link href={editorPath(project.id)} className="fmv-project-action">打开项目<ArrowRight size={16} aria-hidden="true" /></Link>
-            </div>
-          </article>)}
+          {currentProjects.map(projectRow)}
         </section>}
+        {archivedProjects.length > 0 && <details className="fmv-project-list fmv-project-archive">
+          <summary>已归档项目（{archivedProjects.length}）</summary>
+          {archivedProjects.map(projectRow)}
+        </details>}
       </main>
     </div>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!busy) setCreateOpen(open); }}>

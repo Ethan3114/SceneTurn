@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { ArrowRight, Info, RotateCcw, X } from 'lucide-react';
 
 import { getButtonClipInlineStyle, getTimelineQteDisplayName } from '@/app/_features/node-timeline';
@@ -568,6 +569,8 @@ export default function PlayerOverlay() {
   const dispatchRuntimeEvent = useRuntimeSessionStore((state) => state.dispatch);
   const stopRuntimeSession = useRuntimeSessionStore((state) => state.stop);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const exitButtonRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const timelineTimeRef = useRef(0);
   const [isTimelineClockPaused, setIsTimelineClockPaused] = useState(false);
   const [isSceneInfoOpen, setIsSceneInfoOpen] = useState(false);
@@ -695,10 +698,11 @@ export default function PlayerOverlay() {
 
   if (!isPlaying || !snapshot) return null;
 
-  return (
-    <div className="fixed inset-0 z-[100] bg-[linear-gradient(135deg,#090b10,#15110d)] text-white">
+  const content = (
+    <>
+      <DialogPrimitive.Title className="sr-only">{t('dialogTitle')}</DialogPrimitive.Title>
       <div className="absolute left-4 top-4 z-50 flex items-center gap-2">
-        <button type="button" onClick={closePlayer} className="flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.11] px-4 py-2 text-sm font-medium text-white/85 backdrop-blur-3xl transition hover:border-openfmv-accent/70 hover:text-white"><X size={16} />{t('exit')}</button>
+        <DialogPrimitive.Close ref={exitButtonRef} type="button" aria-keyshortcuts="Escape" className="flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.11] px-4 py-2 text-sm font-medium text-white/85 backdrop-blur-3xl transition hover:border-openfmv-accent/70 hover:text-white"><X size={16} />{t('exit')}</DialogPrimitive.Close>
         <button type="button" onClick={() => dispatch({ type: 'restart' })} className="flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.11] px-4 py-2 text-sm font-medium text-white/85 backdrop-blur-3xl transition hover:border-openfmv-accent/70 hover:text-white"><RotateCcw size={16} />{t('replay')}</button>
         {hasSceneInfo && (
           <div className="relative">
@@ -777,7 +781,29 @@ export default function PlayerOverlay() {
           )}
         </div>
       </div>
-    </div>
+    </>
+  );
+  return (
+    <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) closePlayer(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          className="fixed inset-0 z-[100] bg-[linear-gradient(135deg,#090b10,#15110d)] text-white"
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onOpenAutoFocus={(event) => {
+            returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            event.preventDefault();
+            exitButtonRef.current?.focus({ preventScroll: true });
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus({ preventScroll: true });
+          }}
+        >
+          {content}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 

@@ -339,13 +339,6 @@
   background: #e8e8e8;
 }
 
-.githubAccess {
-  margin-top: 17px;
-  color: var(--home-silver);
-  font-size: 0.9375rem;
-  line-height: 1.6;
-}
-
 .explore {
   position: absolute;
   inset: auto auto 52px 0;

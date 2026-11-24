@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { OpenFMVAsset, OpenFMVProject } from '@/app/_types';
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from '@/app/_features/creation-canvas/upstream/canvas';
+import { directUpload } from './directUpload';
 
 export class ApiError extends Error {
   constructor(public code: string, message: string, public status: number) {
@@ -19,7 +20,7 @@ export interface CanvasSnapshot {
   viewport: ViewportTransform;
 }
 export interface ProjectEnvelope { project: OpenFMVProject; revision: number; canvases: CanvasSnapshot[] }
-export interface ProjectSummary { id: string; title: string; revision: number; createdAt: string; updatedAt: string }
+export interface ProjectSummary { id: string; title: string; revision: number; createdAt: string; updatedAt: string; archivedAt?: string | null }
 export interface GenerationView {
   id: string; projectId: string; sceneId: string; sourceNodeId: string; clipId: string;
   projectRevision: number;
@@ -146,11 +147,46 @@ export const assetContentUrl = (id: string) => `/api/v1/assets/${encodeURICompon
 export async function addAssetToSceneTimeline(id: string, sceneId: string, assetId: string, expectedRevision: number) {
   return acceptProjectEnvelope(await api<ProjectEnvelope>(`/projects/${id}/timeline-assets`, { method: 'POST', body: JSON.stringify({ sceneId, assetId, expectedRevision, operationId: operationId() }) }));
 }
+
+type UploadedAsset = ProjectEnvelope & { asset: Record<string, unknown> };
+const assetUploadStatus = z.object({ status: z.enum(['awaiting_upload', 'queued', 'processing', 'ready', 'failed']),
+  errorCode: z.string().nullable(), errorMessage: z.string().nullable(), result: z.custom<UploadedAsset>().optional() });
+const pendingAssetOperations = new Map<string, string>();
+
+async function waitForUploadedAsset(path: string, initial: unknown, operationKey: string): Promise<UploadedAsset> {
+  let response = initial;
+  for (let attempt = 0; attempt < 180; attempt += 1) {
+    const update = assetUploadStatus.parse(response);
+    if (update.status === 'ready' && update.result) return update.result;
+    if (update.status === 'failed' || update.status === 'awaiting_upload') {
+      pendingAssetOperations.delete(operationKey);
+      throw new ApiError(update.errorCode || 'ASSET_UPLOAD_FAILED', update.errorMessage || '素材未通过上传检查。', 422);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    response = await api(path);
+  }
+  throw new ApiError('ASSET_UPLOAD_PROCESSING', '文件已上传，仍在检查。重新选择同一文件可继续查看结果。', 408);
+}
+
 export async function uploadCloudAsset(id: string, file: File): Promise<OpenFMVAsset> {
   const previousRevision = snapshots.get(id)?.metadata.serverRevision;
-  const form = new FormData();
-  form.append('file', file);
-  const result = await api<ProjectEnvelope & { asset: Record<string, unknown> }>(`/projects/${id}/assets`, { method: 'POST', body: form });
+  const path = `/projects/${encodeURIComponent(id)}/assets`;
+  let operationKey = '';
+  const staged = await directUpload(api, `${path}/direct-upload`, file, (sha256) => {
+    operationKey = JSON.stringify([id, file.name, file.size, sha256]);
+    const operation = pendingAssetOperations.get(operationKey) ?? operationId();
+    pendingAssetOperations.set(operationKey, operation);
+    return operation;
+  });
+  let result: UploadedAsset;
+  if (staged) {
+    result = await waitForUploadedAsset(staged.statusPath, staged.result, operationKey);
+  } else {
+    const form = new FormData();
+    form.append('file', file);
+    result = await api<UploadedAsset>(path, { method: 'POST', body: form });
+  }
+  if (operationKey) pendingAssetOperations.delete(operationKey);
   const { asset } = result;
   const saved = acceptProjectEnvelope(result).project;
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('openfmv:assets-saved', { detail: { project: saved, previousRevision } }));

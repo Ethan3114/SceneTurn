@@ -4,6 +4,7 @@ import hashlib
 import ipaddress
 import math
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -23,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.services.object_storage import CloudBaseStorage, private_storage
 
 
 SUPPORTED_MIME = {
@@ -101,9 +103,14 @@ class StoredMedia:
 def resolve_asset_path(settings: Settings, relpath: str) -> Path:
     root = settings.data_dir.resolve()
     path = (root / relpath).resolve()
-    if not path.is_relative_to(root / "media") or not path.is_file():
+    if not path.is_relative_to(root / "media"):
         raise AppError(404, "ASSET_FILE_NOT_FOUND", "素材文件不存在")
-    return path
+    if path.is_file():
+        return path
+    storage = private_storage(settings)
+    if storage is None:
+        raise AppError(404, "ASSET_FILE_NOT_FOUND", "素材文件不存在")
+    return storage.materialize(relpath, path, max_bytes=max(settings.max_upload_bytes, settings.max_download_bytes))
 
 
 def asset_view(asset) -> dict:
@@ -132,6 +139,39 @@ def _staging_file(settings: Settings) -> Path:
             return Path(stream.name)
     except OSError as exc:
         raise AppError(507, "MEDIA_STORAGE_FAILED", "素材暂存目录不可写或磁盘空间不足") from exc
+
+
+def _publish_media_file(source: Path, destination: Path) -> None:
+    if source.stat().st_dev == destination.parent.stat().st_dev:
+        source.replace(destination)
+        return
+
+    stream = tempfile.NamedTemporaryFile(prefix=".media-", suffix=".part", dir=destination.parent, delete=False)
+    part = Path(stream.name)
+    remove_destination = False
+    try:
+        with stream, source.open("rb") as original:
+            shutil.copyfileobj(original, stream, length=1024 * 1024)
+            stream.flush()
+            os.fsync(stream.fileno())
+        part.replace(destination)
+        remove_destination = True
+        source.unlink()
+        remove_destination = False
+    finally:
+        part.unlink(missing_ok=True)
+        if remove_destination:
+            destination.unlink(missing_ok=True)
+
+
+def _publish_validated_media(storage: CloudBaseStorage | None, key: str, source: Path, destination: Path,
+                             mime_type: str, source_key: str | None = None) -> None:
+    if storage is None:
+        _publish_media_file(source, destination)
+    elif source_key is not None:
+        storage.copy(source_key, key, content_type=mime_type)
+    else:
+        storage.put(key, source, mime_type)
 
 
 def _filename(value: str) -> str:
@@ -192,7 +232,8 @@ def _text_header(content_type: str | None, suffix: str) -> str | None:
     return encoding
 
 
-def _store_text(path: Path, settings: Settings, name: str, suffix: str, mime_type: str, declared_charset: str | None) -> StoredMedia:
+def _store_text(path: Path, settings: Settings, name: str, suffix: str, mime_type: str,
+                declared_charset: str | None, *, source_key: str | None = None) -> StoredMedia:
     if filetype.guess(str(path)) is not None:
         raise AppError(422, "TEXT_CONTENT_INVALID", "文本文件包含其他格式的媒体或二进制内容")
     raw = path.read_bytes()
@@ -212,11 +253,12 @@ def _store_text(path: Path, settings: Settings, name: str, suffix: str, mime_typ
     directory = settings.data_dir / "media"
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / f"{uuid.uuid4().hex}{suffix}"
+    key = destination.relative_to(settings.data_dir).as_posix()
     digest = hashlib.sha256(raw).hexdigest()
-    os.replace(path, destination)
+    _publish_validated_media(private_storage(settings), key, path, destination, mime_type, source_key)
     return StoredMedia(
         name=name,
-        relpath=destination.relative_to(settings.data_dir).as_posix(),
+        relpath=key,
         poster_relpath="",
         mime_type=mime_type,
         bytes=len(raw),
@@ -342,9 +384,9 @@ def _run_media(command: list[str], stdin: BinaryIO | None = None) -> subprocess.
     return result
 
 
-def _validate_and_store(path: Path, settings: Settings, name: str, generated_video: bool) -> StoredMedia:
+def _validate_and_store(path: Path, settings: Settings, name: str, generated_video: bool, *, source_key: str | None = None) -> StoredMedia:
     try:
-        return _inspect_and_store(path, settings, name, generated_video)
+        return _inspect_and_store(path, settings, name, generated_video, source_key=source_key)
     except OSError as exc:
         raise AppError(507, "MEDIA_STORAGE_FAILED", "媒体文件保存失败，请检查磁盘空间与目录权限") from exc
 
@@ -359,7 +401,7 @@ def probe_media(path: Path) -> ProbeResult:
         raise AppError(422, "MEDIA_METADATA_INVALID", "素材的媒体信息未通过结构检查") from exc
 
 
-def _inspect_and_store(path: Path, settings: Settings, name: str, generated_video: bool) -> StoredMedia:
+def _inspect_and_store(path: Path, settings: Settings, name: str, generated_video: bool, *, source_key: str | None = None) -> StoredMedia:
     detected = filetype.guess(str(path))
     if detected is None or detected.mime not in SUPPORTED_MIME:
         raise AppError(422, "MEDIA_TYPE_UNSUPPORTED", "素材真实格式不在支持范围内")
@@ -390,7 +432,10 @@ def _inspect_and_store(path: Path, settings: Settings, name: str, generated_vide
     target = directory / f"{media_id}{SUPPORTED_MIME[mime_type]}"
     poster_source = path.with_suffix(".jpg")
     poster_target = directory / f"{media_id}-poster.jpg"
+    key = target.relative_to(settings.data_dir).as_posix()
     poster_relpath = ""
+    published = False
+    storage = private_storage(settings)
     try:
         if visual is not None:
             _run_media([
@@ -399,17 +444,24 @@ def _inspect_and_store(path: Path, settings: Settings, name: str, generated_vide
             ])
             if not poster_source.is_file() or poster_source.stat().st_size == 0:
                 raise AppError(422, "MEDIA_POSTER_FAILED", "素材封面未成功生成")
-            os.replace(poster_source, poster_target)
-            poster_relpath = poster_target.relative_to(settings.data_dir).as_posix()
+            poster_key = poster_target.relative_to(settings.data_dir).as_posix()
+            _publish_validated_media(storage, poster_key, poster_source, poster_target, "image/jpeg")
+            poster_relpath = poster_key
         with path.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         size = path.stat().st_size
-        os.replace(path, target)
+        _publish_validated_media(storage, key, path, target, mime_type, source_key)
+        published = True
     finally:
         poster_source.unlink(missing_ok=True)
+        if not published:
+            if storage is not None and poster_relpath:
+                storage.delete(poster_relpath)
+            else:
+                poster_target.unlink(missing_ok=True)
     return StoredMedia(
         name=name,
-        relpath=target.relative_to(settings.data_dir).as_posix(),
+        relpath=key,
         poster_relpath=poster_relpath,
         mime_type=mime_type,
         bytes=size,

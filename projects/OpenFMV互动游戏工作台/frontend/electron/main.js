@@ -13,7 +13,11 @@ const { registerAiSettingsIpc } = require('./ai-settings');
 const { registerIpcHandler } = require('../shared/ipc-contract.js');
 
 const isDev = !app.isPackaged;
-const appIconPath = path.join(__dirname, '..', 'public', 'logo.png');
+const appIconPath = path.join(__dirname, '..', 'public', 'sceneturn', 'icon.png');
+const legacyDataPath = path.join(app.getPath('appData'), isDev ? 'openfmv' : 'OpenFMV');
+if (fsSync.existsSync(legacyDataPath) && !fsSync.existsSync(app.getPath('userData'))) {
+  app.setPath('userData', legacyDataPath);
+}
 Menu.setApplicationMenu(null);
 if (process.platform === 'win32') app.setAppUserModelId('com.openfmv.openfmv');
 
@@ -38,7 +42,7 @@ const escapeHtml = (value) => String(value)
   .replace(/'/g, '&#39;');
 
 const createStatusHtml = (title, message) => {
-  return `<!doctype html><html><head><meta charset="utf-8" /></head><body style="margin:0;background:#09090b;color:white;font-family:Arial,'Microsoft YaHei',sans-serif;display:grid;place-items:center;height:100vh"><main style="max-width:620px;line-height:1.7;padding:32px"><p style="color:#f97316;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">OpenFMV</p><h1 style="margin:0 0 12px;font-size:32px">${escapeHtml(title)}</h1><p style="color:#cbd5e1;font-size:15px">${escapeHtml(message)}</p></main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8" /></head><body style="margin:0;background:#09090b;color:white;font-family:Arial,'Microsoft YaHei',sans-serif;display:grid;place-items:center;height:100vh"><main style="max-width:620px;line-height:1.7;padding:32px"><p style="color:#f97316;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">SceneTurn</p><h1 style="margin:0 0 12px;font-size:32px">${escapeHtml(title)}</h1><p style="color:#cbd5e1;font-size:15px">${escapeHtml(message)}</p></main></body></html>`;
 };
 
 const loadStatusPage = async (win, title, message) => {
@@ -316,7 +320,7 @@ registerIpcHandler(ipcMain, 'selectDirectory', async () => {
 
 registerIpcHandler(ipcMain, 'openProject', async () => {
   const result = await dialog.showOpenDialog({
-    filters: [{ name: 'OpenFMV Project', extensions: ['json', 'openfmv'] }],
+    filters: [{ name: 'SceneTurn Project', extensions: ['json', 'openfmv'] }],
     properties: ['openFile'],
   });
   if (result.canceled || !result.filePaths[0]) return null;
@@ -346,7 +350,7 @@ registerIpcHandler(ipcMain, 'importAsset', async (_event, filePath) => {
 registerIpcHandler(ipcMain, 'selectAsset', async () => {
   const result = await dialog.showOpenDialog({
     filters: [
-      { name: 'OpenFMV Assets', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'mp4', 'webm', 'mov', 'mkv', 'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'txt', 'md'] },
+      { name: 'SceneTurn Assets', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'mp4', 'webm', 'mov', 'mkv', 'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'txt', 'md'] },
     ],
     properties: ['openFile'],
   });

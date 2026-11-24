@@ -4,7 +4,7 @@ const { spawnSync } = require('child_process');
 const sharp = require('sharp');
 
 const root = path.join(__dirname, '..');
-const appName = 'OpenFMV';
+const appName = 'SceneTurn';
 const iconSizes = [16, 24, 32, 48, 64, 128, 256];
 const standaloneDir = path.join(root, '.next', 'standalone');
 const buildIconsDir = path.join(root, 'build', 'icons');
@@ -52,7 +52,7 @@ const createWindowsIcon = async (sourcePng, targetIco) => {
 };
 
 const prepareIcons = async () => {
-  const sourceLogo = path.join(root, 'public', 'logo.png');
+  const sourceLogo = path.join(root, 'public', 'sceneturn', 'icon.svg');
   const iconPngPath = path.join(buildIconsDir, 'icon.png');
   const iconIcoPath = path.join(buildIconsDir, 'icon.ico');
   fs.mkdirSync(buildIconsDir, { recursive: true });

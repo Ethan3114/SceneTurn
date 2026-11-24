@@ -39,8 +39,11 @@ export async function restoreLegacyCanvasAssistant(page: Page) {
   const { canvas, revision } = await current.json();
   const id = crypto.randomUUID();
   const node = { id, type: 'agent', title: '素材创作助手', position: { x: 490, y: 85 }, width: 460, height: 720, metadata: { agentWorkspace: 'scene', agentRole: 'writer', agentGoal: '', agentExecutor: 'platform', agentTargetIds: [] } };
-  const saved = await page.request.put(`/api/v1/projects/${projectId}/canvases/${sceneId}`, { data: { ...canvas, nodes: [...canvas.nodes, node], expectedRevision: revision, operationId: crypto.randomUUID() } });
-  expect(saved.ok()).toBe(true);
+  const saved = await page.request.put(`/api/v1/projects/${projectId}/canvases/${sceneId}`, { data: {
+    nodes: [...canvas.nodes, node], connections: canvas.connections, viewport: canvas.viewport,
+    expectedRevision: revision, operationId: crypto.randomUUID(),
+  } });
+  expect(saved.ok(), saved.ok() ? undefined : await saved.text()).toBe(true);
   await page.reload();
   await expect(page.locator(`[data-agent-node][data-node-id="${id}"]`)).toBeVisible();
 }

@@ -323,6 +323,12 @@
   margin-top: 10px;
 }
 
+.fmv-project-archive > summary {
+  cursor: pointer;
+  width: fit-content;
+  font-weight: 650;
+}
+
 .fmv-project-row {
   display: flex;
   min-height: 91px;

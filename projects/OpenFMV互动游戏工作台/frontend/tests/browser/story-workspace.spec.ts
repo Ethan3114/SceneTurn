@@ -97,7 +97,7 @@ test('真实Flash保存的按钮和QTE在浏览器跳转', async ({ page }) => {
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
   }
   await start();
-  await expect(page.locator('video')).toHaveCount(1);
+  await expect(page.locator('[data-openfmv-runtime-stage] video')).toHaveCount(1);
   await page.getByRole('button', { name: normal.type === 'button' ? normal.label : '' , exact: true }).click();
   await checkTarget(normal.id, 'click');
   normal.enabled = false;

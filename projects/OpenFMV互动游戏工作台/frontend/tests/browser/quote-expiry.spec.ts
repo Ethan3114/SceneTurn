@@ -20,6 +20,7 @@ async function renderedViewport(node: Locator) {
 }
 
 test('过期报价和未保存编辑分别提示，重新报价始终等待用户确认', async ({ page }, info) => {
+  page.setDefaultTimeout(8000);
   let confirmRequests = 0;
   page.on('request', (request) => {
     if (request.method() === 'POST' && /^\/api\/v1\/generations\/[^/]+\/confirm$/.test(new URL(request.url()).pathname)) confirmRequests += 1;
@@ -44,35 +45,26 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
   const sourceId = await page.getByTestId('canvas-node').last().getAttribute('data-node-id');
   expect(sourceId).toBeTruthy();
   const sourceNode = page.locator(`[data-testid="canvas-node"][data-node-id="${sourceId}"]`);
-  const header = await sourceNode.getByTestId('canvas-node-header').boundingBox();
-  expect(header).not.toBeNull();
-  if (!header) throw new Error('视频生成节点标题栏未显示');
-  await page.mouse.move(header.x + 80, header.y + 12);
-  await page.mouse.down();
-  await page.mouse.move(header.x + 80, header.y + 72, { steps: 12 });
-  await page.mouse.up();
-  await textNode.getByTestId('canvas-node-body').hover();
-  await page.locator(`[data-testid="canvas-connection-source"][data-node-id="${textId}"]`).hover();
-  const outputHandle = await page.locator(`[data-testid="canvas-connection-source"][data-node-id="${textId}"]`).boundingBox();
-  const inputHandle = await page.locator(`[data-testid="canvas-connection-target"][data-node-id="${sourceId}"]`).boundingBox();
-  expect(outputHandle).not.toBeNull();
-  expect(inputHandle).not.toBeNull();
-  if (!outputHandle || !inputHandle) throw new Error('实际节点连接端点未显示');
-  await page.mouse.move(outputHandle.x + outputHandle.width / 2, outputHandle.y + outputHandle.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(inputHandle.x + inputHandle.width / 2, inputHandle.y + inputHandle.height / 2, { steps: 12 });
-  await page.mouse.up();
+  await page.getByTestId('canvas-fit-all').click();
+  await sourceNode.getByTestId('canvas-node-header').click();
+  await sourceNode.getByRole('button', { name: '画布参考' }).click();
+  await textNode.getByTestId('canvas-node-header').click();
+  await page.getByRole('button', { name: /完成选择/ }).click();
   await sourceNode.getByTestId('canvas-node-header').click();
   await expect(sourceNode.locator('[data-node-panel]').getByTestId('generation-prompt')).toBeVisible();
   await expect(sourceNode.getByTestId('canvas-node-body').getByTestId('generation-prompt')).toHaveCount(0);
   await sourceNode.getByTestId('generation-prompt').fill(`清晨的空旷车站，固定镜头，阳光照进候车大厅。参考@[node:${textId}]。`);
+  await expect(sourceNode.getByTestId('generation-quote')).toBeEnabled();
   const firstQuoteResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/generations/quote'));
   await sourceNode.getByTestId('generation-quote').click();
   const first = (await (await firstQuoteResponse).json()).generation as { id: string; projectRevision: number; reservedCents: number; sourceNodeId: string; outputNodeId: string; input: { sourcePrompt: string; prompt: string; inputs: Array<{ nodeId: string }> } };
   expect(first.sourceNodeId).toBe(sourceId);
   expect(first.outputNodeId).toBeTruthy();
   expect(first.outputNodeId).not.toBe(sourceId);
-  await expect(page.locator(`[data-testid="canvas-node"][data-node-id="${first.outputNodeId}"]`)).toHaveCount(1);
+  await expect(page.locator(`[data-testid="canvas-node"][data-node-id="${first.outputNodeId}"]`)).toHaveCount(0);
+  const quotedProject = await (await page.request.get(`/api/v1/projects/${projectId}`)).json();
+  expect(quotedProject.canvases.flatMap((canvas: { nodes: { id: string }[] }) => canvas.nodes)
+    .some((node: { id: string }) => node.id === first.outputNodeId)).toBe(true);
   expect(first.input.sourcePrompt).toContain('清晨');
   expect(first.input.sourcePrompt).toContain(`@[node:${textId}]`);
   expect(first.input.prompt).toContain('【文本1】');
@@ -114,11 +106,12 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
   expect(editedViewport.x).not.toBe(initialViewport.x);
   expect(editedViewport.y).not.toBe(initialViewport.y);
   await expect(page.getByTestId('save-status')).toHaveText('视口有未保存的调整');
-  await oldCard.getByTestId('generation-open-review').click();
+  await oldCard.getByTestId('generation-open-review').press('Enter');
   await expect(review.getByTestId('quote-unsaved-message')).toHaveCount(0);
   await expect(review.getByTestId('generation-confirm')).toBeEnabled();
   await review.getByRole('button', { name: '返回编辑' }).click();
   expect(confirmRequests).toBe(0);
+  expect(await surface.evaluate((element) => element.scrollTop)).toBe(0);
   const beforeReload = await sourceNode.boundingBox();
   const beforeSurface = await surface.boundingBox();
   expect(beforeReload).not.toBeNull();
@@ -131,6 +124,7 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
   expect(saved.canvas.viewport.x).toBeCloseTo(editedViewport.x, 3);
   expect(saved.canvas.viewport.y).toBeCloseTo(editedViewport.y, 3);
   await page.reload();
+  await expect(page.getByTestId('save-status')).toHaveText(/已保存/);
   const opened = await page.request.get(`/api/v1/projects/${projectId}`);
   expect(opened.ok()).toBe(true);
   const restored = await opened.json() as { revision: number; canvases: Array<{ nodes: Array<{ id: string }>; viewport: { x: number; y: number; k: number } }> };
@@ -146,7 +140,7 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
   await sourceNode.getByTestId('canvas-node-header').click();
   await expect(oldCard).toHaveAttribute('data-quote-state', 'expired');
   await expect(oldCard.getByRole('heading', { name: '生成输入需要重新核对' })).toBeVisible();
-  await oldCard.getByTestId('generation-open-review').click();
+  await oldCard.getByTestId('generation-open-review').press('Enter');
   await expect(review.getByTestId('quote-expired-message')).toContainText(`版本 ${first.projectRevision}`);
   await expect(review.getByTestId('quote-expired-message')).toContainText(`版本 ${saved.revision}`);
   await expect(review.getByTestId('generation-confirm')).toHaveCount(0);
@@ -171,7 +165,7 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
 
   await sourceNode.getByTestId('generation-prompt').fill('傍晚的空旷车站，固定镜头，灯光照亮候车大厅。');
   await expect(newCard).toHaveAttribute('data-quote-state', 'unsaved');
-  await newCard.getByTestId('generation-open-review').click();
+  await newCard.getByTestId('generation-open-review').press('Enter');
   await expect(review.getByTestId('quote-unsaved-message')).toBeVisible();
   await expect(review.getByTestId('quote-expired-message')).toHaveCount(0);
   await expect(review.getByTestId('generation-confirm')).toHaveCount(0);
@@ -195,6 +189,7 @@ test('过期报价和未保存编辑分别提示，重新报价始终等待用�
 });
 
 test('来源视频节点展示正式接口创建的待确认报价', async ({ page }) => {
+  page.setDefaultTimeout(8000);
   let confirmRequests = 0;
   page.on('request', (request) => {
     if (request.method() === 'POST' && /^\/api\/v1\/generations\/[^/]+\/confirm$/.test(new URL(request.url()).pathname)) confirmRequests += 1;
@@ -241,7 +236,7 @@ test('来源视频节点展示正式接口创建的待确认报价', async ({ pa
   await sourceNode.getByTestId('canvas-node-header').click();
   const task = sourceNode.locator(`[data-task-id="${generation.id}"]`);
   await expect(task).toBeVisible();
-  await task.getByTestId('generation-open-review').click();
+  await task.getByTestId('generation-open-review').press('Enter');
   const review = page.getByRole('dialog', { name: '核对视频生成' });
   await expect(review.getByTestId('generation-confirm')).toBeEnabled();
   await review.getByRole('button', { name: '返回编辑' }).click();
@@ -348,13 +343,12 @@ test('组合提示词超过20000字符时保留节点且不增加服务器版本
   expect(confirmRequests).toBe(0);
 });
 
-test('组合复制和取消组合保存真实内部连接、引用及素材身份', async ({ page }, testInfo) => {
+test('组合复制和取消组合保存真实内部连接、引用及素材身份', async ({ page }) => {
   let confirmRequests = 0;
   page.on('request', (request) => {
     if (request.method() === 'POST' && /^\/api\/v1\/generations\/[^/]+\/confirm$/.test(new URL(request.url()).pathname)) confirmRequests += 1;
   });
-  if (!testInfo.config.configFile) throw new Error('真实浏览器配置路径不可用');
-  const mediaFile = path.resolve(path.dirname(testInfo.config.configFile), '../.intermediate/test-media/flower.mp4');
+  const mediaFile = path.resolve('../.intermediate/test-media/flower.mp4');
   if (!existsSync(mediaFile)) {
     await mkdir(path.dirname(mediaFile), { recursive: true });
     const response = await fetch('https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4');
@@ -414,11 +408,12 @@ test('组合复制和取消组合保存真实内部连接、引用及素材身�
   expect(authored.generation.remoteTaskId).toBeNull();
   await page.reload();
   await page.getByTestId('canvas-fit-all').click();
-  for (const [index, id] of [authored.textId, authored.sourceId, authored.outputId, authored.mediaId].entries()) {
+  await expect(page.locator(`[data-testid="canvas-node"][data-node-id="${authored.outputId}"]`)).toHaveCount(0);
+  for (const [index, id] of [authored.textId, authored.sourceId, authored.mediaId].entries()) {
     await page.locator(`[data-testid="canvas-node"][data-node-id="${id}"]`).getByTestId('canvas-node-header').click({ modifiers: index === 0 ? [] : ['Shift'] });
   }
   await page.getByTestId('canvas-group-selection').click();
-  await expect(page.getByTestId('canvas-node')).toHaveCount(5);
+  await expect(page.getByTestId('canvas-node')).toHaveCount(4);
   await page.getByTestId('canvas-save').click();
   await expect(page.getByTestId('save-status')).toContainText('已保存');
   type StoredNode = { id: string; type: string; title: string; metadata: Record<string, unknown> };
@@ -434,9 +429,10 @@ test('组合复制和取消组合保存真实内部连接、引用及素材身�
   const grouped = await loadCanvas();
   const originalGroup = grouped.nodes.find((node) => node.type === 'group');
   if (!originalGroup) throw new Error('实际多选没有创建Group');
-  expect(grouped.nodes.filter((node) => node.metadata.groupId === originalGroup.id)).toHaveLength(4);
+  expect(grouped.nodes.filter((node) => node.metadata.groupId === originalGroup.id)).toHaveLength(3);
+  expect(grouped.nodes.find((node) => node.id === authored.sourceId)?.metadata.outputNodeId).toBe(authored.outputId);
   await page.getByTestId('canvas-copy-selection').click();
-  await expect(page.getByTestId('canvas-node')).toHaveCount(10);
+  await expect(page.getByTestId('canvas-node')).toHaveCount(8);
   await page.getByTestId('canvas-save').click();
   await expect(page.getByTestId('save-status')).toContainText('已保存');
   await page.reload();
@@ -447,31 +443,30 @@ test('组合复制和取消组合保存真实内部连接、引用及素材身�
   const copyText = copies.find((node) => node.type === 'text');
   const copyConfig = copies.find((node) => node.type === 'config');
   const copyMedia = copies.find((node) => node.type === 'video' && node.metadata.storageKey === asset.id);
-  const copyOutput = copies.find((node) => node.type === 'video' && !node.metadata.storageKey);
-  if (!copyGroup || !copyText || !copyConfig || !copyMedia || !copyOutput) throw new Error('真实Group复制缺少直接成员');
-  expect(copies.filter((node) => node.metadata.groupId === copyGroup.id)).toHaveLength(4);
+  if (!copyGroup || !copyText || !copyConfig || !copyMedia) throw new Error('复制后的分组缺少直接成员');
+  expect(copies).toHaveLength(4);
+  expect(copies.filter((node) => node.metadata.groupId === copyGroup.id)).toHaveLength(3);
   expect(copyConfig.metadata.composerContent).toBe(`根据@[node:${copyText.id}]生成视频。`);
-  expect(copyConfig.metadata.outputNodeId).toBe(copyOutput.id);
+  expect(copyConfig.metadata.outputNodeId).toBeUndefined();
   expect(copyMedia.metadata.storageKey).toBe(asset.id);
-  expect(copyOutput.metadata.pendingResult).toBe(false);
   expect(copies.every((node) => node.metadata.videoTaskId === undefined && node.metadata.videoTaskProvider === undefined)).toBe(true);
   expect(copied.connections.filter((edge) => edge.fromNodeId === copyText.id && edge.toNodeId === copyConfig.id)).toHaveLength(1);
-  expect(copied.connections.filter((edge) => edge.fromNodeId === copyConfig.id && edge.toNodeId === copyOutput.id)).toHaveLength(1);
+  expect(copied.connections.filter((edge) => edge.fromNodeId === copyConfig.id)).toHaveLength(0);
   const tasks = await (await page.request.get(`/api/v1/projects/${projectId}/generations`)).json() as { generations: Array<{ id: string }> };
   expect(tasks.generations.map((task) => task.id)).toEqual([authored.generation.id]);
   await page.getByTestId('canvas-fit-all').click();
   await page.locator(`[data-testid="canvas-node"][data-node-id="${copyGroup.id}"]`).getByTestId('canvas-node-header').click();
   await page.getByTestId('canvas-ungroup-selection').click();
-  await expect(page.getByTestId('canvas-node')).toHaveCount(9);
+  await expect(page.getByTestId('canvas-node')).toHaveCount(7);
   await page.getByTestId('canvas-save').click();
   await expect(page.getByTestId('save-status')).toContainText('已保存');
   await page.reload();
   const restored = await loadCanvas();
-  expect(restored.nodes).toHaveLength(9);
+  expect(restored.nodes).toHaveLength(8);
   expect(restored.nodes.some((node) => node.id === originalGroup.id)).toBe(true);
   expect(restored.nodes.some((node) => node.id === copyGroup.id)).toBe(false);
-  expect(restored.nodes.filter((node) => [copyText.id, copyConfig.id, copyOutput.id, copyMedia.id].includes(node.id)).every((node) => node.metadata.groupId === undefined)).toBe(true);
-  expect(restored.connections).toHaveLength(4);
+  expect(restored.nodes.filter((node) => [copyText.id, copyConfig.id, copyMedia.id].includes(node.id)).every((node) => node.metadata.groupId === undefined)).toBe(true);
+  expect(restored.connections).toHaveLength(3);
   expect(restored.nodes.find((node) => node.id === copyMedia.id)?.metadata.storageKey).toBe(asset.id);
   expect(confirmRequests).toBe(0);
 });

@@ -29,6 +29,10 @@ class RegistryModel(BaseModel):
 def record_kind(record: dict) -> str:
     if record.get("kind") == "text":
         return "text"
+    if record.get("provider") == "volcengine-ark" and "media" in record and record.get("remoteTaskId"):
+        return "seedance"
+    if record.get("provider") not in {None, "aliyun-wan"}:
+        raise ValueError("视频记录缺少受支持的供应商")
     if "media" in record and record.get("remoteTaskId"):
         return "wan"
     raise ValueError("真实调用记录缺少受支持的模型类型")
@@ -51,6 +55,12 @@ def validate_record(record: dict) -> None:
         raise ValueError("真实调用记录没有结构化用量")
     if kind == "text" and (record.get("provider") != "deepseek" or not request_id or record.get("restartVerified") is not True):
         raise ValueError("真实文本记录缺少供应商请求或实际重启验证")
+    if kind == "seedance":
+        tokens = record["usage"].get("completion_tokens")
+        actual, quoted = record.get("actualCents"), record.get("quotedCents")
+        if (not record["model"].startswith("doubao-seedance-") or not request_id or record.get("restartVerified") is not True
+                or type(tokens) is not int or tokens <= 0 or type(actual) is not int or type(quoted) is not int or not 0 < actual <= quoted):
+            raise ValueError("真实方舟视频记录缺少有效的模型回执、费用结算或实际重启验证")
 
 
 def write_private_json(path: Path, value: dict) -> None:
@@ -70,17 +80,21 @@ def render_evidence(records: list[dict], *, legacy_ui_label: bool = False, stage
         validate_record(record)
     wan_models = sorted({record["model"] for record in records if record_kind(record) == "wan"})
     text_models = sorted({record["model"] for record in records if record_kind(record) == "text"})
+    seedance_models = sorted({record["model"] for record in records if record_kind(record) == "seedance"})
     labels = []
     if wan_models:
         labels.append(f"阿里云 / {', '.join(wan_models)}")
     if text_models:
         labels.append(f"DeepSeek / {', '.join(text_models)}")
+    if seedance_models:
+        labels.append(f"火山方舟 / {', '.join(seedance_models)}")
+    written_at = reverification["verifiedAt"] if stage == "阶段3-2" and reverification else records[-1]["verifiedAt"]
     rows = [
         "# 冒烟记录（冒烟脚本自动写入，不得手填）",
         "- 产品：OpenFMV互动游戏工作台",
         f"- 阶段：{stage}",
         f"- 模型：{'；'.join(labels)}",
-        f"- 写入时间：{records[-1]['verifiedAt']}",
+        f"- 写入时间：{written_at}",
         "",
         "| 时间 | 链路 | 请求 ID | 输入 token | 输出 token | 首字耗时 | 总耗时 | 结构校验 | 重试次数 | 结果 |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -89,7 +103,9 @@ def render_evidence(records: list[dict], *, legacy_ui_label: bool = False, stage
         started = datetime.fromisoformat(record["startedAt"]).astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
         finished = datetime.fromisoformat(record["finishedAt"]).astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
         if record_kind(record) == "wan":
-            if stage == "阶段2-4":
+            if stage == "阶段3-2":
+                chain = f"原真实万相成片→当前隔离环境播放、项目导出和重启复核；任务{record['generationId']}；原调用开始{started}；完成{finished}"
+            elif stage == "阶段2-4":
                 chain = f"原真实Wan成片→当前完整项目与固定版本导出→独立播放及重启核对；任务{record['generationId']}；原调用开始{started}；完成{finished}"
             elif stage == "阶段2-3":
                 chain = f"本人确认的连续首尾帧Wan生成→实际媒体→指定片段采用→重启恢复；任务{record['generationId']}；开始{started}；完成{finished}"
@@ -97,6 +113,11 @@ def render_evidence(records: list[dict], *, legacy_ui_label: bool = False, stage
                 chain = f"本人UI确认的Wan生成→持久任务→媒体→场景采用；任务{record['generationId']}；开始{started}；完成{finished}"
             input_tokens = record["usage"].get("input_tokens", "N/A（视频）")
             output_tokens = record["usage"].get("output_tokens", "N/A（视频）")
+            first_token = "N/A（异步视频）"
+        elif record_kind(record) == "seedance":
+            chain = f"Seedance视频生成→供应商回执→费用结算→媒体采用及实际重启恢复；模型{record['model']}；任务{record['generationId']}；开始{started}；完成{finished}；结算{record['actualCents']}分"
+            input_tokens = record["usage"].get("prompt_tokens", "N/A（供应商未返回）")
+            output_tokens = record["usage"]["completion_tokens"]
             first_token = "N/A（异步视频）"
         else:
             origin = "本人UI请求的" if legacy_ui_label else "本人授权的"
@@ -106,18 +127,23 @@ def render_evidence(records: list[dict], *, legacy_ui_label: bool = False, stage
         rows.append(f"| {started} | {chain} | {record.get('remoteRequestId') or '-'} | {input_tokens} | {output_tokens} | {first_token} | {record['elapsedSeconds']:.3f}s | 通过 | {record['retryCount']} | 通过 |")
     if reverification is not None:
         review = ReverificationModel.model_validate(reverification)
-        description = "原始任务、真实媒体、完整项目、来源映射、固定版本、离线按钮和QTE分支及实际重启恢复。" if stage == "阶段2-4" else "原始任务、真实媒体、浏览器播放、候选、裁切、互动、共享引用及实际重启恢复。"
+        description = {
+            "阶段2-4": "原始任务、真实媒体、完整项目、来源映射、固定版本、离线按钮和QTE分支及实际重启恢复。",
+            "阶段3-2": "原始任务和媒体摘要、桌面播放、完整项目备份、固定版本、互动分支及隔离服务实际重启恢复。",
+        }.get(stage, "原始任务、真实媒体、浏览器播放、候选、裁切、互动、共享引用及实际重启恢复。")
         rows.extend(["", f"- 原任务复核时间：{review.verifiedAt}",
             f"- 复核任务数：{len(review.generationIds)}；实际调用时间、请求标识及用量保留原值。",
             f"- 复核内容：{description}",
             f"- 复核证据摘要：{review.proofSha256}"])
+        if stage == "阶段3-2":
+            rows.append("- 本次复核新增模型请求：0。")
     return "\n".join(rows) + "\n"
 
 
 class EvidenceStore:
     def __init__(self, root: Path, stage: str = "阶段2-1"):
         directories = {"阶段2-1": "smoke", "阶段2-3": "smoke-media-candidates",
-                       "阶段2-4": "smoke-project-transfers", "阶段3-1": "sceneturn-smoke"}
+                       "阶段2-4": "smoke-project-transfers", "阶段3-1": "sceneturn-smoke", "阶段3-2": "sceneturn-release-smoke"}
         if stage not in directories:
             raise ValueError("不支持的媒体验证阶段")
         self.root = root.resolve()
@@ -164,14 +190,20 @@ class EvidenceStore:
         return registry
 
     def revalidate(self, verified_records: list[dict], proof: dict) -> None:
-        if self.stage not in {"阶段2-3", "阶段2-4"}:
-            raise ValueError("原任务媒体复核仅适用于阶段2-3或阶段2-4")
+        if self.stage not in {"阶段2-3", "阶段2-4", "阶段3-2"}:
+            raise ValueError("此阶段未定义原任务媒体复核")
+        if self.stage == "阶段3-2" and (proof.get("restartVerified") is not True or proof.get("newModelRequests") != 0):
+            raise ValueError("发布阶段须提供隔离服务实际重启及未新增模型请求的复核证据")
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor = os.open(self.registry_path.with_suffix(".lock"), os.O_RDWR | os.O_CREAT, 0o600)
         with os.fdopen(descriptor, "a+b") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             registry = self.load()
-            previous = {record["generationId"]: record for record in registry["records"]}
-            if len(verified_records) != len(previous) or {record["generationId"] for record in verified_records} != set(previous):
+            source_records = EvidenceStore(self.root, "阶段2-4").load()["records"] if self.stage == "阶段3-2" else registry["records"]
+            if registry["records"] and registry["records"] != source_records:
+                raise ValueError("本阶段记录与已经登记的原始任务不一致")
+            previous = {record["generationId"]: record for record in source_records}
+            if not previous or len(verified_records) != len(previous) or {record["generationId"] for record in verified_records} != set(previous):
                 raise ValueError("原任务复核必须覆盖全部已登记的真实调用")
             excluded = {"verifiedAt", "restartVerification"}
             for record in verified_records:
@@ -182,13 +214,21 @@ class EvidenceStore:
             proof_path = self.registry_path.parent / "reverification.json"
             write_private_json(proof_path, {"verifiedAt": verified_at, "records": verified_records, "proof": proof})
             review = {"verifiedAt": verified_at, "generationIds": list(previous), "proofSha256": hashlib.sha256(proof_path.read_bytes()).hexdigest()}
-            rendered = render_evidence(registry["records"], stage=self.stage, reverification=review)
+            rendered = render_evidence(source_records, stage=self.stage, reverification=review)
+            if self.stage == "阶段3-2" and not registry["records"]:
+                for record in source_records:
+                    directory = self.directory(record)
+                    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    write_private_json(directory / "verification.json", record)
             pending = self.registry_path.with_suffix(".markdown.pending")
             pending.write_text(rendered, encoding="utf-8")
+            self.evidence_path.parent.mkdir(parents=True, exist_ok=True)
             os.replace(pending, self.evidence_path)
-            write_private_json(self.registry_path, {**registry, "reverification": review, "markdownSha256": hashlib.sha256(rendered.encode()).hexdigest()})
+            write_private_json(self.registry_path, {**registry, "records": source_records, "reverification": review, "markdownSha256": hashlib.sha256(rendered.encode()).hexdigest()})
 
     def register(self, record: dict) -> bool:
+        if self.stage == "阶段3-2":
+            raise ValueError("发布阶段原任务须与当前端到端和重启证据一起复核")
         validate_record(record)
         self.registry_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor = os.open(self.registry_path.with_suffix(".lock"), os.O_RDWR | os.O_CREAT, 0o600)
@@ -198,7 +238,8 @@ class EvidenceStore:
             for previous in registry["records"]:
                 same_task = previous["generationId"] == record["generationId"]
                 same_request = record_kind(previous) == record_kind(record) and record.get("remoteRequestId") is not None and previous.get("remoteRequestId") == record["remoteRequestId"]
-                same_remote_task = record_kind(previous) == record_kind(record) == "wan" and previous["remoteTaskId"] == record["remoteTaskId"]
+                same_remote_task = (record_kind(record) in {"wan", "seedance"} and record_kind(previous) == record_kind(record)
+                    and previous["remoteTaskId"] == record["remoteTaskId"])
                 if same_task or same_request or same_remote_task:
                     excluded = {"verifiedAt", "restartVerification"}
                     identity = {key: value for key, value in record.items() if key not in excluded}

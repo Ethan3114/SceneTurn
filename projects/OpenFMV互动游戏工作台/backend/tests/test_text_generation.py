@@ -13,6 +13,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -312,7 +314,9 @@ def test_unconfigured_text_state_and_owner_session_survive_restart(text_service,
     assert response.json()["configured"] is False
     assert text_admin.get(f"/projects/{envelope['project']['id']}").json() == envelope
     assert text_admin.get(f"/projects/{envelope['project']['id']}/text-generations").json() == {"textGenerations": []}
-    assert database_rows(text_service, "SELECT version_num FROM alembic_version") == [("0016_canvas_image_jobs",)]
+    migration_config = Config(str(PRODUCT_ROOT / "backend" / "alembic.ini"))
+    migration_head = ScriptDirectory.from_config(migration_config).get_current_head()
+    assert database_rows(text_service, "SELECT version_num FROM alembic_version") == [(migration_head,)]
     empty_generation_state(text_service)
 
 

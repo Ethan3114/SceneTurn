@@ -8,7 +8,7 @@ from threading import Barrier
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.agent_models import AgentRun, AgentStep
@@ -372,7 +372,11 @@ def test_actual_sensetime_responses_match_saved_images_and_dimensions():
     database = ROOT / "data/openfmv.sqlite3"
     engine = create_engine(f"sqlite:///{database.resolve().as_uri()}?mode=ro&uri=true")
     with Session(engine) as session:
-        jobs = session.scalars(select(ImageJob).where(ImageJob.status == "ready")).all()
+        provider_id = ImageJob.request_json["modelProfile"]["providerId"].as_string()
+        jobs = session.scalars(select(ImageJob).where(
+            ImageJob.status == "ready",
+            func.coalesce(provider_id, "sensetime") == "sensetime",
+        )).all()
         assert len(jobs) >= 4
         for job in jobs:
             response = json.loads((ROOT / "data" / job.response_relpath).read_bytes())

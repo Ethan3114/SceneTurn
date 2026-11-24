@@ -24,11 +24,11 @@ const getGraphRuntimeCore = () => {
 };
 
 const sanitizeName = (value) => {
-  return String(value || 'OpenFMVGame')
+  return String(value || 'SceneTurnGame')
     .replace(/[\\/:*?"<>|]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
-    .trim() || 'OpenFMVGame';
+    .trim() || 'SceneTurnGame';
 };
 
 const toPosixPath = (value) => {
@@ -306,7 +306,7 @@ const createGameShellHtml = (gameJson, graphRuntimeScript = '') => {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpenFMV Game</title>
+  <title>SceneTurn Game</title>
   <style>
     html, body { margin: 0; width: 100%; height: 100%; background: #050505; color: white; font-family: Inter, Arial, sans-serif; overflow: hidden; }
     #app { position: fixed; inset: 0; background: linear-gradient(135deg,#090b10,#15110d); }
@@ -1074,7 +1074,7 @@ const exportWebGamePackage = async ({ project, config }) => {
 
   await fs.writeFile(path.join(gameDir, 'game.json'), gameJson, 'utf8');
   await fs.writeFile(path.join(gameDir, 'index.html'), createGameShellHtml(gameJson, graphRuntimeScript), 'utf8');
-  await fs.writeFile(path.join(gameDir, 'README.txt'), 'Open index.html in a browser to play the exported OpenFMV web game. Keep the assets folder next to index.html.', 'utf8');
+  await fs.writeFile(path.join(gameDir, 'README.txt'), 'Open index.html in a browser to play the exported SceneTurn web game. Keep the assets folder next to index.html.', 'utf8');
   return { outputDirectory: gameDir };
 };
 
@@ -1102,11 +1102,11 @@ const exportGamePackage = async ({ project, config, electronExecutablePath, elec
 
   await fs.writeFile(path.join(gameDir, 'game.json'), gameJson, 'utf8');
   await fs.writeFile(path.join(resourcesAppDir, 'game.json'), gameJson, 'utf8');
-  await fs.writeFile(path.join(resourcesAppDir, 'package.json'), JSON.stringify({ name: 'openfmv-exported-game', main: 'main.js' }, null, 2), 'utf8');
+  await fs.writeFile(path.join(resourcesAppDir, 'package.json'), JSON.stringify({ name: 'sceneturn-exported-game', main: 'main.js' }, null, 2), 'utf8');
   await fs.writeFile(path.join(resourcesAppDir, 'main.js'), createGameShellMain(config), 'utf8');
   await fs.writeFile(path.join(resourcesAppDir, 'index.html'), createGameShellHtml(gameJson, graphRuntimeScript), 'utf8');
 
-  await fs.writeFile(path.join(gameDir, 'README.txt'), 'Double-click the game executable in this folder to launch the exported OpenFMV game.', 'utf8');
+  await fs.writeFile(path.join(gameDir, 'README.txt'), 'Double-click the game executable in this folder to launch the exported SceneTurn game.', 'utf8');
   return { outputDirectory: gameDir };
 };
 

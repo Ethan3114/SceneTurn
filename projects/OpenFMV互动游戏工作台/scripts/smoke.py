@@ -77,6 +77,8 @@ class GenerationEvidence(GenerationBinding):
     def check_evidence(self):
         if self.finishedAt < self.startedAt:
             raise ValueError("真实任务结束时间早于开始时间")
+        if self.input.get("provider") not in {None, "aliyun-wan"}:
+            raise ValueError("该脚本只登记阿里云万相，Seedance 请使用 smoke_record_seedance.py")
         if not self.usage:
             raise ValueError("真实任务尚无供应商用量记录")
         if not self.input.get("model"):
@@ -128,16 +130,22 @@ def validate_media(path: Path) -> dict:
     }
 
 
-def validate_adoption(project: dict, generation: GenerationEvidence) -> None:
-    scene = next(node for node in project["graphData"]["nodes"] if node["id"] == generation.sceneId and node["type"] == "scene")
-    timeline = scene["data"]["timeline"]
-    if timeline["version"] != 2:
+def validate_adopted_clip(project: dict, scene_id: str, clip_id: str, asset_id: str) -> None:
+    scene = next((node for node in project["graphData"]["nodes"] if node["id"] == scene_id and node["type"] == "scene"), None)
+    if scene is None:
+        raise ValueError("指定任务的原场景未出现在当前作品")
+    timeline = scene["data"].get("timeline")
+    if not isinstance(timeline, dict) or timeline.get("version") != 2:
         raise ValueError("采用结果未写入NodeTimeline v2")
-    clip = next(clip for track in timeline["tracks"] for clip in track["clips"] if clip["id"] == generation.clipId)
-    if clip["assetId"] != generation.assetId:
+    clip = next((clip for track in timeline["tracks"] for clip in track["clips"] if clip["id"] == clip_id), None)
+    if clip is None or clip.get("assetId") != asset_id:
         raise ValueError("固定目标片段引用的素材与真实生成任务不一致")
-    if not any(asset["id"] == generation.assetId for asset in project["assets"]):
+    if not any(asset["id"] == asset_id for asset in project["assets"]):
         raise ValueError("真实生成素材尚未登记至所属项目")
+
+
+def validate_adoption(project: dict, generation: GenerationEvidence) -> None:
+    validate_adopted_clip(project, generation.sceneId, generation.clipId, generation.assetId)
 
 
 def validate_canvas_binding(canvases: list[dict], generation: GenerationBinding, *, output_type: str = "video") -> None:

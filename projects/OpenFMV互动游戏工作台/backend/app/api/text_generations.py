@@ -1,7 +1,7 @@
 import time
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import Field, SecretStr
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -12,6 +12,8 @@ from app.core.errors import AppError
 from app.core.security import encode_secret
 from app.models import TextGeneration, TextProviderSettings, TextUsageLedger, User
 from app.schemas import WireModel
+from app.services.cloudbase_database import gateway_enabled
+from app.services.cloudbase_text import CloudBaseTextRepository
 from app.services.projects import lock_write, require_project
 from app.services.text_generation import apply_text_job, create_text_job, is_text_admin, require_text_job, resume_text_job, stop_text_job, text_view
 from app.services.text_provider import MODEL, TaskKind, price_catalog
@@ -125,6 +127,9 @@ def settings_view(session: Session, user: User) -> dict:
 
 @router.get("/settings/text", response_model=TextSettingsView)
 def read_settings(user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    if gateway_enabled(settings):
+        return CloudBaseTextRepository(settings).provider_settings(user.id)
     return settings_view(session, user)
 
 
@@ -136,6 +141,8 @@ def update_settings(body: TextSettingsUpdate, user: User = Depends(current_user)
     secret = body.api_key.get_secret_value().strip()
     if not 8 <= len(secret) <= 2048 or any(character.isspace() for character in secret):
         raise AppError(422, "TEXT_KEY_INVALID", "请填写完整的DeepSeek API Key")
+    if gateway_enabled(settings):
+        return CloudBaseTextRepository(settings).provider_settings(user.id, secret)
     lock_write(session)
     provider = session.get(TextProviderSettings, "platform")
     if provider is None:
@@ -148,13 +155,24 @@ def update_settings(body: TextSettingsUpdate, user: User = Depends(current_user)
 
 
 @router.post("/projects/{project_id}/text-generations", response_model=TextJobResult, status_code=201)
-def create(project_id: str, body: TextCreate, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    job = create_text_job(session, project_id, user, body.model_dump(by_alias=True), get_settings())
+def create(project_id: str, body: TextCreate, tasks: BackgroundTasks, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    payload = body.model_dump(by_alias=True)
+    if gateway_enabled(settings):
+        repository = CloudBaseTextRepository(settings)
+        view, marker = repository.accept(user, project_id, payload)
+        if marker is not None:
+            tasks.add_task(repository.run, marker, immediate=True)
+        return {"textGeneration": view}
+    job = create_text_job(session, project_id, user, payload, settings)
     return {"textGeneration": text_view(job)}
 
 
 @router.get("/projects/{project_id}/text-generations", response_model=TextJobList)
 def list_jobs(project_id: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    if gateway_enabled(settings):
+        return {"textGenerations": CloudBaseTextRepository(settings).list(user.id, project_id)}
     require_project(session, project_id, user.id)
     jobs = session.scalars(select(TextGeneration).where(TextGeneration.project_id == project_id, TextGeneration.owner_id == user.id).order_by(TextGeneration.created_at.desc())).all()
     return {"textGenerations": [text_view(job) for job in jobs]}
@@ -162,26 +180,41 @@ def list_jobs(project_id: str, user: User = Depends(current_user), session: Sess
 
 @router.get("/text-generations/{identifier}", response_model=TextJobResult)
 def read_job(identifier: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    if gateway_enabled(settings):
+        return {"textGeneration": CloudBaseTextRepository(settings).read(user.id, identifier)}
     return {"textGeneration": text_view(require_text_job(session, identifier, user.id))}
 
 
 @router.post("/text-generations/{identifier}/stop", response_model=TextJobResult)
 def stop(identifier: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    if gateway_enabled(settings):
+        return {"textGeneration": CloudBaseTextRepository(settings).stop(user.id, identifier)}
     return {"textGeneration": text_view(stop_text_job(session, identifier, user.id))}
 
 
 @router.post("/text-generations/{identifier}/resume", response_model=TextJobResult)
 def resume(identifier: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    if gateway_enabled(settings):
+        return {"textGeneration": CloudBaseTextRepository(settings).resume(user.id, identifier)}
     return {"textGeneration": text_view(resume_text_job(session, identifier, user.id))}
 
 
 @router.post("/text-generations/{identifier}/apply", response_model=TextJobResult)
 def apply(identifier: str, body: TextApply, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    if gateway_enabled(settings):
+        return {"textGeneration": CloudBaseTextRepository(settings).apply(user.id, identifier, body.expected_revision, body.operation_id)}
     return {"textGeneration": text_view(apply_text_job(session, identifier, user.id, body.expected_revision, body.operation_id))}
 
 
 @router.get("/projects/{project_id}/text-usage", response_model=TextUsageView)
 def usage(project_id: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    if gateway_enabled(settings):
+        return CloudBaseTextRepository(settings).usage(user.id, project_id)
     require_project(session, project_id, user.id)
     entries = session.scalars(select(TextUsageLedger).where(TextUsageLedger.project_id == project_id, TextUsageLedger.owner_id == user.id).order_by(TextUsageLedger.created_at)).all()
     return {"billingPolicyConfigured": False, "currency": "CNY", "costUnit": "microYuan", "inputTokens": sum(item.input_tokens for item in entries), "outputTokens": sum(item.output_tokens for item in entries), "totalTokens": sum(item.total_tokens for item in entries), "costMicros": sum(item.cost_micros for item in entries), "entries": [{"generationId": item.generation_id, "remoteRequestId": item.remote_request_id, "inputTokens": item.input_tokens, "outputTokens": item.output_tokens, "totalTokens": item.total_tokens, "cacheHitTokens": item.cache_hit_tokens, "cacheMissTokens": item.cache_miss_tokens, "costMicros": item.cost_micros, "price": item.price_json} for item in entries]}

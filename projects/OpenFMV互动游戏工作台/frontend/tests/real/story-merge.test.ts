@@ -1,9 +1,9 @@
-import { expect, it } from 'vitest';
+import { expect, inject, it } from 'vitest';
 import type { ProjectEnvelope } from '@/app/_utils/cloudApi';
 import { mergeProjectChanges } from '@/app/_utils/mergeProjectChanges';
 
 it('真实项目保存后合并其他页面的剧情，保留本地位置及同字段人工修订', async () => {
-  const origin = 'http://127.0.0.1:8310/api/v1';
+  const origin = inject('isolatedApiOrigin');
   const registered = await fetch(`${origin}/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `story-merge-${crypto.randomUUID()}@example.com`, password: crypto.randomUUID() }) });
   expect(registered.status).toBe(201);
   const headers = { 'Content-Type': 'application/json', Cookie: registered.headers.getSetCookie().map((item) => item.split(';')[0]).join('; ') };

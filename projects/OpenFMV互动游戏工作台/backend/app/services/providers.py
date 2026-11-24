@@ -70,7 +70,11 @@ def connection(session, owner_id, provider_id):
 
 def project_defaults(project):
     values = project.data_json.get("metadata", {}).get("modelDefaults", {})
-    return {**LEGACY_DEFAULTS, **ProjectModelDefaults.model_validate({**LEGACY_DEFAULTS, **values}).model_dump()}
+    return normalize_model_defaults(values)
+
+
+def normalize_model_defaults(values):
+    return ProjectModelDefaults.model_validate({**LEGACY_DEFAULTS, **(values or {})}).model_dump()
 
 
 def _configured(session, owner_id, provider_id, stored):
@@ -87,39 +91,50 @@ def _configured(session, owner_id, provider_id, stored):
 
 def registry_view(session, user, settings, project_id=None):
     project = require_project(session, project_id, user.id) if project_id else None
-    connections = []
     records = {}
     for provider_id in PROVIDER_IDS:
         stored = connection(session, user.id, provider_id)
-        records[provider_id] = stored
-        config = stored.config_json if stored else {}
-        legacy_wan = session.get(ProviderSettings, user.id) if provider_id == "aliyun-wan" else None
+        records[provider_id] = {
+            "config": stored.config_json if stored else {},
+            "revision": stored.revision if stored else 0,
+            "configured": _configured(session, user.id, provider_id, stored),
+        }
+    legacy_wan = session.get(ProviderSettings, user.id)
+    return model_registry_response(user, settings, records, wan_workspace=legacy_wan.workspace_id if legacy_wan else None,
+        codex_image=project is not None and active_image_connection(session, user.id, project.id) is not None,
+        defaults=project_defaults(project) if project else None, revision=project.revision if project else None)
+
+
+def model_registry_response(user, settings, records, *, wan_workspace=None, codex_image=False, defaults=None, revision=None):
+    connections = []
+    for provider_id in PROVIDER_IDS:
+        record = records[provider_id]
+        config = record["config"]
         can_manage = provider_id not in {"deepseek", "aliyun-qwen"} or _is_text_admin(user, settings)
-        connections.append({"providerId": provider_id, "configured": _configured(session, user.id, provider_id, stored),
-            "revision": stored.revision if stored else 0, "canManage": can_manage,
-            "region": config.get("region", "cn-beijing"), "workspaceId": config.get("workspaceId", legacy_wan.workspace_id if legacy_wan else None),
+        connections.append({"providerId": provider_id, "configured": record["configured"],
+            "revision": record["revision"], "canManage": can_manage,
+            "region": config.get("region", "cn-beijing"), "workspaceId": config.get("workspaceId", wan_workspace if provider_id == "aliyun-wan" else None),
             "entitledModelIds": config.get("entitledModelIds", []), "prices": config.get("prices", {}) if can_manage else {}})
     models = []
     for item in MODEL_PROFILES.values():
         if item["providerId"] == "codex-local":
-            enabled = project is not None and active_image_connection(session, user.id, project.id) is not None
-            models.append({**copy.deepcopy(item), "configured": enabled, "available": enabled,
-                "unavailableReason": None if enabled else "请在「问问 AI」连接支持图片生成的个人 Codex", "requiresEntitlement": False})
+            models.append({**copy.deepcopy(item), "configured": codex_image, "available": codex_image,
+                "unavailableReason": None if codex_image else "请在「问问 AI」连接支持图片生成的个人 Codex", "requiresEntitlement": False})
             continue
-        stored = records[item["providerId"]]
-        config = stored.config_json if stored else {}
+        record = records[item["providerId"]]
+        config = record["config"]
         entitled = not item["capabilities"].get("requiresEntitlement") or item["id"] in config.get("entitledModelIds", [])
-        configured = _configured(session, user.id, item["providerId"], stored)
+        configured = record["configured"]
         priced = item["providerId"] in {"deepseek", "sensetime", "aliyun-wan"} or item["id"] in config.get("prices", {})
         reason = "请先配置供应商凭据" if not configured else "请核对并保存当前模型开通权益" if not entitled else "请核对并保存当前模型价表" if not priced else None
         if item["kind"] == "text" and not _is_text_admin(user, settings):
             reason = "平台文字额度尚未开放，当前仅管理员可使用"
         models.append({**copy.deepcopy(item), "configured": configured, "available": reason is None,
             "unavailableReason": reason, "requiresEntitlement": bool(item["capabilities"].get("requiresEntitlement"))})
-    return {"models": models, "connections": connections, "defaults": project_defaults(project) if project else dict(LEGACY_DEFAULTS), "revision": project.revision if project else None}
+    return {"models": models, "connections": connections, "defaults": normalize_model_defaults(defaults), "revision": revision}
 
 
-def update_provider(session, user, provider_id, body, settings):
+def validate_provider_fields(user, provider_id, body, settings):
     if provider_id not in PROVIDER_IDS:
         raise AppError(422, "MODEL_PROVIDER_UNSUPPORTED", "供应商未获支持")
     if provider_id in {"deepseek", "aliyun-qwen"} and not _is_text_admin(user, settings):
@@ -128,18 +143,13 @@ def update_provider(session, user, provider_id, body, settings):
         raise AppError(422, "MODEL_CREDENTIAL_FIELDS_INVALID", "请使用当前供应商对应的凭据输入字段")
     if body.base_url is not None and body.base_url != (ARK_BASE_URL if provider_id == "volcengine-ark" else "https://api.deepseek.com" if provider_id == "deepseek" else "https://token.sensenova.cn/v1" if provider_id == "sensetime" else ""):
         raise AppError(422, "MODEL_ENDPOINT_FORBIDDEN", "请使用该供应商固定的官方地域地址")
-    lock_write(session)
-    stored = connection(session, user.id, provider_id)
-    if body.expected_revision != (stored.revision if stored else 0):
-        raise AppError(409, "MODEL_CONFIGURATION_CONFLICT", "供应商配置已有新版本，请重新读取")
-    if stored is None:
-        stored = ModelProviderConnection(owner_id=user.id, scope_key="platform" if provider_id in {"deepseek", "aliyun-qwen"} else user.id,
-            provider_id=provider_id, config_json={}, revision=0)
-        session.add(stored)
+
+
+def prepare_provider_configuration(provider_id, body, existing):
     secret = body.api_key.get_secret_value().strip() if body.api_key else None
     if secret is not None and (not 8 <= len(secret) <= 2048 or any(char.isspace() for char in secret)):
         raise AppError(422, "MODEL_KEY_INVALID", "请填写完整的供应商API Key")
-    config = {**stored.config_json, "region": body.region}
+    config = {**existing, "region": body.region}
     if body.workspace_id is not None:
         config["workspaceId"] = body.workspace_id
     if body.entitled_model_ids is not None:
@@ -160,6 +170,20 @@ def update_provider(session, user, provider_id, body, settings):
         config["prices"] = {identifier: price.model_dump(by_alias=True, exclude_none=True) for identifier, price in body.prices.items()}
     if provider_id == "aliyun-qwen" and not config.get("workspaceId"):
         raise AppError(422, "MODEL_WORKSPACE_REQUIRED", "千问需要北京地域业务空间ID")
+    return config, secret
+
+
+def update_provider(session, user, provider_id, body, settings):
+    validate_provider_fields(user, provider_id, body, settings)
+    lock_write(session)
+    stored = connection(session, user.id, provider_id)
+    if body.expected_revision != (stored.revision if stored else 0):
+        raise AppError(409, "MODEL_CONFIGURATION_CONFLICT", "供应商配置已有新版本，请重新读取")
+    if stored is None:
+        stored = ModelProviderConnection(owner_id=user.id, scope_key="platform" if provider_id in {"deepseek", "aliyun-qwen"} else user.id,
+            provider_id=provider_id, config_json={}, revision=0)
+        session.add(stored)
+    config, secret = prepare_provider_configuration(provider_id, body, stored.config_json)
     if secret:
         stored.api_key_encrypted = encode_secret(secret, settings)
     if provider_id == "deepseek" and secret:

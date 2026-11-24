@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -7,12 +7,29 @@ import { createProjectFromList } from './manual-studio';
 
 const product = path.resolve('..');
 
+async function recordVideoPlayback(body: Locator, assetId: string) {
+  await body.evaluate((element, expectedAsset) => {
+    element.addEventListener('timeupdate', (event) => {
+      const video = event.target;
+      if (video instanceof HTMLVideoElement && video.currentTime > .1 && video.currentSrc &&
+        new URL(video.currentSrc).pathname.endsWith('/' + expectedAsset + '.mp4') &&
+        video.getVideoPlaybackQuality().totalVideoFrames > 0 && !video.paused) {
+        element.setAttribute('data-tested-video-played', expectedAsset);
+      }
+    }, true);
+  }, assetId);
+}
+
 test('完整项目备份与重复导入，前端网页游玩及固定游戏包互动分支', async ({ page, context, browser }, testInfo) => {
   test.setTimeout(240000);
   const captureEvidence = !process.env.OPENFMV_TEST_BASE_URL;
+  const stageEvidence = process.env.OPENFMV_TEST_EVIDENCE_DIR;
+  const evidence = stageEvidence ?? (captureEvidence ? path.join(product, 'docs/evidence/阶段2-4') : undefined);
+  const widths = stageEvidence ? [1280, 1440] : [390, 768, 1440];
   const directory = captureEvidence ? path.join(product, '.intermediate/project-transfer-smoke-20261116') : testInfo.outputPath('transfers');
   const source = JSON.parse(await readFile(path.join(product, '.intermediate/media-sequence-smoke-20261116/browser-media.json'), 'utf8'));
   await mkdir(directory, { recursive: true });
+  if (evidence) await mkdir(evidence, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/zh-CN/account');
   await page.getByTestId('auth-mode-register').click();
@@ -93,11 +110,11 @@ test('完整项目备份与重复导入，前端网页游玩及固定游戏包�
   await gameCard.getByTestId('transfer-download').click();
   const gameFile = path.join(directory, `browser-game-${crypto.randomUUID()}.zip`);
   await (await gameDownload).saveAs(gameFile);
-  for (const width of [390, 768, 1440]) {
+  for (const width of widths) {
     await page.setViewportSize({ width, height: 1000 });
     expect(await dialog.evaluate((element) => element.getBoundingClientRect().width <= innerWidth)).toBe(true);
     expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-    if (captureEvidence) await page.screenshot({ path: path.join(product, `docs/evidence/阶段2-4/项目备份与固定版本-${width}px.png`) });
+    if (evidence) await page.screenshot({ path: path.join(evidence, `项目备份与固定版本-${width}px.png`) });
   }
   await dialog.getByRole('button', { name: '关闭导出窗口' }).click();
   let onlineDownloads = 0;
@@ -132,22 +149,23 @@ test('完整项目备份与重复导入，前端网页游玩及固定游戏包�
   const webFrame = page.frameLocator('[data-testid="web-game-frame"]');
   await webFrame.locator('[data-next]').click();
   await webFrame.locator(`[data-timeline-clip="${normal}"]`).click();
+  await recordVideoPlayback(webFrame.locator('body'), assetIds[2]);
   await webFrame.locator(`[data-timeline-clip="${qte}"]`).click();
   await expect(webFrame.getByRole('heading', { name: '第三幕', exact: true })).toBeVisible();
-  await expect.poll(() => webFrame.locator('video').first().evaluate((element) => (element as HTMLVideoElement).currentTime)).toBeGreaterThan(.1);
   await expect(webFrame.getByRole('heading', { name: '完成结局', exact: true })).toBeVisible();
+  await expect(webFrame.locator('body')).toHaveAttribute('data-tested-video-played', assetIds[2]);
   await page.getByTestId('web-game-restart').click();
   await webFrame.locator('[data-next]').click();
   await webFrame.locator(`[data-timeline-clip="${normal}"]`).click();
   await expect(webFrame.getByRole('heading', { name: '超时结局', exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByTestId('web-game-frame')).toBeVisible();
-  for (const width of [390, 768, 1440]) {
+  for (const width of widths) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.getByTestId('web-game-page').evaluate((element) => element.scrollWidth <= innerWidth)).toBe(true);
     expect(await page.getByTestId('web-game-frame').evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThan(500);
     expect(await page.getByTestId('web-game-frame').evaluate((element) => element.getBoundingClientRect().bottom <= innerHeight)).toBe(true);
-    if (captureEvidence) await page.screenshot({ path: path.join(product, `docs/evidence/阶段2-4/网页游玩-${width}px.png`) });
+    if (evidence) await page.screenshot({ path: path.join(evidence, `网页游玩-${width}px.png`) });
   }
   const anonymous = await browser.newContext();
   try {
@@ -223,18 +241,18 @@ test('完整项目备份与重复导入，前端网页游玩及固定游戏包�
   await offline.goto(local);
   await offline.locator('[data-next]').click();
   await offline.locator(`[data-timeline-clip="${normal}"]`).click();
+  await recordVideoPlayback(offline.locator('body'), assetIds[2]);
   await offline.locator(`[data-timeline-clip="${qte}"]`).click();
   await expect(offline.getByRole('heading', { name: '第三幕', exact: true })).toBeVisible();
-  const video = offline.locator('video').first();
-  await expect.poll(() => video.evaluate((element) => (element as HTMLVideoElement).currentTime)).toBeGreaterThan(.1);
   await expect(offline.getByRole('heading', { name: '完成结局', exact: true })).toBeVisible();
+  await expect(offline.locator('body')).toHaveAttribute('data-tested-video-played', assetIds[2]);
   await offline.reload();
   await offline.locator('[data-next]').click();
   await offline.locator(`[data-timeline-clip="${normal}"]`).click();
   await expect(offline.getByRole('heading', { name: '超时结局', exact: true })).toBeVisible();
   expect(requests.every((url) => url.startsWith('file:'))).toBe(true);
   expect(errors).toEqual([]);
-  if (captureEvidence) await offline.screenshot({ path: path.join(product, 'docs/evidence/阶段2-4/独立游戏包-QTE超时结局.png') });
+  if (evidence) await offline.screenshot({ path: path.join(evidence, '独立游戏包-QTE超时结局.png') });
   await context.setOffline(false);
   await writeFile(path.join(directory, 'browser-proof.json'), JSON.stringify({ verifiedAt: new Date().toISOString(), projectId, importedProjectId,
     jobIds: [backupId, gameId, importId], offlinePlayback: true, normalButton: true, qteSuccess: true, qteTimeout: true,

@@ -201,6 +201,47 @@ def test_video_uses_the_saved_result_of_its_linked_image_generator(live_service,
         assert generation["input"]["inputs"][0]["title"] == "图片节点"
 
 
+@pytest.mark.parametrize("text_type", ["config", "text"])
+def test_generation_cards_keep_previous_finished_inputs_while_new_results_are_pending(live_service, sample_input_media, text_type):
+    client, _ = registered_client(live_service)
+    with closing(client):
+        envelope, image = upload_input(client, create_project(client), sample_input_media["image"])
+        envelope, video = upload_input(client, envelope, sample_input_media["video"])
+        prompt = "参考@[node:shot]和@[node:look]，遵循@[node:script]。"
+        nodes = [
+            node("script", text_type, "文本卡片", generationMode="text", outputNodeId="script-pending", composerContent="交给模型的内部说明"),
+            node("script-ready", "text", "文本结果", inlineResultOf="script", content="雾散后，列车驶出站台。"),
+            node("script-pending", "text", "文本结果", inlineResultOf="script", pendingResult=True),
+            node("look", "config", "图片卡片", generationMode="image", outputNodeId="look-ready"),
+            node("look-ready", "image", "图片结果", inlineResultOf="look", storageKey=image["id"]),
+            node("shot", "config", "视频卡片", generationMode="video", outputNodeId="shot-pending"),
+            node("shot-ready", "video", "视频结果", inlineResultOf="shot", storageKey=video["id"]),
+            node("shot-pending", "video", "视频结果", inlineResultOf="shot", pendingResult=True),
+            node("lookalike", "video", "无关视频", storageKey=video["id"]),
+            node("target", "config", "后续镜头", generationMode="video", composerContent=prompt),
+        ]
+        links = [
+            connection("script", "script-ready"), connection("script", "script-pending"), connection("script", "target"),
+            connection("look", "look-ready"), connection("look", "target"),
+            connection("shot", "shot-ready"), connection("shot", "shot-pending"), connection("shot", "lookalike"), connection("shot", "target"),
+        ]
+        envelope = save_canvas(client, envelope, nodes, links)
+        path = f"/projects/{envelope['project']['id']}/generations/quote"
+        body = {"sceneId": scene_id(envelope), "sourceNodeId": "target", "prompt": prompt, "duration": 4, "resolution": "720P",
+                "referenceVideoNodeId": "shot", "referenceImageNodeIds": ["look"], "videoInputMode": "edit"}
+        generation = accepted_quote(client.post(path, json={**body, "operationId": str(uuid.uuid4())}), live_service)
+        assert generation["input"]["canvasMedia"] == [
+            {"type": "reference_video", "nodeId": "shot", "assetId": video["id"]},
+            {"type": "reference_image", "nodeId": "look", "assetId": image["id"]},
+        ]
+        assert generation["input"]["inputs"][-1]["nodeId"] == "script"
+        assert generation["input"]["prompt"] == "参考【视频1】和【图1】，遵循【文本1】。\n\n【文本1】\n雾散后，列车驶出站台。"
+
+        save_canvas(client, envelope, nodes, [link for link in links if link["toNodeId"] != "shot-ready"])
+        # 没有已完成的对应结果时，禁止把普通下游视频错当成卡片产物。
+        assert error_code(client.post(path, json={**body, "operationId": str(uuid.uuid4())}), 422) == "GENERATION_REFERENCE_MISSING"
+
+
 def test_wan_freezes_project_video_and_reference_image_without_using_external_node_url(live_service, sample_input_media):
     client, _ = registered_client(live_service)
     with closing(client):

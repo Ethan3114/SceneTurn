@@ -16,7 +16,6 @@
       "headlineFirst": "Viewers choose",
       "headlineSecond": "the next scene",
       "description": "A studio for interactive films. Generate assets with AI, arrange branching stories, and publish films your audience can steer.",
-      "githubAccess": "The GitHub repository currently requires access.",
       "explore": "Explore SceneTurn",
       "artAlt": "The coastal defense station in The Last Tide"
     },
@@ -158,13 +157,13 @@
     "saveFailed": "Save failed",
     "language": "Language",
     "interfaceLanguage": "Interface language",
-    "languageDescription": "Choose the OpenFMV interface language. The preference is saved locally.",
+    "languageDescription": "Choose the SceneTurn interface language. The preference is saved locally.",
     "coreEngine": "Core engine",
     "localCli": "Local CLI",
     "availableCli": "Available CLI",
     "missingCli": "Missing CLI",
     "aiDescription": "Local CLIs generate stories, branches, and shot prompts.",
-    "coreEngineDescription": "Choose the local CLI OpenFMV uses to generate stories, branches, and shot prompts. This scans PATH, reads versions, and saves the default model for each CLI.",
+    "coreEngineDescription": "Choose the local CLI SceneTurn uses to generate stories, branches, and shot prompts. This scans PATH, reads versions, and saves the default model for each CLI.",
     "rescan": "Rescan",
     "availableGroup": "Available ({count})",
     "missingGroup": "Missing ({count})",
@@ -185,7 +184,7 @@
     "autoSaved": "Auto-saved",
     "saveLocalFailed": "Failed to save local project",
     "saveAsFailed": "Failed to save project as",
-    "desktopExportRequired": "Exporting a Web playable package requires the OpenFMV desktop app",
+    "desktopExportRequired": "Exporting a Web playable package requires the SceneTurn desktop app",
     "desktopExportRequiredDetail": "Exporting a Web playable package requires desktop filesystem access. The web debug page cannot copy local assets into an export folder.",
     "exporting": "Exporting Web package...",
     "exportComplete": "Web playable package export complete",
@@ -319,7 +318,7 @@
       }
     },
     "loading": {
-      "start": "Starting OpenFMV editor...",
+      "start": "Starting SceneTurn editor...",
       "loadStoryEngine": "Loading story engine...",
       "organizeCanvas": "Organizing node canvas...",
       "calibrateConnections": "Calibrating connections...",
@@ -774,6 +773,7 @@
     "ko": "한국어"
   },
   "player": {
+    "dialogTitle": "Interactive game player",
     "loadingGame": "Loading game...",
     "projectUnavailable": "Project not found or empty.",
     "exit": "Exit",
@@ -887,7 +887,7 @@
     }
   },
   "debug": {
-    "eyebrow": "OpenFMV AI Debug",
+    "eyebrow": "SceneTurn AI Debug",
     "title": "AI Debug",
     "description": "Inspect local AI CLI paths, versions, and probe output.",
     "platform": "Platform",

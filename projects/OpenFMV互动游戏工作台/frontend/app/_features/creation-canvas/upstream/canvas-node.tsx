@@ -27,6 +27,9 @@ const nodeIcons = {
 
 type CanvasNodeProps = {
     data: CanvasNodeData;
+    result?: CanvasNodeData;
+    resultVersions?: ReactNode;
+    canLinkOutput?: boolean;
     scale: number;
     isSelected: boolean;
     isRelated: boolean;
@@ -102,6 +105,9 @@ type NodeContentRendererProps = {
 
 export const CanvasNode = React.memo(function CanvasNode({
     data,
+    result,
+    resultVersions,
+    canLinkOutput,
     scale,
     isSelected,
     isRelated,
@@ -155,11 +161,12 @@ export const CanvasNode = React.memo(function CanvasNode({
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [titleDraft, setTitleDraft] = useState(data.title || "");
-    const hasImageContent = data.type === CanvasNodeType.Image && Boolean(data.metadata?.content);
-    const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
-    const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content);
+    const contentData = result ?? data;
+    const hasImageContent = contentData.type === CanvasNodeType.Image && Boolean(contentData.metadata?.content);
+    const hasVideoContent = contentData.type === CanvasNodeType.Video && Boolean(contentData.metadata?.content);
+    const hasAudioContent = contentData.type === CanvasNodeType.Audio && Boolean(contentData.metadata?.content);
     const isGroup = data.type === CanvasNodeType.Group;
-    const batchCount = data.type === CanvasNodeType.Image ? data.metadata?.images?.length || 0 : data.type === CanvasNodeType.Text ? data.metadata?.texts?.length || 0 : 0;
+    const batchCount = contentData.type === CanvasNodeType.Image ? contentData.metadata?.images?.length || 0 : contentData.type === CanvasNodeType.Text ? contentData.metadata?.texts?.length || 0 : 0;
     const isBatchRoot = batchCount > 1;
     // Nodes with the interaction/move toggle ignore content pointer events in move mode and allow interaction in interactive mode.
     // forceInteractive states such as editing stay interactive, as do empty nodes so their upload and generation actions remain usable.
@@ -169,7 +176,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     // Transparent nodes such as SVGs blend into the canvas while retaining outlines for selected or related states.
     const transparentBg = Boolean(definition?.transparentBackground);
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
-    const NodeIcon = nodeIcons[data.type as CanvasNodeType] || Puzzle;
+    const NodeIcon = nodeIcons[contentData.type as CanvasNodeType] || Puzzle;
     const showMediaInfo = (showImageInfo && hasImageContent) || hasVideoContent || hasAudioContent;
     const menuRef = useRef<HTMLDetailsElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -390,12 +397,12 @@ export const CanvasNode = React.memo(function CanvasNode({
                         if (definition.onDoubleClick(pluginContext)) event.stopPropagation();
                         return;
                     }
-                    if (data.type === CanvasNodeType.Image && hasImageContent) {
+                    if (hasImageContent) {
                         event.stopPropagation();
-                        onViewImage?.(data);
+                        onViewImage?.(contentData);
                         return;
                     }
-                    if (data.type !== CanvasNodeType.Text || data.metadata?.publicMaterialRole) return;
+                    if (contentData.type !== CanvasNodeType.Text || contentData.metadata?.publicMaterialRole || contentData.metadata?.pendingResult) return;
                     event.stopPropagation();
                     setIsEditingContent(true);
                 }}
@@ -438,7 +445,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                     )}
                     {statusLabel && <span className="fmv-node-card-status" role="status" title={statusLabel}>{statusLabel}</span>}
                     {isGroup && <span className="fmv-node-card-status">{t("canvas.node.nodeCount", { count: groupChildCount })}</span>}
-                    {showMediaInfo && <MediaInfoBar node={data} videoInfo={videoInfo} />}
+                    {showMediaInfo && <MediaInfoBar node={contentData} videoInfo={videoInfo} />}
+                    {resultVersions}
                     {!referenceSelectionState && <details ref={menuRef} className="fmv-node-card-menu" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()}
                         onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}
                         onKeyDown={(event) => {
@@ -467,8 +475,9 @@ export const CanvasNode = React.memo(function CanvasNode({
                     }
                 >
                     <NodeContent
+                        key={contentData.id}
                         statusLabel={statusLabel}
-                        node={data}
+                        node={contentData}
                         theme={theme}
                         isEditingContent={isEditingContent}
                         textareaRef={textareaRef}
@@ -476,23 +485,23 @@ export const CanvasNode = React.memo(function CanvasNode({
                         batchCount={batchCount}
                         batchExpanded={batchExpanded}
                         scale={scale}
-                        renderNodeContent={renderNodeContent}
+                        renderNodeContent={result ? undefined : renderNodeContent}
                         pluginContext={pluginContext}
                         mentionReferences={mentionReferences}
                         onContentChange={onContentChange}
                         onStopEditing={() => setIsEditingContent(false)}
-                        onTextShortcut={onTextShortcut ? (action) => {
+                        onTextShortcut={onTextShortcut && !result ? (action) => {
                             if (action === 'write') setIsEditingContent(true);
                             else onTextShortcut(data, action);
                         } : undefined}
                         onRetry={onRetry}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
-                        onSetBatchPrimary={(itemId) => onSetBatchPrimary?.(data.id, itemId)}
-                        onDuplicateBatchImage={(imageId) => onDuplicateBatchImage?.(data, imageId)}
-                        onDownloadBatchImage={(imageId) => onDownloadBatchImage?.(data, imageId)}
-                        onRetryBatchImage={onRetryBatchImage ? (imageId) => onRetryBatchImage(data, imageId) : undefined}
-                        onDeleteBatchImage={(imageId) => onDeleteBatchImage?.(data.id, imageId)}
-                        onViewBatchImage={(imageId) => onViewImage?.(data, imageId)}
+                        onSetBatchPrimary={(itemId) => onSetBatchPrimary?.(contentData.id, itemId)}
+                        onDuplicateBatchImage={(imageId) => onDuplicateBatchImage?.(contentData, imageId)}
+                        onDownloadBatchImage={(imageId) => onDownloadBatchImage?.(contentData, imageId)}
+                        onRetryBatchImage={onRetryBatchImage ? (imageId) => onRetryBatchImage(contentData, imageId) : undefined}
+                        onDeleteBatchImage={(imageId) => onDeleteBatchImage?.(contentData.id, imageId)}
+                        onViewBatchImage={(imageId) => onViewImage?.(contentData, imageId)}
                     />
                 </div>
 
@@ -509,7 +518,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             </div>
 
             {!referenceSelectionState && !isGroup ? <ConnectionHandleDot nodeId={data.id} side="left" active={isConnectionTarget || isSelected || isConnecting && hovered} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
-            {!referenceSelectionState && !isGroup && (data.metadata?.generationMode === 'image' || (definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config) ? <ConnectionHandleDot nodeId={data.id} side="right" active={isSelected || hovered} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
+            {!referenceSelectionState && !isGroup && (canLinkOutput ?? ((definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config)) ? <ConnectionHandleDot nodeId={data.id} side="right" active={isSelected || hovered} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
             {showPanel && resultTools && <div className="fmv-result-tools-anchor" style={{ marginLeft: panelOffsetX, transform: `translateX(-50%) scale(${1 / scale})` }}>{resultTools}</div>}
             {/* Counter-scale the panel so its on-screen size stays constant while the canvas zooms. */}

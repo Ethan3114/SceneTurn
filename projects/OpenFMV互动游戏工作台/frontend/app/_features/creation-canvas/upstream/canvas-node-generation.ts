@@ -130,7 +130,7 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
     return getGenerationResourceNodes(nodeId, nodes, connections).flatMap((node): NodeGenerationInput[] => {
         if (node.type === CanvasNodeType.Group) {
-            const children = getGroupResourceNodes(node.id, nodes).flatMap(readNodeGenerationResource);
+            const children = getGroupResourceNodes(node.id, nodes, connections).flatMap(readNodeGenerationResource);
             return children.length ? [{ nodeId: node.id, type: "group", title: node.title, children }] : [];
         }
         return readNodeGenerationResource(node);

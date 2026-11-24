@@ -7,7 +7,7 @@ import { CanvasFilmControls, PromptPresets } from '../CanvasFilmControls';
 import { CanvasImageSpecs } from '../CanvasImageSpecs';
 import { canvasVideoModeOptions, canvasVideoModeSupported, canvasVideoRatio, canvasVideoRatios, canvasVideoReferenceImageIds, videoSourceLabels, type CanvasVideoSourceMode } from '../canvas-video-settings';
 import { nodeDramaTask } from '../drama-tasks';
-import type { CanvasNodeData, CanvasNodeMetadata } from './canvas';
+import type { CanvasConnection, CanvasNodeData, CanvasNodeMetadata } from './canvas';
 import type { NodeGenerationInput } from './canvas-node-generation';
 import { CanvasConfigComposer } from './canvas-config-composer';
 import { CanvasNodeReferenceBar } from './canvas-node-reference-bar';
@@ -20,6 +20,7 @@ type Props = {
   onChooseMediaReference: (nodeId: string, method: 'upload' | 'library') => void;
   node: CanvasNodeData;
   nodes: CanvasNodeData[];
+  connections: CanvasConnection[];
   connectedNodes: CanvasNodeData[];
   inputs: NodeGenerationInput[];
   model: string;
@@ -116,7 +117,7 @@ function VideoReferenceImages({ images, selectedIds, maxImages, inputProblem, on
   </section>;
 }
 
-function CanvasConfigNodePanelView({ ownerId, onChooseMediaReference, node, nodes, connectedNodes, inputs, model, models, selectedProfile, defaultProfile, textServiceLabel, textConnected, busy, canGenerate, inputProblem, joinDuration, onConfigChange, onGenerate, onDisconnectReference, onStartReferenceSelection }: Props) {
+function CanvasConfigNodePanelView({ ownerId, onChooseMediaReference, node, nodes, connections, connectedNodes, inputs, model, models, selectedProfile, defaultProfile, textServiceLabel, textConnected, busy, canGenerate, inputProblem, joinDuration, onConfigChange, onGenerate, onDisconnectReference, onStartReferenceSelection }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [openMenu, setOpenMenu] = useState<Menu | null>(null);
   const task = nodeDramaTask(node);
@@ -255,7 +256,7 @@ function CanvasConfigNodePanelView({ ownerId, onChooseMediaReference, node, node
               <span className="canvas-config-reference-thumbnail" title={title} key={nodeId}>{image?.dataUrl ? <img src={image.dataUrl} alt={title} loading="lazy" draggable={false} /> : <ImagePlus size={16} aria-hidden="true" />}</span>
             ))}
             {(!(isImage || isVideo) || linkedMedia.length > 0 || usesMixedVideo || videoMode === 'frames') && <GeneratorMenu slot label="添加参考素材" testId="generation-references-trigger" open={openMenu === 'references'} onToggle={() => toggleMenu('references')} width="wide" trigger={<Plus size={16} aria-hidden="true" />}>
-              <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={startReferenceSelection} />
+              <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connections={connections} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={startReferenceSelection} />
               {maxReferenceImages > 0 && <VideoReferenceImages images={linkedImages} selectedIds={selectedReferenceImageIds} maxImages={maxReferenceImages} inputProblem={inputProblem} onChange={(videoReferenceImageNodeIds) => onConfigChange(node.id, { videoReferenceImageNodeIds })} onConnect={startReferenceSelection} />}
             </GeneratorMenu>}
           </div>}

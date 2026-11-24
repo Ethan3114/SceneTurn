@@ -176,7 +176,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "dots"
             ref={containerRef}
             tabIndex={-1}
             data-testid="canvas-surface"
-            className="relative h-full w-full select-none overflow-hidden"
+            className="relative h-full w-full select-none overflow-clip"
             style={{ background: backgroundMode === 'dots' ? '#1a1a1a' : theme.canvas.background, cursor, touchAction: 'none' }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}

@@ -65,6 +65,7 @@ export type CanvasNodeMetadata = {
     agentTargetIds?: string[];
     content?: string;
     textGenerationId?: string;
+    imageGenerationId?: string;
     result?: Record<string, unknown>;
     composerContent?: string;
     prompt?: string;
@@ -80,6 +81,7 @@ export type CanvasNodeMetadata = {
     promptExtend?: string;
     pendingResult?: boolean;
     outputNodeId?: string;
+    inlineResultOf?: string;
     plotSpawnOf?: string;
     generationType?: CanvasImageGenerationType;
     model?: string;

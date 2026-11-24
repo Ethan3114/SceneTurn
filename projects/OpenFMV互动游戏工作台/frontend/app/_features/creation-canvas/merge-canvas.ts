@@ -29,6 +29,29 @@ function mergeItems<T extends { id: string }>(base: T[], local: T[], remote: T[]
   ];
 }
 
+function overlaps(base: unknown, local: unknown, remote: unknown): boolean {
+  if (sameValue(local, base) || sameValue(remote, base) || sameValue(local, remote)) return false;
+  if (!objectValue(local) || !objectValue(remote) || (base !== undefined && !objectValue(base))) return true;
+  return [...new Set([...Object.keys(local), ...Object.keys(remote), ...Object.keys(base ?? {})])]
+    .some((key) => overlaps(base?.[key], local[key], remote[key]));
+}
+
+function byId<T extends { id: string }>(items: T[]) {
+  return Object.fromEntries(items.map((item) => [item.id, item]));
+}
+
+export function canMergeCanvasEdits(base: CanvasSnapshot, local: CanvasSnapshot, remote: CanvasSnapshot) {
+  if (base.sceneId !== local.sceneId || local.sceneId !== remote.sceneId) return false;
+  if (overlaps(byId(base.nodes), byId(local.nodes), byId(remote.nodes))
+    || overlaps(byId(base.connections), byId(local.connections), byId(remote.connections))) return false;
+
+  const merged = mergeCanvasSnapshots(base, local, remote);
+  const originalConnections = byId(base.connections);
+  const keptConnections = new Set(merged.connections.map((edge) => edge.id));
+  return [local, remote].every((canvas) => canvas.connections.every((edge) =>
+    keptConnections.has(edge.id) || sameValue(edge, originalConnections[edge.id])));
+}
+
 export function mergeCanvasSnapshots(base: CanvasSnapshot, local: CanvasSnapshot, remote: CanvasSnapshot): CanvasSnapshot {
   if (base.sceneId !== local.sceneId || local.sceneId !== remote.sceneId) throw new Error('无法合并不同场景的画布。');
   const nodes = mergeItems(base.nodes, local.nodes, remote.nodes);

@@ -89,6 +89,13 @@ def _settle(session: Session, job: TextGeneration, actual: int, usage: dict | No
     job.usage_json = {**(usage or {}), "settled": True}
 
 
+def text_instruction(task: str, source: dict) -> str:
+    metadata = source.get("metadata", {})
+    if task == "text" and metadata.get("generationMode") == "text" and (source["type"] == "text" or metadata.get("scriptVersion") == "legacy"):
+        return '根据用户指令和参考素材完成写作或翻译。仅返回形如 {"text":"正文"} 的 JSON 对象，正文保留要求的结构。'
+    return task_instructions(task)
+
+
 def create_text_job(session: Session, project_id: str, user: User, payload: dict, settings: Settings) -> TextGeneration:
     require_text_admin(user, settings)
     lock_write(session)
@@ -114,9 +121,7 @@ def create_text_job(session: Session, project_id: str, user: User, payload: dict
     maximum = payload.get("maxTokens") or settings.text_max_output_tokens
     if maximum > settings.text_max_output_tokens:
         raise AppError(422, "TEXT_OUTPUT_LIMIT", "本次输出Token上限超过平台配置")
-    instruction = task_instructions(payload["task"])
-    if source.get("metadata", {}).get("generationMode") == "text" and (source["type"] == "text" or source.get("metadata", {}).get("scriptVersion") == "legacy") and payload["task"] == "text":
-        instruction = '根据用户指令和参考素材完成写作或翻译。仅返回形如 {"text":"正文"} 的 JSON 对象，正文保留要求的结构。'
+    instruction = text_instruction(payload["task"], source)
     messages = [{"role": "system", "content": instruction}, {"role": "user", "content": payload["prompt"] if translating else composition["prompt"]}]
     input_upper_bound = sum(len(item["content"].encode("utf-8")) for item in messages) + 1024
     qwen_body = qwen_request_body(messages, maximum) if qwen else None
@@ -215,6 +220,25 @@ def _format_result(task: str, parsed: dict) -> str:
     return f"{TITLES[task]}\n{parsed['text']}" if task in TITLES else parsed["text"]
 
 
+def parse_text_completion(task: str, source_prompt: str, response: Completion) -> tuple[dict | None, str | None, tuple[str, str] | None]:
+    choice = response.choices[0]
+    if choice.finish_reason != "stop" or choice.message.tool_calls:
+        return None, None, ("TEXT_RESULT_INCOMPLETE", "供应商没有返回完整的纯文本结果，真实Token和费用已记录")
+    try:
+        result = RESULTS[task].model_validate_json(choice.message.content or "").model_dump()
+    except ValidationError:
+        return None, None, ("TEXT_RESULT_INVALID", "真实文本结果未通过结构校验，原始输出及Token费用继续保留")
+    if task == "translate" and Counter(COMPOSER_REFERENCE.findall(result["text"])) != Counter(COMPOSER_REFERENCE.findall(source_prompt)):
+        return None, None, ("TEXT_REFERENCE_CHANGED", "译文中的素材引用发生变化，已保留原提示词")
+    return result, _format_result(task, result), None
+
+
+def text_quality_issues(task: str, result: dict) -> list[str]:
+    if task == "plot" and (len(result["shots"]) != 3 or [shot["no"] for shot in result["shots"]] != [1, 2, 3]):
+        return [f"本次返回{len(result['shots'])}个镜头，请核对数量和编号是否符合本次要求；完整分镜均已保留"]
+    return []
+
+
 def _save_completion(session: Session, job: TextGeneration, response: Completion) -> None:
     usage = response.usage.model_dump()
     actual = cost_micros(response.usage.prompt_cache_hit_tokens, response.usage.prompt_cache_miss_tokens, response.usage.completion_tokens, job.input_json["price"])
@@ -223,21 +247,13 @@ def _save_completion(session: Session, job: TextGeneration, response: Completion
     job.partial_text = response.choices[0].message.content or ""
     _settle(session, job, actual, {**usage, "price": job.input_json["price"], "costEstimate": True})
     session.add(TextUsageLedger(generation_id=job.id, owner_id=job.owner_id, project_id=job.project_id, remote_request_id=response.id, provider=job.provider, model=response.model, input_tokens=job.input_tokens, output_tokens=job.output_tokens, total_tokens=job.total_tokens, cache_hit_tokens=response.usage.prompt_cache_hit_tokens, cache_miss_tokens=response.usage.prompt_cache_miss_tokens, cost_micros=actual, price_json=job.input_json["price"]))
-    choice = response.choices[0]
-    if choice.finish_reason != "stop" or choice.message.tool_calls:
-        job.status, job.error_code, job.error_message = "failed", "TEXT_RESULT_INCOMPLETE", "供应商没有返回完整的纯文本结果，真实Token和费用已记录"
+    result, output, error = parse_text_completion(job.task, job.input_json["sourcePrompt"], response)
+    if error is not None:
+        job.status, job.error_code, job.error_message = "failed", *error
         return
-    try:
-        result = RESULTS[job.task].model_validate_json(job.partial_text).model_dump()
-    except ValidationError:
-        job.status, job.error_code, job.error_message = "failed", "TEXT_RESULT_INVALID", "真实文本结果未通过结构校验，原始输出及Token费用继续保留"
-        return
-    if job.task == "translate" and Counter(COMPOSER_REFERENCE.findall(result["text"])) != Counter(COMPOSER_REFERENCE.findall(job.input_json["sourcePrompt"])):
-        job.status, job.error_code, job.error_message = "failed", "TEXT_REFERENCE_CHANGED", "译文中的素材引用发生变化，已保留原提示词"
-        return
-    job.result_json, job.output_text = result, _format_result(job.task, result)
-    if job.task == "plot" and (len(result["shots"]) != 3 or [shot["no"] for shot in result["shots"]] != [1, 2, 3]):
-        job.usage_json = {**job.usage_json, "qualityIssues": [f"本次返回{len(result['shots'])}个镜头，请核对数量和编号是否符合本次要求；完整分镜均已保留"]}
+    job.result_json, job.output_text = result, output
+    if quality_issues := text_quality_issues(job.task, result):
+        job.usage_json = {**job.usage_json, "qualityIssues": quality_issues}
     project = require_project(session, job.project_id, job.owner_id)
     if job.stop_requested:
         job.status, job.error_code, job.error_message = "interrupted", "TEXT_STOPPED", "任务已停止自动采用，已提交的真实输出和费用继续保留"

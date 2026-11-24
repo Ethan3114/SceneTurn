@@ -1,15 +1,16 @@
-import tempfile
+import asyncio
 import hashlib
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 from functools import lru_cache
 from typing import Literal
 from pathlib import Path
 from threading import BoundedSemaphore
 
-from fastapi import APIRouter, Depends, File, Path as ApiPath, UploadFile
+from fastapi import APIRouter, Depends, File, Path as ApiPath, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
@@ -23,14 +24,17 @@ from app.models import Asset, User
 from app.schemas import ProjectEnvelope, WireModel
 from app.services.canvas_delivery import public_project_envelope
 from app.services.canvas_media_edit import MediaEditRequest, render_edit
+from app.services.durable_files import persist_file
 from app.services.image_split import split_image
 from app.services.media import resolve_asset_path
+from app.services.object_storage import private_storage
 from app.services.projects import require_project
 
 
 router = APIRouter(tags=["media-tools"])
 router.include_router(local_audio_router)
 _render_slot = BoundedSemaphore(1)
+_DIRECTOR_MODEL_LIMIT = 16 * 1024 * 1024
 
 
 @lru_cache(maxsize=1)
@@ -109,15 +113,16 @@ class ModelDocument(BaseModel):
 @router.post("/projects/{project_id}/media-tools/director-models", status_code=201)
 async def store_director_model(project_id: str, file: UploadFile = File(), user: User = Depends(current_user), session: Session = Depends(get_db)):
     project = require_project(session, project_id, user.id)
-    data = await file.read(16 * 1024 * 1024 + 1)
-    if len(data) > 16 * 1024 * 1024:
+    data = await file.read(_DIRECTOR_MODEL_LIMIT + 1)
+    if len(data) > _DIRECTOR_MODEL_LIMIT:
         raise AppError(413, "DIRECTOR_MODEL_TOO_LARGE", "导演台模型须在 16 MiB 以内。")
     try:
         ModelDocument.model_validate_json(data)
     except ValidationError as exc:
         raise AppError(422, "DIRECTOR_MODEL_INVALID", "需要包含内嵌资源的 glTF 2.0 模型。") from exc
     key = hashlib.sha256(data).hexdigest()
-    directory = get_settings().data_dir.resolve() / "media" / "director-models" / project.id
+    settings = get_settings()
+    directory = settings.data_dir.resolve() / "media" / "director-models" / project.id
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / (key + ".gltf")
     if not destination.is_file():
@@ -130,14 +135,29 @@ async def store_director_model(project_id: str, file: UploadFile = File(), user:
                 os.replace(part.name, destination)
             finally:
                 Path(part.name).unlink(missing_ok=True)
+    storage = private_storage(settings)
+    if storage is not None:
+        try:
+            await asyncio.to_thread(persist_file, settings, destination, "model/gltf+json")
+        except AppError as error:
+            if error.code != "STORAGE_OBJECT_EXISTS":
+                raise
+            relative = destination.relative_to(settings.data_dir.resolve()).as_posix()
+            await asyncio.to_thread(storage.materialize, relative, destination, max_bytes=len(data), sha256=key)
     return {"id": key}
 
 
 @router.get("/projects/{project_id}/media-tools/director-models/{model_id}")
-def director_model(project_id: str, model_id: str = ApiPath(pattern="^[a-f0-9]{64}$"), user: User = Depends(current_user), session: Session = Depends(get_db)):
+def director_model(project_id: str, request: Request, model_id: str = ApiPath(pattern="^[a-f0-9]{64}$"), user: User = Depends(current_user), session: Session = Depends(get_db)):
     project = require_project(session, project_id, user.id)
     relative = f"media/director-models/{project.id}/{model_id}.gltf"
-    return FileResponse(resolve_asset_path(get_settings(), relative), media_type="model/gltf+json", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+    settings = get_settings()
+    headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+    storage = private_storage(settings)
+    if storage is not None:
+        return storage.response(relative, media_type="model/gltf+json", headers=headers,
+                                range_header=request.headers.get("range"))
+    return FileResponse(resolve_asset_path(settings, relative), media_type="model/gltf+json", headers=headers)
 
 
 @router.post("/projects/{project_id}/media-tools/render")

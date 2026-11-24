@@ -1,11 +1,14 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTaskPolling } from '@/app/_hooks/useTaskPolling';
 import { assetContentUrl, operationId } from '@/app/_utils/cloudApi';
 import { applyMediaAdoption, checkMediaAdoption, confirmMediaCandidate, createMediaSequence, getMediaCandidates, keepMediaVersion, quoteSequenceSegment, type MediaCandidate, type MediaCandidates as CandidateData, type MediaSequence, type SequenceSegmentInput } from '@/app/_utils/mediaCandidateApi';
 import { syncProjectSession } from '@/app/_utils/syncProjectSession';
 import { useMaterialWorkspace } from './store';
 import { taskLabels } from '@/app/_features/creation-canvas/GenerationTaskCard';
+
+const activeCandidateStatuses = new Set(['queued', 'submitting', 'processing', 'downloading']);
 
 function SequenceBuilder({ data, conversationId, busy, perform }: { data: CandidateData; conversationId: string; busy: boolean; perform: (action: () => Promise<void>) => Promise<void> }) {
   const [frames, setFrames] = useState<string[]>(['', '']);
@@ -32,29 +35,38 @@ function SequenceBuilder({ data, conversationId, busy, perform }: { data: Candid
   </details>;
 }
 
-export default function MediaCandidates({ projectId, sceneId, conversationId }: { projectId: string; sceneId: string; conversationId: string }) {
+export default function MediaCandidates({ projectId, sceneId, conversationId, onGenerationConfirmed }: {
+  projectId: string; sceneId: string; conversationId: string; onGenerationConfirmed: (id: string) => void | Promise<void>;
+}) {
   const [data, setData] = useState<CandidateData | null>(null);
   const [busy, setBusy] = useState(false);
   const operationRef = useRef<{ key: string; id: string } | null>(null);
-  const activeScope = useRef(conversationId);
-  activeScope.current = conversationId;
-  async function refresh() {
-    const next = await getMediaCandidates(projectId, sceneId, conversationId);
-    if (activeScope.current === conversationId) setData(next);
-  }
-  useEffect(() => {
-    let pending = false, cancelled = false;
-    const load = async () => {
-      if (pending) return;
-      pending = true;
-      try { const next = await getMediaCandidates(projectId, sceneId, conversationId); if (!cancelled) setData(next); }
-      catch (problem) { if (!cancelled) useMaterialWorkspace.setState({ error: problem instanceof Error ? problem.message : '候选读取失败' }); }
-      finally { pending = false; }
-    };
-    void load();
-    const timer = window.setInterval(() => { void load(); }, 2500);
-    return () => { cancelled = true; window.clearInterval(timer); };
+  const reads = useRef({ version: 0 });
+  const workspaceTasks = useMaterialWorkspace((state) => state.videoResults?.tasks);
+  const workspaceRevision = useMaterialWorkspace((state) => state.conversation?.revision);
+  const workspaceProgress = workspaceTasks?.map((task) => `${task.id}:${task.status}:${task.assetId}`).join(',');
+  const refresh = useCallback(async () => {
+    const current = reads.current;
+    const request = ++current.version;
+    try {
+      const next = await getMediaCandidates(projectId, sceneId, conversationId);
+      if (request === current.version) setData(next);
+    } catch (problem) {
+      if (request === current.version) throw problem;
+    }
   }, [projectId, sceneId, conversationId]);
+  const load = useCallback(async () => {
+    try { await refresh(); }
+    catch (problem) { useMaterialWorkspace.setState({ error: problem instanceof Error ? problem.message : '候选读取失败' }); }
+  }, [refresh]);
+  useEffect(() => {
+    const current = reads.current;
+    void load();
+    return () => { current.version++; };
+  }, [load, workspaceProgress, workspaceRevision]);
+  const needsCandidatePolling = data?.candidates.some((candidate) => activeCandidateStatuses.has(candidate.status)
+    && !workspaceTasks?.some((task) => task.id === candidate.generationId && activeCandidateStatuses.has(task.status)));
+  useTaskPolling(!busy && Boolean(needsCandidatePolling), 2500, load);
   async function perform(action: () => Promise<void>) {
     setBusy(true);
     try { await action(); await refresh(); await syncProjectSession(projectId); await useMaterialWorkspace.getState().refresh(); operationRef.current = null; useMaterialWorkspace.setState({ error: '' }); }
@@ -81,7 +93,7 @@ export default function MediaCandidates({ projectId, sceneId, conversationId }: 
     {data.sequences.map((sequence) => <details key={sequence.id} open className="material-sequence"><summary>{sequence.title} · {sequence.frames.length}张图片 / {sequence.segments.length}段视频</summary>{sequence.segments.map((segment) => <article key={segment.key} className="material-segment"><strong>{segment.title} · {segment.duration}秒 · {segment.resolution}</strong><div className="material-video-boundaries"><figure><img alt={`${segment.title}首帧`} src={assetContentUrl(segment.firstFrame.assetId)} /><figcaption>首帧</figcaption></figure><figure><img alt={`${segment.title}尾帧`} src={assetContentUrl(segment.lastFrame.assetId)} /><figcaption>尾帧</figcaption></figure></div><button type="button" disabled={busy} onClick={() => { void perform(() => prepare(sequence, segment.key)); }}>准备本段视频</button></article>)}</details>)}
     {data.candidates.map((candidate) => <article key={candidate.id} className="material-candidate" data-candidate-id={candidate.id}><strong>{candidate.title}</strong><span className="material-subtle">{candidate.adopted ? '当前已采用' : taskLabels[candidate.status] || candidate.status}{candidate.durationSeconds ? ` · ${candidate.durationSeconds.toFixed(2)}秒` : ''}</span>
       {candidate.status === 'ready' && candidate.assetId && <><video controls playsInline preload="metadata" src={assetContentUrl(candidate.assetId)} /><button type="button" disabled={busy || candidate.adopted} onClick={() => { void perform(() => check(candidate)); }}>{candidate.adopted ? '已采用到目标片段' : '检查并采用此候选'}</button></>}
-      {candidate.status === 'awaiting_confirmation' && <>{candidate.frames.length > 0 && <div className="material-video-boundaries">{candidate.frames.map((frame) => <figure key={frame.type}><img alt={frame.type === 'first_frame' ? '待确认首帧' : '待确认尾帧'} src={assetContentUrl(frame.assetId)} /><figcaption>{frame.type === 'first_frame' ? '首帧' : '尾帧'}</figcaption></figure>)}</div>}<p>{candidate.resolution} · 核对首尾画面后确认生成</p><button type="button" className="material-primary" disabled={busy || candidate.projectRevision !== data.revision} onClick={() => { void perform(async () => { await confirmMediaCandidate(candidate, data.revision); }); }}>确认生成本段视频</button>{candidate.projectRevision !== data.revision && <p>项目已更新，请使用“准备本段视频”重新核对。</p>}</>}
+      {candidate.status === 'awaiting_confirmation' && <>{candidate.frames.length > 0 && <div className="material-video-boundaries">{candidate.frames.map((frame) => <figure key={frame.type}><img alt={frame.type === 'first_frame' ? '待确认首帧' : '待确认尾帧'} src={assetContentUrl(frame.assetId)} /><figcaption>{frame.type === 'first_frame' ? '首帧' : '尾帧'}</figcaption></figure>)}</div>}<p>{candidate.resolution} · 核对首尾画面后确认生成</p><button type="button" className="material-primary" disabled={busy || candidate.projectRevision !== data.revision} onClick={() => { void perform(async () => { await confirmMediaCandidate(candidate, data.revision); await onGenerationConfirmed(candidate.id); }); }}>确认生成本段视频</button>{candidate.projectRevision !== data.revision && <p>项目已更新，请使用“准备本段视频”重新核对。</p>}</>}
     </article>)}
     {pending.map((item) => <article key={item.id} className="material-review" data-adoption-status={item.status}><strong>{item.targetName} · {item.status === 'ready' ? '等待采用确认' : item.status === 'stale' ? '需要重新检查' : '需要处理素材冲突'}</strong><p>{item.message}</p><p>候选时长 {item.availableSeconds.toFixed(2)} 秒；现有裁切需要覆盖到第 {item.requiredSeconds.toFixed(2)} 秒。</p>{item.status === 'ready' && <button type="button" className="material-primary" disabled={busy} onClick={() => { void perform(async () => { await applyMediaAdoption(projectId, item, operation(`apply:${item.id}`)); }); }}>确认采用，保留现有编辑</button>}<button type="button" disabled={busy} onClick={() => { void perform(async () => { await keepMediaVersion(projectId, item); }); }}>保留当前版本</button>{item.status !== 'ready' && <p>可使用场景时间线或本人Codex调整目标片段，再点击候选的“检查并采用此候选”。</p>}</article>)}
     {!data.publishAllowed && <p role="status">项目仍有待处理的素材冲突，发布检查会阻止通过。</p>}

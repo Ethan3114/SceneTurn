@@ -36,6 +36,13 @@ class TimelineEdit(WireModel):
     source_start: float = Field(default=0, ge=0, le=86400, allow_inf_nan=False)
 
 
+class TimelineAssetInput(TimelineEdit):
+    operation_id: str
+    expected_revision: int
+    start_time: float | None = Field(default=None, ge=0, le=86400, allow_inf_nan=False)
+    duration: float | None = Field(default=None, gt=0, le=86400, allow_inf_nan=False)
+
+
 class InteractionEdit(WireModel):
     scene_id: str
     clip_id: str | None = None
@@ -94,6 +101,24 @@ def owned_asset(session: Session, project: Project, asset_id: str, settings: Set
 
 def put_media_clip(session: Session, project: Project, snapshot: dict, scene: dict, body: TimelineEdit, settings: Settings) -> dict:
     asset = owned_asset(session, project, body.asset_id, settings)
+    return apply_media_clip(snapshot, scene, body, asset)
+
+
+def attach_timeline_asset(snapshot: dict, scene: dict, body: TimelineAssetInput, asset) -> None:
+    start_time = body.start_time
+    if start_time is None:
+        start_time = max((clip["startTime"] + clip["duration"] for track in timeline(scene)["tracks"]
+                          if track["type"] == "media" for clip in track["clips"]), default=0)
+    duration = body.duration
+    if duration is None:
+        duration = 5 if asset.mime_type.startswith("image/") else (asset.duration_ms or 0) / 1000
+    edit = TimelineEdit.model_validate({
+        **body.model_dump(exclude={"operation_id", "expected_revision"}), "start_time": start_time, "duration": duration,
+    })
+    apply_media_clip(snapshot, scene, edit, asset)
+
+
+def apply_media_clip(snapshot: dict, scene: dict, body: TimelineEdit, asset) -> dict:
     kind = asset.mime_type.split("/")[0]
     if kind not in {"video", "image", "audio"}:
         raise AppError(422, "ASSET_TYPE_UNSUPPORTED", "时间线只接受图片、视频和音频")

@@ -4,6 +4,7 @@ const path = require('path');
 const ROOT = process.cwd();
 const IGNORED_DIRECTORIES = new Set([
   '.git',
+  '.intermediate',
   '.next',
   'dist',
   'node_modules',

@@ -14,7 +14,7 @@ import type { HomeTrialCopy } from './HomeTrial';
 import { SceneTurnHomePremiere } from './SceneTurnPublic';
 import styles from './sceneturn-home.module.css';
 
-const repository = 'https://github.com/Ethan3114/openfmv-workbench';
+const repository = 'https://github.com/Ethan3114/SceneTurn';
 const workbenchPreviews = ['blueprint', 'timeline', 'player', 'assets'] as const;
 const questions = ['materials', 'models', 'codex', 'play', 'publish'] as const;
 
@@ -87,7 +87,6 @@ export async function SceneTurnHome({ locale, premiereSlug }: { locale: string; 
                   <ExternalLink size={17} aria-hidden="true" />{t('nav.github')}
                 </a>
               </div>
-              <p className={styles.githubAccess}>{t('hero.githubAccess')}</p>
             </div>
             <a className={styles.explore} href="#product"><ChevronDown size={18} aria-hidden="true" />{t('hero.explore')}</a>
           </div>

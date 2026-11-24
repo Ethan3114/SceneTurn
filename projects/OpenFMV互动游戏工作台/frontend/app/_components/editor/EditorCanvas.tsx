@@ -17,6 +17,7 @@ import { useShallow } from 'zustand/react/shallow';
 import '@xyflow/react/dist/style.css';
 
 import { useProjectSessionStore } from '@/app/_features/project-session/store';
+import { usePlayerStore } from '@/app/_store/usePlayerStore';
 import { useEditorStore } from '../../_store/useEditorStore';
 import { AppNode, NodeType, AppEdge, OpenFMVAsset } from '../../_types';
 import FloatingToolbar from './FloatingToolbar';
@@ -77,6 +78,7 @@ const createSceneNodeFromAsset = (asset: PickerAsset, position: { x: number; y: 
 const EditorContent = ({ projectId }: { projectId?: string | null }) => {
   const t = useTranslations('editor');
   const assetsT = useTranslations('assets');
+  const isPreviewing = usePlayerStore((state) => state.isPlaying);
   const {
     nodes, 
     edges, 
@@ -510,7 +512,7 @@ const EditorContent = ({ projectId }: { projectId?: string | null }) => {
         snapGrid={[15, 15]}
         defaultEdgeOptions={{ type: 'comfy', animated: false, reconnectable: true, style: { strokeWidth: 2, stroke: '#94a3b8' } }}
         edgesReconnectable
-        deleteKeyCode={['Backspace', 'Delete']}
+        deleteKeyCode={isPreviewing ? null : ['Backspace', 'Delete']}
         selectionKeyCode="Shift"
         multiSelectionKeyCode="Shift"
         panOnScroll={false}

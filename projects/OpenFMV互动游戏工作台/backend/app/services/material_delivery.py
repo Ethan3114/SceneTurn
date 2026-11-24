@@ -1,6 +1,7 @@
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.agent_models import AgentRun, AgentStep
+from app.db import json_array_items
 from app.models import Canvas
 from app.services.projects import payload_digest
 
@@ -63,12 +64,12 @@ def public_material_error(value):
 
 
 def material_generation_ids(session, project_id, owner_id):
-    receipt = func.json_each(AgentStep.tool_results_json).table_valued("value", joins_implicitly=True)
-    generation_id = func.json_extract(receipt.c.value, "$.result.generation.id")
+    receipt = json_array_items(session, AgentStep.tool_results_json, joins_implicitly=True)
+    generation_id = receipt.c.value["result"]["generation"]["id"].as_string()
     return set(session.scalars(select(generation_id).select_from(AgentStep).join(AgentRun, AgentRun.id == AgentStep.run_id)
         .where(AgentRun.project_id == project_id, AgentRun.owner_id == owner_id,
             AgentRun.limits_json["workspace"].as_string() == "materials",
-            func.json_extract(receipt.c.value, "$.tool") == "submit_generation", generation_id.is_not(None))))
+            receipt.c.value["tool"].as_string() == "submit_generation", generation_id.is_not(None))))
 
 
 def is_material_generation(value, generation_ids):

@@ -16,7 +16,6 @@
       "headlineFirst": "관객이 정하는",
       "headlineSecond": "다음 장면",
       "description": "인터랙티브 영상 제작 스튜디오. AI로 소재를 만들고 이야기를 여러 갈래로 구성해 관객이 직접 전개를 선택할 수 있는 작품을 공개하세요.",
-      "githubAccess": "GitHub 저장소를 보려면 접근 권한이 필요합니다.",
       "explore": "SceneTurn 자세히 보기",
       "artAlt": "《밀물의 끝》에 나오는 해안 방재 시설"
     },
@@ -158,13 +157,13 @@
     "saveFailed": "저장 실패",
     "language": "언어",
     "interfaceLanguage": "인터페이스 언어",
-    "languageDescription": "OpenFMV 인터페이스 언어를 선택합니다. 언어 설정은 로컬에 저장됩니다.",
+    "languageDescription": "SceneTurn 인터페이스 언어를 선택합니다. 언어 설정은 로컬에 저장됩니다.",
     "coreEngine": "코어 엔진",
     "localCli": "로컬 CLI",
     "availableCli": "사용 가능한 CLI",
     "missingCli": "누락된 CLI",
     "aiDescription": "로컬 CLI로 스토리, 분기, 샷 프롬프트를 생성합니다.",
-    "coreEngineDescription": "OpenFMV가 스토리, 분기, 샷 프롬프트를 생성할 때 사용할 로컬 CLI를 선택합니다. PATH를 스캔하고 버전을 읽고 각 CLI의 기본 모델을 저장합니다.",
+    "coreEngineDescription": "SceneTurn이 스토리, 분기, 샷 프롬프트를 생성할 때 사용할 로컬 CLI를 선택합니다. PATH를 스캔하고 버전을 읽고 각 CLI의 기본 모델을 저장합니다.",
     "rescan": "다시 스캔",
     "availableGroup": "사용 가능 ({count})",
     "missingGroup": "누락 ({count})",
@@ -185,7 +184,7 @@
     "autoSaved": "자동 저장됨",
     "saveLocalFailed": "로컬 프로젝트 저장 실패",
     "saveAsFailed": "다른 이름으로 저장 실패",
-    "desktopExportRequired": "Web 플레이 가능 패키지 내보내기는 OpenFMV 데스크톱 앱에서만 사용할 수 있습니다",
+    "desktopExportRequired": "Web 플레이 가능 패키지 내보내기는 SceneTurn 데스크톱 앱에서만 사용할 수 있습니다",
     "desktopExportRequiredDetail": "Web 플레이 가능 패키지 내보내기에는 데스크톱 파일 시스템 권한이 필요합니다. 웹 디버그 페이지에서는 로컬 에셋을 내보내기 폴더로 복사할 수 없습니다.",
     "exporting": "Web 패키지를 내보내는 중...",
     "exportComplete": "Web 플레이 가능 패키지 내보내기 완료",
@@ -319,7 +318,7 @@
       }
     },
     "loading": {
-      "start": "OpenFMV 편집기 시작 중...",
+      "start": "SceneTurn 편집기 시작 중...",
       "loadStoryEngine": "스토리 엔진 로드 중...",
       "organizeCanvas": "노드 캔버스 정리 중...",
       "calibrateConnections": "인터랙션 연결 보정 중...",
@@ -774,6 +773,7 @@
     "ko": "한국어"
   },
   "player": {
+    "dialogTitle": "인터랙티브 게임 플레이어",
     "loadingGame": "게임을 불러오는 중...",
     "projectUnavailable": "프로젝트를 찾을 수 없거나 비어 있습니다.",
     "exit": "나가기",
@@ -887,7 +887,7 @@
     }
   },
   "debug": {
-    "eyebrow": "OpenFMV AI 디버그",
+    "eyebrow": "SceneTurn AI 디버그",
     "title": "AI 디버그",
     "description": "로컬 AI CLI 경로, 버전, 탐지 출력을 확인합니다.",
     "platform": "플랫폼",

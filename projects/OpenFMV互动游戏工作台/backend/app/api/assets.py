@@ -1,17 +1,22 @@
-import copy
-import time
-
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import current_user, get_db
-from app.core.config import get_settings
+from app.api.deployment_dispatch import start_accepted_transfer
+from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.models import Asset, User
-from app.services.canvas_delivery import public_project_envelope
-from app.services.media import asset_view, resolve_asset_path, save_upload
-from app.services.projects import iso_timestamp, lock_write, project_envelope, record_project_version, require_project
+from app.services.asset_ingest import register_asset, uploaded_asset_view
+from app.services.cloudbase_assets import CloudBaseAssetRecord, CloudBaseAssetRepository
+from app.services.cloudbase_database import gateway_enabled
+from app.services.cloudbase_direct_uploads import CloudBaseDirectAssetUploads
+from app.services.direct_uploads import DirectUploadCreate, finish_upload, prepare_upload, require_upload, upload_result
+from app.services.media import resolve_asset_path, save_upload
+from app.services.object_storage import private_storage
+from app.services.projects import lock_write, require_project
+from app.services.transfer_rpc import TransferRpc
 
 
 router = APIRouter(tags=["assets"])
@@ -25,52 +30,92 @@ def owned_asset(session: Session, asset_id: str, owner_id: str) -> Asset:
     return asset
 
 
+def readable_asset(session: Session, settings: Settings, asset_id: str, owner_id: str) -> Asset | CloudBaseAssetRecord:
+    if gateway_enabled(settings):
+        return CloudBaseAssetRepository(settings).get(owner_id, asset_id)
+    return owned_asset(session, asset_id, owner_id)
+
+
 @router.post("/projects/{project_id}/assets", status_code=201)
 async def upload_asset(project_id: str, file: UploadFile = File(), user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    if gateway_enabled(settings):
+        repository = CloudBaseAssetRepository(settings)
+        await run_in_threadpool(repository.check_upload_target, user.id, project_id)
+        media = await save_upload(file, settings)
+        return await run_in_threadpool(repository.register, user.id, project_id, media)
     project = require_project(session, project_id, user.id)
-    media = await save_upload(file, get_settings())
+    media = await save_upload(file, settings)
     lock_write(session)
     session.refresh(project)
-    asset = Asset(owner_id=user.id, project_id=project_id, generation_id=None, name=media.name,
-                  relpath=media.relpath, poster_relpath=media.poster_relpath, mime_type=media.mime_type,
-                  bytes=media.bytes, sha256=media.sha256, duration_ms=media.duration_ms,
-                  width=media.width, height=media.height, metadata_json=media.metadata_json)
-    session.add(asset)
-    session.flush()
-    snapshot = copy.deepcopy(project.data_json)
-    asset_type = "text" if media.mime_type.startswith("text/") else media.mime_type.split("/", 1)[0]
-    snapshot["assets"].append({
-        "id": asset.id, "type": asset_type, "name": asset.name,
-        "path": f"/api/v1/assets/{asset.id}/content", "relativePath": f"assets/{asset.id}",
-        "importedAt": iso_timestamp(time.time()),
-        "metadata": {**media.metadata_json, "duration": (asset.duration_ms or 0) / 1000, "width": asset.width, "height": asset.height,
-                     "poster": f"/api/v1/assets/{asset.id}/poster" if asset.poster_relpath else None},
-    })
-    snapshot["updatedAt"] = iso_timestamp(time.time())
-    project.data_json = snapshot
-    project.revision += 1
-    project.updated_at = time.time()
-    record_project_version(session, project)
-    result = {"asset": asset_view(asset), **public_project_envelope(session, user.id, project_envelope(session, project))}
+    asset = register_asset(session, project, media)
+    result = uploaded_asset_view(session, project, asset)
     session.commit()
     return result
 
 
+@router.post("/projects/{project_id}/assets/direct-upload")
+def prepare_asset_upload(project_id: str, body: DirectUploadCreate, request: Request, response: Response,
+                         user: User = Depends(current_user), session: Session = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    settings = get_settings()
+    login_token = request.cookies["openfmv_session"]
+    if gateway_enabled(settings):
+        return CloudBaseDirectAssetUploads(settings).prepare(user.id, project_id, login_token, body)
+    return prepare_upload(session, settings, user.id, project_id, "asset_upload", login_token, body)
+
+
+@router.post("/projects/{project_id}/assets/direct-upload/{identifier}/complete", status_code=202)
+def complete_asset_upload(project_id: str, identifier: str, request: Request, tasks: BackgroundTasks,
+                          user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    login_token = request.cookies["openfmv_session"]
+    if gateway_enabled(settings):
+        dispatch = TransferRpc(settings)
+        result, marker = CloudBaseDirectAssetUploads(settings).complete(user.id, project_id, identifier, login_token, dispatch.publish_marker)
+        if marker is not None:
+            tasks.add_task(dispatch.run_transfer, marker, immediate=True)
+        return result
+    value = finish_upload(session, settings, identifier, user.id, project_id, "asset_upload", login_token)
+    start_accepted_transfer(request, tasks, value)
+    return upload_result(session, value)
+
+
+@router.get("/projects/{project_id}/assets/direct-upload/{identifier}")
+def asset_upload_status(project_id: str, identifier: str, response: Response,
+                        user: User = Depends(current_user), session: Session = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    settings = get_settings()
+    if gateway_enabled(settings):
+        return CloudBaseDirectAssetUploads(settings).status(user.id, project_id, identifier)
+    return upload_result(session, require_upload(session, identifier, user.id, project_id, "asset_upload"))
+
+
 @router.get("/assets/{asset_id}/content")
-def asset_content(asset_id: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    asset = owned_asset(session, asset_id, user.id)
+def asset_content(asset_id: str, request: Request, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    asset = readable_asset(session, settings, asset_id, user.id)
     media_type = asset.mime_type
     if media_type.startswith("text/"):
         media_type = f"{media_type}; charset={asset.metadata_json['encoding']}"
-    return FileResponse(resolve_asset_path(get_settings(), asset.relpath), media_type=media_type,
-                        filename=asset.name, content_disposition_type="inline",
-                        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+    headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+    storage = private_storage(settings)
+    if storage is not None:
+        return storage.response(asset.relpath, media_type=media_type, headers=headers,
+                                range_header=request.headers.get("range"), filename=asset.name)
+    return FileResponse(resolve_asset_path(settings, asset.relpath), media_type=media_type,
+                        filename=asset.name, content_disposition_type="inline", headers=headers)
 
 
 @router.get("/assets/{asset_id}/poster")
-def asset_poster(asset_id: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    asset = owned_asset(session, asset_id, user.id)
+def asset_poster(asset_id: str, request: Request, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    asset = readable_asset(session, settings, asset_id, user.id)
     if not asset.poster_relpath:
         raise AppError(404, "POSTER_NOT_FOUND", "该素材没有封面")
-    return FileResponse(resolve_asset_path(get_settings(), asset.poster_relpath), media_type="image/jpeg",
-                        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+    headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+    storage = private_storage(settings)
+    if storage is not None:
+        return storage.response(asset.poster_relpath, media_type="image/jpeg", headers=headers,
+                                range_header=request.headers.get("range"))
+    return FileResponse(resolve_asset_path(settings, asset.poster_relpath), media_type="image/jpeg", headers=headers)

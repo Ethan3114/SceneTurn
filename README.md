@@ -1,15 +1,12 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
-  <img src="assets/logo.png" alt="AI 产品开发工具包" width="180">
-</picture>
+<img src="projects/OpenFMV互动游戏工作台/frontend/public/sceneturn/icon.svg" alt="SceneTurn" width="88">
 
-# AI 产品从想法到上线 · 开发工具包
+# SceneTurn
 
-**不懂代码，也能做出并上线一个 AI 产品**
+**让观众决定下一幕**
 
-你只管想清楚要做什么；写代码、跑测试、做界面、部署上线，交给编码 AI。
+生成影像素材、编排剧情分支，制作观众可亲自选择的互动影片。[SceneTurn 项目指南](projects/OpenFMV互动游戏工作台/README.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 ![面向人群](https://img.shields.io/badge/面向-非技术产品经理-green.svg)

@@ -104,7 +104,7 @@ test('视频提示词与名称可编辑，删除取消保留内容，直接删�
   expect((await page.request.get(`/api/v1/assets/${asset.id}/content`)).status()).toBe(200);
 });
 
-test('删除待确认任务的来源与结果节点只移除画布内容，任务与冻结输入保留', async ({ page }) => {
+test('删除原卡片会移除待确认的结果占位，任务与冻结输入保留', async ({ page }) => {
   const id = await project(page, '删除节点后任务历史保留验证');
   let confirms = 0;
   page.on('request', (request) => { if (request.method() === 'POST' && /\/generations\/[^/]+\/confirm$/.test(new URL(request.url()).pathname)) confirms++; });
@@ -116,11 +116,16 @@ test('删除待确认任务的来源与结果节点只移除画布内容，任�
   await source.getByTestId('generation-quote').click(); const response = await quote; expect(response.status()).toBe(201); const task = (await response.json()).generation;
   expect(task.status).toBe('awaiting_confirmation'); expect(task.reservedCents).toBe(0); expect(task.remoteTaskId).toBeNull();
   await page.getByRole('button', { name: '返回编辑' }).click();
-  await page.getByTestId('canvas-fit-all').click(); await deleteFromNodeMenu(node(page, task.outputNodeId)); await save(page); await page.reload();
   await expect(node(page, task.outputNodeId)).toHaveCount(0); await expect(source).toHaveCount(1);
+  const projectNodes = async () => {
+    const payload = await (await page.request.get(`/api/v1/projects/${id}`)).json();
+    return payload.canvases.flatMap((canvas: { nodes: { id: string }[] }) => canvas.nodes).map((item: { id: string }) => item.id);
+  };
+  expect(await projectNodes()).toEqual(expect.arrayContaining([sourceId, task.outputNodeId]));
   const loadTask = async () => { const payload = await (await page.request.get(`/api/v1/projects/${id}/generations`)).json(); expect(payload.generations).toHaveLength(1); return payload.generations[0]; };
   expect((await loadTask()).input).toEqual(task.input);
   await deleteFromNodeMenu(source); await save(page); await page.reload();
   await expect(page.getByTestId('canvas-node')).toHaveCount(0);
+  expect(await projectNodes()).toHaveLength(0);
   const remaining = await loadTask(); expect(remaining.id).toBe(task.id); expect(remaining.input).toEqual(task.input); expect(remaining.status).toBe('awaiting_confirmation'); expect(remaining.reservedCents).toBe(0); expect(remaining.remoteTaskId).toBeNull(); expect(confirms).toBe(0);
 });

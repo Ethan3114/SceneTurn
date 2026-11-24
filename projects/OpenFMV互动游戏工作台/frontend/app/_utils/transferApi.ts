@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { api, operationId } from './cloudApi';
+import { directUpload } from './directUpload';
 
 const transferSchema = z.object({
   id: z.string(), kind: z.enum(['import', 'backup', 'game']), status: z.enum(['queued', 'processing', 'awaiting_confirmation', 'blocked', 'ready', 'failed']),
@@ -24,6 +25,8 @@ export async function prepareExport(projectId: string, revision: number, kind: '
   })).transfer;
 }
 export async function uploadProjectArchive(file: File, operation = operationId()) {
+  const staged = await directUpload(api, '/transfers/imports/direct-upload', file, () => operation);
+  if (staged) return z.object({ transfer: transferSchema }).parse(staged.result).transfer;
   const body = new FormData(); body.append('file', file); body.append('operationId', operation);
   return z.object({ transfer: transferSchema }).parse(await api('/transfers/imports', { method: 'POST', body })).transfer;
 }

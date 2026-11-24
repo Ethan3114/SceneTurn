@@ -1,9 +1,9 @@
-import { expect, it } from 'vitest';
+import { expect, inject, it } from 'vitest';
 
 import type { CanvasSnapshot, ProjectEnvelope } from '@/app/_utils/cloudApi';
-import { mergeCanvasSnapshots } from '@/app/_features/creation-canvas/merge-canvas';
+import { canMergeCanvasEdits, mergeCanvasSnapshots } from '@/app/_features/creation-canvas/merge-canvas';
 
-const origin = 'http://127.0.0.1:8310/api/v1';
+const origin = inject('isolatedApiOrigin');
 
 async function actualCanvas() {
   const registered = await fetch(`${origin}/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `canvas-merge-${crypto.randomUUID()}@example.com`, password: crypto.randomUUID() }) });
@@ -40,6 +40,7 @@ it('真实服务的新文字版本与本地视口调整同时保留，后续保�
   remote.nodes[1].metadata = { content: '另一页面通过正式接口保存的完整文字', status: 'success' };
   await actual.save(remote, actual.baseline.revision);
   const incoming = await actual.read();
+  expect(canMergeCanvasEdits(actual.baseline.canvas, local, incoming.canvas)).toBe(true);
   const merged = mergeCanvasSnapshots(actual.baseline.canvas, local, incoming.canvas);
   expect(merged.viewport).toEqual(local.viewport);
   expect(merged.nodes[1].metadata?.content).toBe(remote.nodes[1].metadata?.content);
@@ -57,6 +58,7 @@ it('真实HTTP返回期间新增的正文与节点移动保留，同时接收其
   local.nodes[1].position = { x: 512, y: 160 };
   await saving;
   const incoming = await actual.read();
+  expect(canMergeCanvasEdits(actual.baseline.canvas, local, incoming.canvas)).toBe(true);
   const merged = mergeCanvasSnapshots(actual.baseline.canvas, local, incoming.canvas);
   expect(merged.nodes[0].metadata?.content).toBe(local.nodes[0].metadata?.content);
   expect(merged.nodes[1].position).toEqual(local.nodes[1].position);
@@ -74,6 +76,7 @@ it('同一正文的并行修改保留本地输入，服务端新增节点仍然�
   remote.nodes.push({ id: crypto.randomUUID(), type: 'text', title: '新文字节点', position: { x: 800, y: 40 }, width: 300, height: 220, metadata: { content: '正式接口新增的内容' } });
   await actual.save(remote, actual.baseline.revision);
   const incoming = await actual.read();
+  expect(canMergeCanvasEdits(actual.baseline.canvas, local, incoming.canvas)).toBe(false);
   const merged = mergeCanvasSnapshots(actual.baseline.canvas, local, incoming.canvas);
   expect(merged.nodes).toHaveLength(3);
   expect(merged.nodes[0].metadata?.content).toBe(local.nodes[0].metadata?.content);
@@ -91,6 +94,7 @@ it('本地删除节点后过滤服务端指向该节点的新连接，正式保�
   await actual.save(remote, actual.baseline.revision);
   const incoming = await actual.read();
   expect(incoming.canvas.connections).toHaveLength(1);
+  expect(canMergeCanvasEdits(actual.baseline.canvas, local, incoming.canvas)).toBe(false);
   const merged = mergeCanvasSnapshots(actual.baseline.canvas, local, incoming.canvas);
   expect(merged.nodes.map((node) => node.id)).toEqual([actual.textId]);
   expect(merged.connections).toHaveLength(0);

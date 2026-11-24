@@ -7,9 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, get_db
 from app.core.config import get_settings
+from app.core.errors import AppError
 from app.models import Generation, User
 from app.schemas import ProjectEnvelope, WireModel
 from app.services.canvas_delivery import public_project_envelope
+from app.services.cloudbase_database import gateway_enabled
+from app.services.cloudbase_video import CloudBaseVideoRepository
 from app.services.generation import adopt_generation, confirm_generation, create_join_generation, generation_view, quote_generation, require_generation, resume_generation, retry_generation_quote
 from app.services.material_delivery import is_material_generation, material_generation_ids, material_video_artifacts, public_material_generation
 from app.services.projects import require_project
@@ -124,26 +127,36 @@ def visible_generation(session, generation, material_ids=None, artifacts=None):
     return public_material_generation(value, artifacts)
 
 
+def require_video_worker():
+    settings = get_settings()
+    if gateway_enabled(settings):
+        raise AppError(503, "VIDEO_WORKER_UNAVAILABLE", "线上视频生成服务暂不可用")
+    return settings
+
+
 @router.post("/projects/{project_id}/generations/quote", response_model=GenerationResult, status_code=201)
 def quote(project_id: str, body: GenerationQuote, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    generation = quote_generation(session, project_id, user.id, body.model_dump(by_alias=True), get_settings())
+    generation = quote_generation(session, project_id, user.id, body.model_dump(by_alias=True), require_video_worker())
     return {"generation": visible_generation(session, generation)}
 
 
 @router.post("/generations/{generation_id}/confirm", response_model=GenerationResult)
 def confirm(generation_id: str, body: GenerationConfirm, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    generation = confirm_generation(session, generation_id, user.id, body.confirmation_hash, body.expected_revision, get_settings())
+    generation = confirm_generation(session, generation_id, user.id, body.confirmation_hash, body.expected_revision, require_video_worker())
     return {"generation": visible_generation(session, generation)}
 
 
 @router.post("/projects/{project_id}/generations/join", response_model=GenerationResult, status_code=201)
 def join(project_id: str, body: GenerationJoin, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    generation = create_join_generation(session, project_id, user.id, body.model_dump(by_alias=True), get_settings())
+    generation = create_join_generation(session, project_id, user.id, body.model_dump(by_alias=True), require_video_worker())
     return {"generation": generation_view(generation)}
 
 
 @router.get("/projects/{project_id}/generations", response_model=GenerationList)
 def list_generations(project_id: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    if gateway_enabled(settings):
+        return {"generations": CloudBaseVideoRepository(settings).list(user.id, project_id)}
     require_project(session, project_id, user.id)
     generations = session.scalars(select(Generation).where(Generation.project_id == project_id, Generation.owner_id == user.id).order_by(Generation.created_at.desc())).all()
     material_ids = material_generation_ids(session, project_id, user.id)
@@ -154,20 +167,24 @@ def list_generations(project_id: str, user: User = Depends(current_user), sessio
 
 @router.get("/generations/{generation_id}", response_model=GenerationResult)
 def get_generation(generation_id: str, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    settings = get_settings()
+    if gateway_enabled(settings):
+        return {"generation": CloudBaseVideoRepository(settings).read(user.id, generation_id)}
     return {"generation": visible_generation(session, require_generation(session, generation_id, user.id))}
 
 
 @router.post("/generations/{generation_id}/resume", response_model=GenerationResult)
 def resume(generation_id: str, body: GenerationResume, user: User = Depends(current_user), session: Session = Depends(get_db)):
+    require_video_worker()
     return {"generation": visible_generation(session, resume_generation(session, generation_id, user.id))}
 
 
 @router.post("/generations/{generation_id}/retry-quote", response_model=GenerationResult)
 def retry_quote(generation_id: str, body: GenerationRetryQuote, user: User = Depends(current_user), session: Session = Depends(get_db)):
     return {"generation": visible_generation(session, retry_generation_quote(session, generation_id, user.id,
-        body.expected_revision, get_settings()))}
+        body.expected_revision, require_video_worker()))}
 
 
 @router.post("/generations/{generation_id}/adopt", response_model=ProjectEnvelope, response_model_exclude_unset=True)
 def adopt(generation_id: str, body: GenerationAdopt, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    return public_project_envelope(session, user.id, adopt_generation(session, generation_id, user.id, body.expected_revision, body.operation_id, get_settings()))
+    return public_project_envelope(session, user.id, adopt_generation(session, generation_id, user.id, body.expected_revision, body.operation_id, require_video_worker()))

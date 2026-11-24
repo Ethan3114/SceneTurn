@@ -8,7 +8,7 @@ import { createProjectFromList, enterManualStudio } from './manual-studio';
 const product = path.resolve('..');
 const manifest = z.object({ videos: z.array(z.object({ generationId: z.string(), assetId: z.string(), path: z.string(), sha256: z.string().length(64) }).strict()).length(3) }).strict();
 
-test('三段真实首尾帧成片通过受保护媒体接口在画布内播放', async ({ page }) => {
+test('三段真实首尾帧成片通过受保护媒体接口在画布内播放', async ({ page }, testInfo) => {
   test.setTimeout(120000);
   const inputs = manifest.parse(JSON.parse(await readFile(path.join(product, '.intermediate/media-sequence-smoke-20261116/browser-media.json'), 'utf8')));
   const errors: string[] = [];
@@ -28,7 +28,8 @@ test('三段真实首尾帧成片通过受保护媒体接口在画布内播放',
   for (const [index, input] of inputs.videos.entries()) {
     const file = path.resolve(product, input.path);
     if (!file.startsWith(path.join(product, 'data/media/'))) throw new Error('视频来源超出本产品媒体目录');
-    expect(createHash('sha256').update(await readFile(file)).digest('hex')).toBe(input.sha256);
+    const source = await readFile(file);
+    expect(createHash('sha256').update(source).digest('hex')).toBe(input.sha256);
     const pending = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/v1/projects/${projectId}/assets`);
     await page.getByTestId('canvas-import-file').setInputFiles(file);
     const uploaded = await pending;
@@ -49,7 +50,12 @@ test('三段真实首尾帧成片通过受保护媒体接口在画布内播放',
     expect(playback.width).toBe(asset.width);
     expect(playback.height).toBe(asset.height);
     expect(playback.error).toBeNull();
-    expect((await page.request.get(`/api/v1/assets/${asset.id}/content`)).status()).toBe(200);
+    const content = `/api/v1/assets/${asset.id}/content`;
+    expect((await page.request.get(content)).status()).toBe(200);
+    const partial = await page.request.get(content, { headers: { Range: 'bytes=0-15' } });
+    expect(partial.status()).toBe(206);
+    expect(partial.headers()['content-range']).toBe(`bytes 0-15/${source.length}`);
+    expect(await partial.body()).toEqual(source.subarray(0, 16));
     results.push({ generationId: input.generationId, sourceAssetId: input.assetId, uploadedAssetId: asset.id, sha256: input.sha256, playback });
   }
   await page.getByTestId('canvas-save').click();
@@ -57,8 +63,12 @@ test('三段真实首尾帧成片通过受保护媒体接口在画布内播放',
   await page.reload();
   await expect(page.locator('video[data-canvas-video]')).toHaveCount(3);
   expect(errors).toEqual([]);
-  const directory = path.join(product, 'docs/evidence/阶段2-3');
-  await mkdir(directory, { recursive: true });
-  await page.screenshot({ path: path.join(directory, '三段真实首尾帧视频播放-1440px.png') });
-  await writeFile(path.join(product, '.intermediate/media-sequence-smoke-20261116/browser-playback.json'), JSON.stringify({ verifiedAt: new Date().toISOString(), projectId, reloadVerified: true, results }, null, 2));
+  const captureEvidence = !process.env.OPENFMV_TEST_BASE_URL;
+  const evidence = process.env.OPENFMV_TEST_EVIDENCE_DIR ?? (captureEvidence ? path.join(product, 'docs/evidence/阶段2-3') : undefined);
+  if (evidence) {
+    await mkdir(evidence, { recursive: true });
+    await page.screenshot({ path: path.join(evidence, '三段真实首尾帧视频播放-1440px.png') });
+  }
+  const proofPath = captureEvidence ? path.join(product, '.intermediate/media-sequence-smoke-20261116/browser-playback.json') : testInfo.outputPath('browser-playback.json');
+  await writeFile(proofPath, JSON.stringify({ verifiedAt: new Date().toISOString(), projectId, reloadVerified: true, results }, null, 2));
 });

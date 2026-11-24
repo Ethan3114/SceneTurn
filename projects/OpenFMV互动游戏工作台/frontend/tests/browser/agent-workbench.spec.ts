@@ -35,7 +35,7 @@ async function realProfessionalText() {
   throw new Error('需要先运行真实Codex专业产物验证，取得完整产物与重启证明。');
 }
 
-test('画布内角色任务、停止恢复、项目记忆与三种宽度可持续保存', async ({ page }) => {
+test('画布内角色任务、停止恢复、项目记忆和窗口尺寸变化后可持续保存', async ({ page }, testInfo) => {
   test.setTimeout(120000);
   const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
   const id = await createProject(page);
@@ -76,8 +76,10 @@ test('画布内角色任务、停止恢复、项目记忆与三种宽度可持�
   await expect(page.getByTestId('agent-goal')).toHaveValue('下一次任务：在结尾加入钟声。');
   await expect(page.getByTestId('agent-status')).toHaveText('已停止');
   await expect(page.locator(`[data-testid="canvas-node"][data-node-id="${textId}"]`)).toContainText('角色林岚');
-  const directory = path.resolve('..', 'docs/evidence/阶段2-2'); await mkdir(directory, { recursive: true });
-  for (const width of [1440, 768, 390]) {
+  const stageEvidence = process.env.OPENFMV_TEST_EVIDENCE_DIR;
+  const directory = stageEvidence ?? (process.env.OPENFMV_TEST_BASE_URL ? testInfo.outputPath('证据') : path.resolve('..', 'docs/evidence/阶段2-2'));
+  await mkdir(directory, { recursive: true });
+  for (const width of stageEvidence ? [1280, 1440] : [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 }); await page.getByTestId('canvas-fit-all').click();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1); expect(overflow).toBe(false);
     await page.screenshot({ path: path.join(directory, `创作助手-${width}px.png`), fullPage: true });

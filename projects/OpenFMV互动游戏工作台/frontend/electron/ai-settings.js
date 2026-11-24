@@ -248,14 +248,14 @@ const formatChatAttachmentContext = (attachments) => {
 
 const buildChatPrompt = (messages) => {
   const conversation = messages.map((message) => `${message.role === 'user' ? '用户' : 'AI'}：${message.content}`).join('\n\n');
-  return `你是 OpenFMV 的聊天助手。请像正常聊天一样直接回复用户，不要修改文件，不要执行命令。\n\n${conversation}\n\nAI：`;
+  return `你是 SceneTurn 的聊天助手。请像正常聊天一样直接回复用户，不要修改文件，不要执行命令。\n\n${conversation}\n\nAI：`;
 };
 
 const buildSafeChatPrompt = (messages) => {
   const conversation = messages
     .map((message) => `${message.role === 'user' ? 'User' : 'AI'}: ${message.content}${formatChatAttachmentContext(message.attachments)}`)
     .join('\n\n');
-  return `You are the OpenFMV chat assistant. Reply directly like a normal chat assistant. Do not edit files or run commands.\n\n${conversation}\n\nAI:`;
+  return `You are the SceneTurn chat assistant. Reply directly like a normal chat assistant. Do not edit files or run commands.\n\n${conversation}\n\nAI:`;
 };
 
 const sendChatMessage = async (app, request) => {

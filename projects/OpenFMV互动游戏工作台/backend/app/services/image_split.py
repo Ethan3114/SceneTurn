@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.models import Asset, Canvas, new_id
+from app.services.durable_files import persist_file
 from app.services.media import resolve_asset_path
+from app.services.object_storage import private_storage
 from app.services.projects import get_operation, iso_timestamp, lock_write, project_envelope, record_project_version, require_project, require_revision, require_scene, save_operation
 
 
@@ -67,40 +69,57 @@ def split_image(session: Session, project_id: str, owner_id: str, payload: dict,
     overlaps = [node for node in current_nodes if node["type"] != "group" and node["position"]["x"] < area_right and node["position"]["x"] + node["width"] > anchor_x and node["position"]["y"] < area_bottom and node["position"]["y"] + node["height"] > anchor_y]
     if overlaps:
         anchor_y = max(node["position"]["y"] + node["height"] for node in current_nodes) + 64
-    for row in range(payload["rows"]):
-        for column in range(payload["columns"]):
-            crop_box = (x_cuts[column], y_cuts[row], x_cuts[column + 1], y_cuts[row + 1])
-            piece = image.crop(crop_box)
-            identifier = new_id()
-            destination = directory / f"{identifier}.png"
-            piece.save(destination, format="PNG")
-            destination.chmod(0o600)
-            with destination.open("rb") as stream:
-                sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
-            name = f"{Path(asset.name).stem} · {row + 1}-{column + 1}.png"
-            metadata = {"sourceAssetId": asset.id, "sourceNodeId": source["id"], "row": row, "column": column, "cropBox": list(crop_box)}
-            child = Asset(id=identifier, owner_id=owner_id, project_id=project_id, name=name, relpath=destination.relative_to(settings.data_dir).as_posix(), mime_type="image/png", bytes=destination.stat().st_size, sha256=sha256, duration_ms=0, width=piece.width, height=piece.height, metadata_json=metadata)
-            session.add(child)
-            node_id = new_id()
-            url = f"/api/v1/assets/{identifier}/content"
-            data["nodes"].append({
-                "id": node_id, "type": "image", "title": name,
-                "position": {"x": anchor_x + column * (tile_width + 32), "y": anchor_y + row * (tile_height + 64)},
-                "width": tile_width, "height": tile_height,
-                "metadata": {"content": url, "storageKey": identifier, "status": "success", "naturalWidth": piece.width, "naturalHeight": piece.height, "mimeType": "image/png", "bytes": child.bytes},
-            })
-            data["connections"].append({"id": new_id(), "fromNodeId": source["id"], "toNodeId": node_id})
-            snapshot["assets"].append({"id": identifier, "type": "image", "name": name, "path": url, "relativePath": f"assets/{identifier}", "importedAt": timestamp, "metadata": {**metadata, "width": piece.width, "height": piece.height, "size": child.bytes, "mimeType": "image/png"}})
-            pieces.append({"nodeId": node_id, "assetId": identifier, "row": row, "column": column})
-    canvas.data_json = data
-    canvas.updated_at = time.time()
-    snapshot["updatedAt"] = timestamp
-    project.data_json = snapshot
-    project.revision += 1
-    project.updated_at = time.time()
-    record_project_version(session, project)
-    result = {**project_envelope(session, project), "pieces": pieces}
-    save_operation(session, owner_id, project_id, payload["operationId"], "image.split", payload, result)
-    if manage_transaction:
-        session.commit()
+    created_files = []
+    stored_keys = []
+    finished = False
+    try:
+        for row in range(payload["rows"]):
+            for column in range(payload["columns"]):
+                crop_box = (x_cuts[column], y_cuts[row], x_cuts[column + 1], y_cuts[row + 1])
+                piece = image.crop(crop_box)
+                identifier = new_id()
+                destination = directory / f"{identifier}.png"
+                created_files.append(destination)
+                piece.save(destination, format="PNG")
+                destination.chmod(0o600)
+                with destination.open("rb") as stream:
+                    sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+                key = destination.relative_to(settings.data_dir).as_posix()
+                persist_file(settings, destination, "image/png")
+                stored_keys.append(key)
+                name = f"{Path(asset.name).stem} · {row + 1}-{column + 1}.png"
+                metadata = {"sourceAssetId": asset.id, "sourceNodeId": source["id"], "row": row, "column": column, "cropBox": list(crop_box)}
+                child = Asset(id=identifier, owner_id=owner_id, project_id=project_id, name=name, relpath=key, mime_type="image/png", bytes=destination.stat().st_size, sha256=sha256, duration_ms=0, width=piece.width, height=piece.height, metadata_json=metadata)
+                session.add(child)
+                node_id = new_id()
+                url = f"/api/v1/assets/{identifier}/content"
+                data["nodes"].append({
+                    "id": node_id, "type": "image", "title": name,
+                    "position": {"x": anchor_x + column * (tile_width + 32), "y": anchor_y + row * (tile_height + 64)},
+                    "width": tile_width, "height": tile_height,
+                    "metadata": {"content": url, "storageKey": identifier, "status": "success", "naturalWidth": piece.width, "naturalHeight": piece.height, "mimeType": "image/png", "bytes": child.bytes},
+                })
+                data["connections"].append({"id": new_id(), "fromNodeId": source["id"], "toNodeId": node_id})
+                snapshot["assets"].append({"id": identifier, "type": "image", "name": name, "path": url, "relativePath": f"assets/{identifier}", "importedAt": timestamp, "metadata": {**metadata, "width": piece.width, "height": piece.height, "size": child.bytes, "mimeType": "image/png"}})
+                pieces.append({"nodeId": node_id, "assetId": identifier, "row": row, "column": column})
+        canvas.data_json = data
+        canvas.updated_at = time.time()
+        snapshot["updatedAt"] = timestamp
+        project.data_json = snapshot
+        project.revision += 1
+        project.updated_at = time.time()
+        record_project_version(session, project)
+        result = {**project_envelope(session, project), "pieces": pieces}
+        save_operation(session, owner_id, project_id, payload["operationId"], "image.split", payload, result)
+        finished = True
+        if manage_transaction:
+            session.commit()
+    finally:
+        if not finished:
+            for path in created_files:
+                path.unlink(missing_ok=True)
+            storage = private_storage(settings)
+            if storage is not None:
+                for key in stored_keys:
+                    storage.delete(key)
     return result

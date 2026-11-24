@@ -28,6 +28,9 @@ def new_token() -> str:
 
 
 def initialize_secret_store(settings: Settings) -> None:
+    if settings.master_key is not None:
+        Fernet(read_master_key(settings))
+        return
     directory = settings.data_dir.resolve() / "secrets"
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     key_path = directory / "master.key"
@@ -38,14 +41,18 @@ def initialize_secret_store(settings: Settings) -> None:
             stream.flush()
             os.fsync(stream.fileno())
     os.chmod(key_path, 0o600)
-    Fernet(key_path.read_bytes())
+    Fernet(read_master_key(settings))
+
+
+def read_master_key(settings: Settings) -> bytes:
+    if settings.master_key is not None:
+        return settings.master_key.get_secret_value().encode()
+    return (settings.data_dir.resolve() / "secrets" / "master.key").read_bytes()
 
 
 def encode_secret(value: str, settings: Settings) -> str:
-    key = (settings.data_dir.resolve() / "secrets" / "master.key").read_bytes()
-    return Fernet(key).encrypt(value.encode()).decode()
+    return Fernet(read_master_key(settings)).encrypt(value.encode()).decode()
 
 
 def decode_secret(value: str, settings: Settings) -> str:
-    key = (settings.data_dir.resolve() / "secrets" / "master.key").read_bytes()
-    return Fernet(key).decrypt(value.encode()).decode()
+    return Fernet(read_master_key(settings)).decrypt(value.encode()).decode()

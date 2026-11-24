@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import type { ProjectEnvelope } from '../../app/_utils/cloudApi';
 import { createProjectFromList } from './manual-studio';
 
 test('项目工作台遵循桌面稿的空状态、建立项目、封面、账户及导入流程', async ({ page }, testInfo) => {
@@ -69,5 +70,40 @@ test('项目工作台遵循桌面稿的空状态、建立项目、封面、账�
   await expect(page.getByRole('heading', { name: '导入前会检查' })).toBeVisible();
   await expect(page.getByTestId('project-import-file')).toHaveAttribute('accept', '.zip,application/zip');
   await page.getByRole('link', { name: '返回项目' }).click();
+  await expect(item).toBeVisible();
+});
+
+test('已归档项目可以重新打开并移回项目列表', async ({ page }) => {
+  await page.goto('/zh-CN/account');
+  await page.getByTestId('auth-mode-register').click();
+  await page.getByTestId('auth-email').fill(`project-workspace-${crypto.randomUUID()}@example.com`);
+  await page.getByTestId('auth-password').fill(crypto.randomUUID());
+  await page.getByTestId('auth-submit').click();
+  await expect(page).toHaveURL(/\/projects$/);
+  const headers = { Origin: new URL(page.url()).origin };
+  const create = async (title: string) => {
+    const response = await page.request.post('/api/v1/projects', { headers, data: { title } });
+    expect(response.status()).toBe(201);
+    return await response.json() as ProjectEnvelope;
+  };
+  const active = await create('当前创作');
+  const { project, revision } = await create('素材验证');
+  const archived = await page.request.put(`/api/v1/projects/${project.id}`, {
+    headers,
+    data: { expectedRevision: revision, operationId: crypto.randomUUID(), project: { ...project, metadata: { ...project.metadata, archivedAt: '2026-11-23T08:00:00Z' } } },
+  });
+  expect(archived.status()).toBe(200);
+
+  await page.reload();
+  const featured = page.getByTestId('project-feature');
+  const item = page.getByTestId('project-item').filter({ hasText: project.title });
+  await expect(featured).toContainText(active.project.title);
+  await expect(item).toBeHidden();
+  await page.getByText('已归档项目（1）', { exact: true }).click();
+  await expect(item.getByRole('link', { name: '打开项目' })).toHaveAttribute('href', `/zh-CN/editor?id=${project.id}`);
+  await item.getByRole('button', { name: '移回项目列表' }).click();
+  await expect(page.getByText('已归档项目（1）', { exact: true })).toHaveCount(0);
+  await expect(item).toBeVisible();
+  await page.reload();
   await expect(item).toBeVisible();
 });

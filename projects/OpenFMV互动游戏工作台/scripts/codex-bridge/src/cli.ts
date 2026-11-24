@@ -27,7 +27,7 @@ async function interactivePairing(): Promise<z.infer<typeof pairingRequestSchema
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ options: { "request-file": { type: "string" }, once: { type: "boolean", default: false }, run: { type: "boolean", default: false }, help: { type: "boolean", short: "h", default: false } }, allowPositionals: true });
   if (values.help) {
-    console.log("OpenFMV本人Codex连接\n\n双击产品目录中的连接Codex.command，按提示完成配对并保持连接。\n\npair [--run]：交互式输入服务地址、配对ID和隐藏配对码；--run在配对后持续连接。\npair --request-file <0600文件>：使用本机受限文件配对。\nrun [--once]：使用已保存的连接，--once处理一项任务后退出。\nprobe：核对本机Codex协议，不启动模型回合。");
+    console.log("SceneTurn 本机 Codex 连接\n\n双击产品目录中的连接Codex.command，按提示完成配对并保持连接。\n\npair [--run]：交互式输入服务地址、配对ID和隐藏配对码；--run在配对后持续连接。\npair --request-file <0600文件>：使用本机受限文件配对。\nrun [--once]：使用已保存的连接，--once处理一项任务后退出。\nprobe：核对本机Codex协议，不启动模型回合。");
     return;
   }
   const command = positionals[0];

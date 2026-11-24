@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.connection_models import CodexConnection, CodexConnectionEvent, CodexPairing
 from app.core.config import get_settings
 from app.core.errors import AppError
-from app.core.security import new_token, token_hash
+from app.core.security import new_token, read_master_key, token_hash
 from app.models import User
 from app.services.projects import get_operation, iso_timestamp, lock_write, require_project, save_operation
 
@@ -19,7 +19,7 @@ ONLINE_WINDOW_SECONDS = 30
 
 
 def pairing_code(identifier: str) -> str:
-    key = (get_settings().data_dir.resolve() / "secrets" / "master.key").read_bytes()
+    key = read_master_key(get_settings())
     digest = hmac.digest(key, f"openfmv-codex-pairing:{identifier}".encode(), hashlib.sha256)
     return base64.urlsafe_b64encode(digest).decode().rstrip("=")
 

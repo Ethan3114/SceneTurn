@@ -93,6 +93,28 @@
   white-space: nowrap;
 }
 
+.fmv-inline-result-versions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  color: var(--fmv-node-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fmv-inline-result-versions button {
+  display: grid;
+  min-width: 20px;
+  height: 24px;
+  place-items: center;
+  cursor: pointer;
+}
+
+.fmv-inline-result-versions button:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
 .fmv-node-card-menu {
   position: relative;
   flex: none;

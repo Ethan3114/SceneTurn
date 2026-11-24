@@ -1,8 +1,9 @@
 from collections import defaultdict
 
-from sqlalchemy import func, or_, select, true
+from sqlalchemy import or_, select, true
 
 from app.agent_models import AgentRun, AgentStep
+from app.db import json_array_items
 from app.services.material_delivery import writer_body
 
 
@@ -40,9 +41,9 @@ def material_canvas_ids(session, project_id, owner_id, scene_id=None):
     by_scene = defaultdict(set)
     for scene, identifiers in session.execute(select(AgentRun.scene_id, AgentRun.created_ids_json).where(*scope)):
         by_scene[scene].update(identifiers)
-    receipt = func.json_each(AgentStep.tool_results_json).table_valued("value")
-    source = func.json_extract(receipt.c.value, "$.result.sourceNodeId")
-    operation = func.json_extract(receipt.c.value, "$.tool")
+    receipt = json_array_items(session, AgentStep.tool_results_json)
+    source = receipt.c.value["result"]["sourceNodeId"].as_string()
+    operation = receipt.c.value["tool"].as_string()
     written = select(AgentRun.scene_id, source).select_from(AgentRun).join(AgentStep, AgentStep.run_id == AgentRun.id).join(receipt, true())
     for scene, identifier in session.execute(written.where(*scope, operation.in_(("write_artifact", "patch_artifact")), source.is_not(None))):
         by_scene[scene].add(identifier)

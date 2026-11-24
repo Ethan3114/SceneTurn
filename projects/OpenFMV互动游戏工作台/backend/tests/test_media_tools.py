@@ -428,6 +428,36 @@ def test_join_real_worker_preserves_order_duration_audio_and_restart(media_servi
         assert budget(media_service) == previous_budget
 
 
+def test_join_reads_a_generated_video_from_its_source_card(media_service, joining_media):
+    client, _ = registered_client(media_service)
+    with closing(client):
+        envelope, assets = join_setup(client, joining_media)
+        response = perform_join(client, envelope, join_request(envelope))
+        assert response.status_code == 201, response.text
+        media_service.stop()
+        media_service.start(worker_enabled=True)
+        previous = wait_ready(client, response.json()["generation"]["id"])
+        nodes = [
+            node("clip-0", "video", "已导入片段", storageKey=assets[0]["id"]),
+            node("join-source", "config", "成片卡片", generationMode="video", dramaTask="join", outputNodeId="join-output"),
+            node("join-output", "video", "已生成成片"),
+            node("next-source", "config", "后续拼接", generationMode="video", dramaTask="join"),
+            node("next-output", "video", "后续成片"),
+        ]
+        edges = [
+            connection("join-source", "join-output"), connection("join-source", "next-source"),
+            connection("clip-0", "next-source"), connection("next-source", "next-output"),
+        ]
+        saved = save_canvas(client, envelope, nodes, edges)
+        result = perform_join(client, saved, join_request(saved, sourceNodeId="next-source", outputNodeId="next-output"))
+        assert result.status_code == 201, result.text
+        generation = result.json()["generation"]
+        assert [(item["nodeId"], item["assetId"]) for item in generation["input"]["inputs"]] == [
+            ("join-source", previous["assetId"]), ("clip-0", assets[0]["id"]),
+        ]
+        zero_cost(wait_ready(client, generation["id"]))
+
+
 def test_join_parallel_repeated_requests_and_worker_lease_use_one_result(media_service, joining_media):
     client, _ = registered_client(media_service)
     with closing(client):

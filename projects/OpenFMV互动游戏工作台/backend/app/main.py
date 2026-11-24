@@ -1,10 +1,6 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
-
-from alembic import command
-from alembic.config import Config
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,17 +9,18 @@ from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException
 
 from app.api import accounts, agents, assets, connections, context, conversations, generations, materials, media_tools, payments, projects, text_generations, settings as provider_settings
-from app.api import canvas_images, codex_images, media_candidates, providers, publications, transfers
+from app.api import canvas_images, codex_images, deployment_dispatch, media_candidates, providers, publications, transfers
 from app.core.config import get_settings
 from app.core.errors import AppError
+from app.core.proxy import resolve_client_ip
 from app.core.security import initialize_secret_store
-from app.db import SessionLocal
-from app.models import Budget
+from app.db import SessionLocal, initialize_database
+from app.services.cloudbase_database import gateway_enabled
 from app.services.generation import worker_loop
 from app.services.text_generation import text_worker_loop
 from app.services.agent import agent_worker_loop
 from app.services.image_queue import image_worker_done, image_worker_loop, require_image_worker, wait_image_worker
-from app.services.transfer_worker import transfer_worker_loop
+from app.services.transfer_worker import HostedTransferWorker, transfer_worker_loop
 
 
 logger = logging.getLogger("openfmv")
@@ -33,22 +30,22 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_secret_store(settings)
-    configuration = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    command.upgrade(configuration, "head")
-    (settings.data_dir.resolve() / "openfmv.sqlite3").chmod(0o600)
-    with SessionLocal() as session:
-        if session.get(Budget, "global") is None:
-            session.add(Budget(id="global", limit_cents=settings.budget_cents, spent_cents=0, reserved_cents=0))
-            session.commit()
+    initialize_database()
     stop_event = asyncio.Event()
     worker = asyncio.create_task(worker_loop(settings, SessionLocal, stop_event)) if settings.worker_enabled else None
-    text_worker = asyncio.create_task(text_worker_loop(settings, SessionLocal, stop_event)) if settings.worker_enabled else None
+    text_worker = asyncio.create_task(text_worker_loop(settings, SessionLocal, stop_event)) if (
+        settings.worker_enabled and not gateway_enabled(settings)
+    ) else None
     agent_worker = asyncio.create_task(agent_worker_loop(settings, SessionLocal, stop_event)) if settings.worker_enabled else None
     image_worker = asyncio.create_task(image_worker_loop(settings, SessionLocal, stop_event)) if settings.worker_enabled else None
     _app.state.image_worker = image_worker
     if image_worker is not None:
         image_worker.add_done_callback(image_worker_done)
-    transfer_worker = asyncio.create_task(transfer_worker_loop(settings, SessionLocal, stop_event)) if settings.worker_enabled else None
+    hosted_transfers = settings.transfer_queue_bucket is not None
+    _app.state.hosted_transfer_worker = HostedTransferWorker(settings, SessionLocal) if hosted_transfers else None
+    transfer_worker = asyncio.create_task(transfer_worker_loop(settings, SessionLocal, stop_event)) if (
+        settings.worker_enabled and not hosted_transfers
+    ) else None
     yield
     stop_event.set()
     if worker is not None:
@@ -63,13 +60,14 @@ async def lifespan(_app: FastAPI):
         await transfer_worker
 
 
-app = FastAPI(title="OpenFMV 工作台 API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="SceneTurn API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], allow_credentials=True,
                    allow_methods=["GET", "POST", "PUT"], allow_headers=["Content-Type", "Range"])
 
 
 @app.middleware("http")
 async def protect_origin(request: Request, call_next):
+    request.state.client_ip = resolve_client_ip(request, settings)
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         origin = request.headers.get("origin")
         allowed = {settings.frontend_origin, str(request.base_url).rstrip("/")}
@@ -119,3 +117,4 @@ app.include_router(publications.router, prefix="/api/v1")
 app.include_router(providers.router, prefix="/api/v1")
 app.include_router(codex_images.router, prefix="/api/v1")
 app.include_router(canvas_images.router, prefix="/api/v1")
+app.include_router(deployment_dispatch.router)

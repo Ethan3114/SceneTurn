@@ -30,6 +30,7 @@ export interface OpenFMVProject {
     projectDirectory?: string;
     projectPath?: string;
     serverRevision?: number;
+    archivedAt?: string;
   };
   createdAt: string;
   updatedAt: string;

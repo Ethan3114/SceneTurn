@@ -18,6 +18,7 @@ from app.image_models import ImageJob
 from app.models import Asset
 from app.services.connections import ONLINE_WINDOW_SECONDS, assert_connection_active
 from app.services.canvas_images import bind_output
+from app.services.durable_files import persist_file
 from app.services.image_queue import shared_image_request_busy, uses_codex_image
 from app.services.material_references import validate_reference_assets
 from app.services.media import StoredMedia, asset_view, resolve_asset_path
@@ -334,6 +335,13 @@ def prepare_result_media(job: CodexImageJob, metadata: dict, media: StoredMedia,
             except OSError:
                 destination.unlink(missing_ok=True)
                 raise
+    persisted = False
+    try:
+        persist_file(settings, destination, "image/png")
+        persisted = True
+    finally:
+        if not persisted:
+            destination.unlink(missing_ok=True)
     return StoredMedia(name=media.name, relpath=destination.relative_to(settings.data_dir).as_posix(), poster_relpath="",
         mime_type="image/png", bytes=written, sha256=digest, duration_ms=0, width=size[0], height=size[1])
 

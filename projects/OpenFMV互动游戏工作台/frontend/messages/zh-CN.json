@@ -16,7 +16,6 @@
       "headlineFirst": "让观众决定",
       "headlineSecond": "下一幕",
       "description": "互动影片创作台。用 AI 生成素材，编排剧情分支，发布观众可以亲自选择的作品。",
-      "githubAccess": "GitHub 目前需要仓库访问权限。",
       "explore": "向下了解产品",
       "artAlt": "《潮汐尽头》中的海防站"
     },
@@ -158,13 +157,13 @@
     "saveFailed": "保存失败",
     "language": "语言",
     "interfaceLanguage": "界面语言",
-    "languageDescription": "选择 OpenFMV 的界面语言。语言偏好会保存在本地。",
+    "languageDescription": "选择 SceneTurn 的界面语言。语言偏好会保存在本地。",
     "coreEngine": "核心引擎",
     "localCli": "本地 CLI",
     "availableCli": "可用 CLI",
     "missingCli": "缺失 CLI",
     "aiDescription": "本地 CLI 用于生成故事、分支和镜头提示词。",
-    "coreEngineDescription": "选择 OpenFMV 用于生成故事、分支和镜头提示词的本地 CLI。这里会扫描 PATH、读取版本，并保存每个 CLI 的默认模型。",
+    "coreEngineDescription": "选择 SceneTurn 用于生成故事、分支和镜头提示词的本地 CLI。这里会扫描 PATH、读取版本，并保存每个 CLI 的默认模型。",
     "rescan": "重新扫描",
     "availableGroup": "可用 ({count})",
     "missingGroup": "缺失 ({count})",
@@ -185,7 +184,7 @@
     "autoSaved": "已自动保存",
     "saveLocalFailed": "保存本地项目失败",
     "saveAsFailed": "另存本地项目失败",
-    "desktopExportRequired": "导出 Web 可玩包需要在 OpenFMV 桌面端中使用",
+    "desktopExportRequired": "导出 Web 可玩包需要在 SceneTurn 桌面端中使用",
     "desktopExportRequiredDetail": "导出 Web 可玩包需要桌面端文件系统权限。Web 调试页不能把本地素材复制到导出目录。",
     "exporting": "正在导出 Web 包...",
     "exportComplete": "Web 可玩包导出完成",
@@ -319,7 +318,7 @@
       }
     },
     "loading": {
-      "start": "启动 OpenFMV 编辑器...",
+      "start": "启动 SceneTurn 编辑器...",
       "loadStoryEngine": "装载剧情引擎...",
       "organizeCanvas": "整理节点画布...",
       "calibrateConnections": "校准交互连线...",
@@ -774,6 +773,7 @@
     "ko": "한국어"
   },
   "player": {
+    "dialogTitle": "互动游戏播放器",
     "loadingGame": "正在加载游戏...",
     "projectUnavailable": "项目不存在或为空。",
     "exit": "退出",
@@ -887,7 +887,7 @@
     }
   },
   "debug": {
-    "eyebrow": "OpenFMV AI 调试",
+    "eyebrow": "SceneTurn AI 调试",
     "title": "AI 调试",
     "description": "检查本地 AI CLI 的路径、版本和探测输出。",
     "platform": "平台",

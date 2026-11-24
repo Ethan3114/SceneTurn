@@ -163,14 +163,29 @@ def run_view(session: Session, run: AgentRun, settings: Settings | None = None) 
     calls = session.scalars(select(AgentCall).where(AgentCall.run_id == run.id).order_by(AgentCall.created_at)).all()
     reservations = session.scalars(select(BudgetReservation).where(BudgetReservation.id.in_([call.id for call in calls]))).all() if calls else []
     project = require_project(session, run.project_id, run.owner_id)
+    retryable = _retryable_unknown_call(session, run, project.revision)
+    can_resume = (_recoverable_native_batch(session, run, project.revision) is not None
+        or _recoverable_plain_read(session, run, project) is not None
+        or _recoverable_native_format(session, run, project.revision) is not None
+        or _recoverable_scope_read(session, run, project.revision) is not None
+        or _recoverable_material_revision(session, run, project.revision, settings) is not None
+        or _recoverable_image_prompt_selection(session, run, project.revision) is not None
+        or _recoverable_material_json_format(session, run, project.revision) is not None
+        or _recoverable_structured_scene_closure(session, run, project.revision, calls) is not None)
+    return render_run_view(run, plan, steps, calls, reservations, project.revision, can_resume=can_resume,
+        can_extend_limit=_material_limit_extension_available(session, run, project.revision, calls),
+        retryable_unknown_call_id=retryable.id if retryable is not None else None)
+
+
+def render_run_view(run, plan, steps, calls, reservations, revision, *, can_resume=False, can_extend_limit=False,
+                    retryable_unknown_call_id=None) -> dict:
     unknown = (run.executor == "codex" and not calls) or any(call.total_tokens is None for call in calls)
     cost_unknown = run.executor == "codex" or any(call.cost_micros is None for call in calls)
-    retryable = _retryable_unknown_call(session, run, project.revision)
     return {
         "id": run.id, "projectId": run.project_id, "sceneId": run.scene_id, "branchId": run.branch_id,
         "controllerNodeId": run.controller_node_id, "role": run.role, "executor": run.executor, "goal": run.goal,
         "status": run.status, "projectRevision": run.project_revision, "initialRevision": run.initial_revision,
-        "currentRevision": project.revision, "targetIds": run.target_ids_json, "createdNodeIds": run.created_ids_json,
+        "currentRevision": revision, "targetIds": run.target_ids_json, "createdNodeIds": run.created_ids_json,
         "limits": {key: run.limits_json[key] for key in ("maxSteps", "maxTokens", "maxCostMicros")},
         "deliveryMode": run.limits_json.get("deliveryMode"), "artifactContractVersion": run.limits_json.get("artifactContractVersion"),
         "workspace": run.limits_json.get("workspace"),
@@ -178,9 +193,7 @@ def run_view(session: Session, run: AgentRun, settings: Settings | None = None) 
         "plan": plan, "result": _public_run_result(run.result_json),
         "stopRequested": bool(run.stop_requested), "threadId": run.thread_id, "turnId": run.turn_id,
         "error": {"code": run.error_code, "message": run.error_message} if run.error_code else None,
-        "canResume": _recoverable_native_batch(session, run, project.revision) is not None or _recoverable_plain_read(session, run, project) is not None or _recoverable_native_format(session, run, project.revision) is not None or _recoverable_scope_read(session, run, project.revision) is not None or _recoverable_material_revision(session, run, project.revision, settings) is not None or _recoverable_image_prompt_selection(session, run, project.revision) is not None or _recoverable_material_json_format(session, run, project.revision) is not None or _recoverable_structured_scene_closure(session, run, project.revision, calls) is not None,
-        "canExtendLimit": _material_limit_extension_available(session, run, project.revision, calls),
-        "retryableUnknownCallId": retryable.id if retryable is not None else None,
+        "canResume": can_resume, "canExtendLimit": can_extend_limit, "retryableUnknownCallId": retryable_unknown_call_id,
         "steps": [{"id": step.id, "index": step.index, "role": step.role, "title": step.title,
                    "instruction": step.instruction, "kind": plan[step.index].get("kind", "produce"),
                    "dependsOn": plan[step.index].get("dependsOn", []), "status": step.status, "result": step.result_json,

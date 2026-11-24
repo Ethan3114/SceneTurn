@@ -109,7 +109,7 @@ export class CodexProtocol extends EventEmitter {
   }
 
   async initialize(): Promise<unknown> {
-    const result = await this.request("initialize", { clientInfo: { name: "openfmv_codex_bridge", title: "OpenFMV本机连接", version: "0.1.0" }, capabilities: { experimentalApi: true } });
+    const result = await this.request("initialize", { clientInfo: { name: "openfmv_codex_bridge", title: "SceneTurn 本机连接", version: "0.1.0" }, capabilities: { experimentalApi: true } });
     this.process.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
     return result;
   }

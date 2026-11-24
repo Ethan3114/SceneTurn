@@ -127,7 +127,7 @@ def configurations(web_root: Path) -> dict[str, dict]:
         }
     result["api"].update(
         ProgramArguments=[str(python), "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
-                          "--port", str(API.port), "--no-access-log"],
+                          "--port", str(API.port), "--no-proxy-headers", "--no-access-log"],
         WorkingDirectory=str(PRODUCT_ROOT / "backend"),
     )
     result["api"]["EnvironmentVariables"].update(

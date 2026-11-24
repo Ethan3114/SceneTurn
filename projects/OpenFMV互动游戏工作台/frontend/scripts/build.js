@@ -53,7 +53,7 @@ const assertNoDevServer = () => {
     return;
   }
 
-  console.error(`Refusing to run Next build while the OpenFMV dev server is running (pid ${lock.pid}).`);
+  console.error(`Refusing to run Next build while the SceneTurn dev server is running (pid ${lock.pid}).`);
   console.error('Stop npm run dev first; dev and build share .next and running both can break CSS/JS chunks.');
   process.exit(1);
 };

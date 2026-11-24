@@ -1,6 +1,6 @@
 appId: com.openfmv.openfmv
-productName: OpenFMV
-copyright: Copyright (c) 2026 OpenFMV
+productName: SceneTurn
+copyright: Copyright (c) 2026 SceneTurn
 
 directories:
   output: dist
@@ -51,10 +51,10 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: OpenFMV
+  shortcutName: SceneTurn
   differentialPackage: true
 
 publish:
   provider: github
-  owner: Comedian1926
-  repo: OpenFMV
+  owner: Ethan3114
+  repo: SceneTurn

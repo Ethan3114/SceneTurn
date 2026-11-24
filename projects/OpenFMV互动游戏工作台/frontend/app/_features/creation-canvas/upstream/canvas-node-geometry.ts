@@ -1,4 +1,5 @@
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ViewportTransform } from "./canvas";
+import { canvasGeneratorOutputKind } from './canvas-generation-outputs';
 
 export function nodeBounds(nodes: CanvasNodeData[]) {
     return nodes.reduce(
@@ -142,7 +143,7 @@ export function normalizeConnection(firstNodeId: string, secondNodeId: string, n
     const from = nodes.find((node) => node.id === (firstHandleType === "source" ? firstNodeId : secondNodeId));
     const to = nodes.find((node) => node.id === (firstHandleType === "source" ? secondNodeId : firstNodeId));
     if (!from || !to || from.id === to.id || to.type === CanvasNodeType.Group) return null;
-    if (from.type === CanvasNodeType.Config && from.metadata?.generationMode !== "image") return null;
+    if (from.type === CanvasNodeType.Config && !canvasGeneratorOutputKind(from)) return null;
     return { fromNodeId: from.id, toNodeId: to.id };
 }
 

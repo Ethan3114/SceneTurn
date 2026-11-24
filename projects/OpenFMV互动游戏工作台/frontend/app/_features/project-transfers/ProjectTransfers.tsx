@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { Check, FolderOpen, Upload } from 'lucide-react';
 import { getLocalizedPath } from '@/app/_utils/localePaths';
 import { useProjectSessionStore } from '@/app/_features/project-session/store';
 import { operationId } from '@/app/_utils/cloudApi';
+import { useTaskPolling } from '@/app/_hooks/useTaskPolling';
 import { confirmTransfer, listTransfers, prepareExport, retryTransfer, uploadProjectArchive, type ProjectTransfer } from '@/app/_utils/transferApi';
 import PublicationControls from './PublicationControls';
 import './transfers.css';
@@ -18,26 +19,34 @@ export default function ProjectTransfers({ projectId, onImported, appearance }: 
   const [jobs, setJobs] = useState<ProjectTransfer[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const reads = useRef({ version: 0 });
   const uploaded = useRef<{ file: File; operation: string } | null>(null);
   const pendingExport = useRef<{ key: string; operation: string } | null>(null);
   const reported = useRef(new Set<string>());
   const callback = useRef(onImported);
   callback.current = onImported;
   const projectImport = appearance === 'project-import' && !projectId;
-  async function refresh() { setJobs(await listTransfers(projectId)); }
-  useEffect(() => {
-    let cancelled = false, pending = false;
-    async function load() {
-      if (pending) return;
-      pending = true;
-      try { const next = await listTransfers(projectId); if (!cancelled) setJobs(next); }
-      catch (problem) { if (!cancelled) setError(problem instanceof Error ? problem.message : '项目记录读取失败'); }
-      finally { pending = false; }
+  const refresh = useCallback(async () => {
+    const current = reads.current;
+    const request = ++current.version;
+    try {
+      const next = await listTransfers(projectId);
+      if (request === current.version) setJobs(next);
+    } catch (problem) {
+      if (request === current.version) throw problem;
     }
-    void load();
-    const timer = window.setInterval(() => { void load(); }, 2000);
-    return () => { cancelled = true; window.clearInterval(timer); };
   }, [projectId]);
+  const load = useCallback(async () => {
+    try { await refresh(); }
+    catch (problem) { setError(problem instanceof Error ? problem.message : '项目记录读取失败'); }
+  }, [refresh]);
+  useEffect(() => {
+    const current = reads.current;
+    void load();
+    return () => { current.version++; };
+  }, [load]);
+  const activeTransfers = jobs.some(({ status }) => status === 'queued' || status === 'processing');
+  useTaskPolling(!busy && activeTransfers, 2000, load);
   useEffect(() => {
     for (const job of jobs) if (job.kind === 'import' && job.status === 'ready' && !reported.current.has(job.id)) {
       reported.current.add(job.id); callback.current?.();
@@ -67,6 +76,7 @@ export default function ProjectTransfers({ projectId, onImported, appearance }: 
     {projectImport ? <><FolderOpen size={16} aria-hidden="true" />选择文件</> : '导入完整项目'}
     <input className={projectImport ? 'sr-only' : undefined} data-testid="project-import-file" type="file" accept=".zip,application/zip" disabled={busy} onChange={(event) => {
         const file = event.target.files?.[0];
+        event.target.value = '';
         if (file) void perform(async () => {
           const request = uploaded.current?.file === file ? uploaded.current : { file, operation: operationId() };
           uploaded.current = request; await uploadProjectArchive(file, request.operation); uploaded.current = null;

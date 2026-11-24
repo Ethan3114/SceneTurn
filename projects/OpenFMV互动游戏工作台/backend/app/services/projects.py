@@ -4,10 +4,11 @@ import json
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.db import lock_write as lock_write
 from app.models import Asset, Canvas, Operation, Project, ProjectVersion, new_id
 from app.schemas import CanvasSnapshot, ProjectSnapshot
 
@@ -19,10 +20,6 @@ def iso_timestamp(value: float) -> str:
 def payload_digest(payload: dict) -> str:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(encoded.encode()).hexdigest()
-
-
-def lock_write(session: Session) -> None:
-    session.execute(text("BEGIN IMMEDIATE"))
 
 
 def require_project(session: Session, project_id: str, owner_id: str) -> Project:

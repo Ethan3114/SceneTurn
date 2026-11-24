@@ -38,9 +38,9 @@ const promptToInstall = async (preferredWindow, updateInfo) => {
     buttons: ['Restart and install', 'Later'],
     defaultId: 0,
     cancelId: 1,
-    title: 'OpenFMV update ready',
-    message: `OpenFMV ${updateInfo.version} has been downloaded.`,
-    detail: 'Restart OpenFMV now to install the update, or keep working and install it later.',
+    title: 'SceneTurn update ready',
+    message: `SceneTurn ${updateInfo.version} has been downloaded.`,
+    detail: 'Restart SceneTurn now to install the update, or keep working and install it later.',
     noLink: true,
   };
   const result = targetWindow
@@ -64,33 +64,33 @@ const initializeAutoUpdates = (mainWindow) => {
   autoUpdater.autoInstallOnAppQuit = false;
 
   autoUpdater.on('checking-for-update', () => {
-    log.info('Checking for OpenFMV updates.');
+    log.info('Checking for SceneTurn updates.');
   });
 
   autoUpdater.on('update-available', (info) => {
-    log.info(`OpenFMV update available: ${info.version}`);
+    log.info(`SceneTurn update available: ${info.version}`);
   });
 
   autoUpdater.on('update-not-available', (info) => {
-    log.info(`OpenFMV is up to date: ${info.version}`);
+    log.info(`SceneTurn is up to date: ${info.version}`);
   });
 
   autoUpdater.on('download-progress', (progress) => {
-    log.info(`OpenFMV update download progress: ${Math.round(progress.percent || 0)}%`);
+    log.info(`SceneTurn update download progress: ${Math.round(progress.percent || 0)}%`);
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    log.info(`OpenFMV update downloaded: ${info.version}`);
+    log.info(`SceneTurn update downloaded: ${info.version}`);
     void promptToInstall(mainWindow, info);
   });
 
   autoUpdater.on('error', (error) => {
-    log.warn('OpenFMV update check failed:', error);
+    log.warn('SceneTurn update check failed:', error);
   });
 
   setTimeout(() => {
     autoUpdater.checkForUpdates().catch((error) => {
-      log.warn('OpenFMV update check failed:', error);
+      log.warn('SceneTurn update check failed:', error);
     });
   }, 5000);
 };

@@ -161,6 +161,7 @@ export default function TopBar() {
   }, [autoSaveEnabled, dirty, revision, saveNow, status]);
 
   const isProjectSaving = status === 'saving';
+  const isProjectLoading = status === 'loading' || Boolean(routeProjectId && routeProjectId !== projectId);
   const saveStatus = !autoSaveEnabled
     ? { label: t('autoSavePaused'), icon: Clock3, spin: false }
     : isProjectSaving
@@ -287,7 +288,7 @@ export default function TopBar() {
           <div className="scene-material-brand"><SceneTurnMark size={26} monochrome /><span>SceneTurn</span></div>
           <button type="button" className="scene-material-project-back" aria-label={locale === 'zh-CN' ? '我的项目' : 'My projects'} onClick={() => navigateAway(getLocalizedPath(locale, '/projects'))} disabled={projectActionPending}><ChevronLeft size={17} aria-hidden="true" /></button>
           <div className="scene-material-project-name">
-            <Input type="text" aria-label={projectsT('projectName')} value={title} onChange={(event) => setTitle(event.target.value)} disabled={projectActionPending} />
+            <Input type="text" aria-label={projectsT('projectName')} value={title} onChange={(event) => setTitle(event.target.value)} disabled={isProjectLoading || projectActionPending} />
             <div className="relative" ref={settingsRef}>
               <button type="button" className="scene-material-save-status" onClick={() => setIsSettingsOpen((value) => !value)} aria-expanded={isSettingsOpen} aria-label={`${saveStatus.label} · ${t('settings')}`} title={lastSaved ? t('lastSaved', { time: lastSaved.toLocaleTimeString() }) : t('settings')} suppressHydrationWarning>
                 <span>{saveStatus.label}</span><SaveStatusIcon size={12} className={saveStatus.spin ? 'animate-spin' : undefined} aria-hidden="true" />
@@ -334,7 +335,7 @@ export default function TopBar() {
 
         <div className="scene-material-project-actions">
           {(projectChat || showAssetWorkspace) && <button type="button" className="scene-project-chat-toggle" aria-pressed={chatOpen} aria-label={navigationT('askAi')} onClick={toggleChat} disabled={!projectId || projectActionPending}><MessageSquare size={16} aria-hidden="true" /><span>{navigationT('askAi')}</span></button>}
-          <button type="button" data-testid="project-play-current" aria-label={t('preview')} onClick={() => { void runProjectAction(handlePlay); }} disabled={projectActionPending}><Play size={15} aria-hidden="true" /><span>{t('preview')}</span></button>
+          <button type="button" data-testid="project-play-current" aria-label={t('preview')} aria-disabled={isProjectLoading || projectActionPending} onClick={() => { if (!isProjectLoading) void runProjectAction(handlePlay); }}><Play size={15} aria-hidden="true" /><span>{t('preview')}</span></button>
 
           <div className="relative" ref={exportMenuRef}>
             <button type="button" data-testid="project-export-menu" aria-label={t('export')} aria-haspopup={showAssetWorkspace ? 'dialog' : 'menu'} aria-expanded={showAssetWorkspace ? isTransferOpen : isExportMenuOpen} disabled={isExporting || projectActionPending} onClick={() => {

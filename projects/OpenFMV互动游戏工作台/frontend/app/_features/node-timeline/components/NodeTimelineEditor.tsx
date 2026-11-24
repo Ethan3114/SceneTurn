@@ -89,6 +89,7 @@ import { useProjectSessionStore } from '@/app/_features/project-session/store';
 import { buildTimelineAssetLibraryItems, getTimelineAssetItemKey, TimelineAssetItem } from '@/app/_features/node-timeline/assetLibrary';
 import { useResolvedMediaSrc } from '@/app/_hooks/useResolvedMediaSrc';
 import { useEditorStore } from '@/app/_store/useEditorStore';
+import { usePlayerStore } from '@/app/_store/usePlayerStore';
 import { getAssetSource } from '@/app/_utils/assetIdentity';
 import { getLocalizedPath } from '@/app/_utils/localePaths';
 import { addAssetsToLocalProject, canUseNativeAssetPicker, importAssetFromFile, importAssetFromNativePicker, isStorageQuotaError, listLocalProjects, removeAssetFromLocalProject, resolveLocalProjectForEditor } from '@/app/_utils/localProjects';
@@ -2198,7 +2199,8 @@ export default function NodeTimelineEditor({ onRequestMediaClip }: NodeTimelineE
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isShortcutEditingTarget(event.target) || timelineDrag || timelineKeyframeDrag || timelineScrub || bookmarkDrag || overlayDrag || marqueeSelection || timelineContextMenu || trackReorder) return;
+      if (event.defaultPrevented || usePlayerStore.getState().isPlaying || isShortcutEditingTarget(event.target) || timelineDrag || timelineKeyframeDrag || timelineScrub || bookmarkDrag || overlayDrag || marqueeSelection || timelineContextMenu || trackReorder) return;
+      if ((event.key === 'Enter' || event.key === ' ') && event.target instanceof Element && event.target.closest('button, a[href], [role="button"]')) return;
 
       const key = event.key.toLowerCase();
       const hasModifier = event.metaKey || event.ctrlKey;
@@ -2502,7 +2504,7 @@ export default function NodeTimelineEditor({ onRequestMediaClip }: NodeTimelineE
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
-      if (event.defaultPrevented || isShortcutEditingTarget(event.target)) return;
+      if (event.defaultPrevented || usePlayerStore.getState().isPlaying || isShortcutEditingTarget(event.target)) return;
 
       const files = getMediaFilesFromClipboardData(event.clipboardData);
       if (files.length > 0) {

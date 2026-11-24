@@ -92,6 +92,34 @@ def test_unauthenticated_requests_have_uniform_errors(live_service):
         error_code(client.get("/settings/wan"), 401)
 
 
+def test_archived_project_stays_available_to_its_owner(live_service):
+    client, _ = registered_client(live_service)
+    other, _ = registered_client(live_service)
+    with closing(client), closing(other):
+        active = create_project(client, "当前创作")
+        archived = create_project(client, "素材验证")
+        route = f"/projects/{archived['project']['id']}"
+        timestamp = "2026-11-23T08:00:00Z"
+        snapshot = archived["project"]
+        snapshot["metadata"]["archivedAt"] = timestamp
+        response = client.put(route, json={"project": snapshot, "expectedRevision": archived["revision"], "operationId": str(uuid.uuid4())})
+        assert response.status_code == 200, response.text
+        updated = response.json()
+        assert updated["canvases"] == archived["canvases"]
+        summaries = {item["id"]: item for item in client.get("/projects").json()["projects"]}
+        assert summaries[active["project"]["id"]]["archivedAt"] is None
+        assert summaries[snapshot["id"]]["archivedAt"] == timestamp
+        assert client.get(route).json()["project"]["metadata"]["archivedAt"] == timestamp
+        assert other.get("/projects").json()["projects"] == []
+        error_code(other.get(route), 404)
+        del snapshot["metadata"]["archivedAt"]
+        restored = client.put(route, json={"project": snapshot, "expectedRevision": updated["revision"], "operationId": str(uuid.uuid4())})
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["canvases"] == archived["canvases"]
+        summaries = {item["id"]: item for item in client.get("/projects").json()["projects"]}
+        assert summaries[snapshot["id"]]["archivedAt"] is None
+
+
 def test_real_registration_login_logout_and_wrong_password(live_service):
     client, account = registered_client(live_service)
     with closing(client):

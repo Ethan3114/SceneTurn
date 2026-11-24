@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Link2, Loader2, PanelTop, Plus, Send, Square, X } from 'lucide-react';
 import { useProjectSessionStore } from '@/app/_features/project-session/store';
+import { useTaskPolling } from '@/app/_hooks/useTaskPolling';
 import { useEditorStore } from '@/app/_store/useEditorStore';
 import { agentErrorMessage, agentStatuses, controlAgentRun, createCodexPairing, getCodexConnections } from '@/app/_utils/agentApi';
 import { createConversation, getConversation, getConversationCapabilities, getConversations, sendConversationMessage, type ConversationSummary, type ProjectConversation } from '@/app/_utils/conversationApi';
@@ -27,9 +28,13 @@ export default function ProjectCodexChat({ floating = false, onToggleFloating, o
   const [connected, setConnected] = useState(false);
   const [pairing, setPairing] = useState<Awaited<ReturnType<typeof createCodexPairing>> | null>(null);
   const revisionSeen = useRef(0);
+  const refreshSelection = useRef<(() => Promise<void>) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const run = current?.run;
   const running = Boolean(run && !terminal.has(run.status));
+  const pollingRun = run?.status === 'queued' || run?.status === 'running' || run?.status === 'stopping'
+    || (run?.status === 'waiting_connection' && connected);
+  const pollingPairing = pairing?.projectId === projectId && !connected;
 
   const apply = useCallback(async (value: ProjectConversation) => {
     setCurrent(value);
@@ -62,10 +67,26 @@ export default function ProjectCodexChat({ floating = false, onToggleFloating, o
       setConnected(connections.some((item) => item.status === 'online' && new Date(item.expiresAt).getTime() > Date.now()));
       await apply(value);
     };
-    void refresh().catch((problem: Error) => { if (alive) setError(problem.message); });
-    const timer = window.setInterval(() => { void refresh().catch((problem: Error) => { if (alive) setError(problem.message); }); }, 1500);
-    return () => { alive = false; window.clearInterval(timer); };
+    const refreshCurrent = () => refresh().catch((problem: Error) => { if (alive) setError(problem.message); });
+    refreshSelection.current = refreshCurrent;
+    const refreshFocused = () => { void refreshCurrent(); };
+    void refreshCurrent();
+    window.addEventListener('focus', refreshFocused);
+    return () => {
+      alive = false;
+      refreshSelection.current = null;
+      window.removeEventListener('focus', refreshFocused);
+    };
   }, [projectId, current?.id, apply]);
+  useTaskPolling(Boolean(projectId && current?.id && (pollingRun || pollingPairing)), 1500, () => refreshSelection.current?.());
+
+  useEffect(() => {
+    if (!pairing) return;
+    const timer = window.setTimeout(() => {
+      setPairing((currentPairing) => currentPairing?.pairingId === pairing.pairingId ? null : currentPairing);
+    }, Math.max(0, new Date(pairing.expiresAt).getTime() - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [pairing]);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [current?.messages.length]);
 
@@ -90,6 +111,7 @@ export default function ProjectCodexChat({ floating = false, onToggleFloating, o
       const value = await sendConversationMessage(projectId, current.id, draft.trim(), revision, { sceneId: scene.id, selectedNodeIds: selected.map((node) => node.id), surface: pathname.includes('/nodes') ? 'timeline' : 'editor' });
       await apply(value); setDraft('');
       setConversations((items) => [value, ...items.filter((item) => item.id !== value.id)]);
+      void refreshSelection.current?.();
     });
   }
   async function stopOrResume(action: 'stop' | 'resume') {
@@ -98,7 +120,7 @@ export default function ProjectCodexChat({ floating = false, onToggleFloating, o
       if (action === 'resume') { await syncProjectSession(projectId); await useProjectSessionStore.getState().flushPendingChanges(); }
       const revision = useProjectSessionStore.getState().project?.metadata.serverRevision || run.currentRevision || run.projectRevision;
       await controlAgentRun(projectId, run.id, action, revision);
-      await apply(await getConversation(projectId, current.id));
+      await refreshSelection.current?.();
     });
   }
 

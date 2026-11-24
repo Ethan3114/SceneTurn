@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import mimetypes
 import shutil
 import subprocess
 import time
@@ -12,6 +13,8 @@ from sqlalchemy import select
 from app.core.errors import AppError
 from app.models import Asset, Base, Canvas, Project, new_id
 from app.schemas import ProjectSnapshot
+from app.services.durable_files import persist_file
+from app.services.transfer_dispatch import commit_transfer
 from app.services.media import resolve_asset_path
 from app.services.media_adoptions import conflict_issues
 from app.services.media_ranges import required_media_end
@@ -51,7 +54,8 @@ def public_timeline(source):
 
 
 def require_transfer(session, identifier, owner_id):
-    value = session.scalar(select(TransferJob).where(TransferJob.id == identifier, TransferJob.owner_id == owner_id))
+    value = session.scalar(select(TransferJob).where(TransferJob.id == identifier, TransferJob.owner_id == owner_id,
+        TransferJob.kind.in_(("import", "backup", "game")), TransferJob.status != "awaiting_upload"))
     if value is None:
         raise AppError(404, "TRANSFER_NOT_FOUND", "导入或导出记录不存在或无权访问")
     return value
@@ -99,9 +103,12 @@ def history_snapshot(session, project):
 
 
 def checked_asset(asset, settings):
-    if not (settings.data_dir / asset.relpath).is_file():
-        raise AppError(404, "EXPORT_MEDIA_MISSING", f"媒体文件缺失：{asset.name}")
-    path = resolve_asset_path(settings, asset.relpath)
+    try:
+        path = resolve_asset_path(settings, asset.relpath)
+    except AppError as error:
+        if error.status != 404:
+            raise
+        raise AppError(404, "EXPORT_MEDIA_MISSING", f"媒体文件缺失：{asset.name}") from error
     if path.stat().st_size != asset.bytes or file_sha256(path) != asset.sha256:
         raise AppError(409, "EXPORT_MEDIA_CHANGED", f"媒体文件与保存记录不一致：{asset.name}")
     return {"sourceId": asset.id, "path": f"assets/{asset.id}{path.suffix.lower()}", "name": asset.name, "mimeType": asset.mime_type,
@@ -177,7 +184,7 @@ def create_export(session, owner_id, project_id, body, settings):
     identity = payload_digest({"projectId": project_id, "revision": body.expected_revision, "kind": body.kind})
     replay = matching_job(session, owner_id, body.kind, body.operation_id, identity)
     if replay:
-        session.commit()
+        commit_transfer(session, replay, settings)
         return replay
     require_revision(project, body.expected_revision)
     if body.kind == "game":
@@ -195,17 +202,17 @@ def create_export(session, owner_id, project_id, body, settings):
             "canvasNodeCount": sum(len(canvas.data_json["nodes"]) for canvas in session.scalars(select(Canvas).where(Canvas.project_id == project.id))), "assetCount": len(private["files"])}], "issues": issues})
     value.confirmation_hash = payload_digest({"id": value.id, "revision": project.revision, "private": private})
     session.add(value)
-    session.commit()
+    commit_transfer(session, value, settings)
     return value
 
 
-def confirm_transfer(session, owner_id, identifier, confirmation_hash):
+def confirm_transfer(session, owner_id, identifier, confirmation_hash, settings):
     lock_write(session)
     value = require_transfer(session, identifier, owner_id)
     if value.confirmation_hash != confirmation_hash:
         raise AppError(409, "TRANSFER_CONFIRMATION_CHANGED", "确认内容已变化，请重新核对")
     if value.status in {"queued", "processing", "ready"}:
-        session.commit()
+        commit_transfer(session, value, settings)
         return value
     if value.status != "awaiting_confirmation" or value.result_json.get("issues"):
         raise AppError(409, "TRANSFER_NOT_CONFIRMABLE", "当前记录尚未通过完整检查")
@@ -214,7 +221,7 @@ def confirm_transfer(session, owner_id, identifier, confirmation_hash):
     value.status = "queued"
     value.request_json = {**value.request_json, "phase": "apply" if value.kind == "import" else "build"}
     value.updated_at = time.time()
-    session.commit()
+    commit_transfer(session, value, settings)
     return value
 
 
@@ -293,5 +300,10 @@ def build_archive(value, settings, attempt_id):
             raise AppError(507, "EXPORT_ARCHIVE_INVALID", "游戏或项目压缩包校验未通过")
     manifest = [{"path": source.relative_to(directory).as_posix(), "bytes": source.stat().st_size,
         "sha256": file_sha256(source)} for source in sorted(directory.rglob("*")) if source.is_file()]
+    persist_file(settings, archive, "application/zip")
+    if value.kind == "game":
+        for record in manifest:
+            path = directory / record["path"]
+            persist_file(settings, path, mimetypes.guess_type(path)[0] or "application/octet-stream")
     return {"archive": archive.relative_to(settings.data_dir).as_posix(), "directory": directory.relative_to(settings.data_dir).as_posix(),
         "archiveSha256": file_sha256(archive), "archiveBytes": archive.stat().st_size, "fileManifest": manifest}
