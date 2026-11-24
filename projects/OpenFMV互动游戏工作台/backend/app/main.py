@@ -41,7 +41,7 @@ async def lifespan(_app: FastAPI):
     _app.state.image_worker = image_worker
     if image_worker is not None:
         image_worker.add_done_callback(image_worker_done)
-    hosted_transfers = settings.transfer_queue_bucket is not None
+    hosted_transfers = settings.transfer_queue_bucket is not None or settings.transfer_queue_write_token is not None
     _app.state.hosted_transfer_worker = HostedTransferWorker(settings, SessionLocal) if hosted_transfers else None
     transfer_worker = asyncio.create_task(transfer_worker_loop(settings, SessionLocal, stop_event)) if (
         settings.worker_enabled and not hosted_transfers

@@ -14,6 +14,7 @@ from app.services.deployment_queue import (
     epoch_milliseconds,
     wake_signature,
 )
+from app.services.deployment_queue_gateway import QUEUE_EVENT_TYPE, verified_queue_event
 
 _RUN_HOST = re.compile(r"sceneturn-api(?:-[a-z0-9-]+)?\.[a-z0-9-]+\.(?:run|app)\.tcloudbase\.com")
 _TRIGGER_NAME = "sceneturn-due-jobs"
@@ -45,20 +46,32 @@ def wake_backend(markers: tuple[DispatchMarker, ...]) -> None:
         connection.close()
 
 
-def main_handler(event, context):
-    token = os.environ.get("SCENETURN_TIMER_EVENT_TOKEN", "")
-    message = event.get("Message", "") if isinstance(event, dict) else ""
-    if (not isinstance(event, dict) or event.get("Type") != "Timer" or event.get("TriggerName") != _TRIGGER_NAME
-            or len(token) < 32 or not isinstance(message, str) or not compare_digest(message.encode(), token.encode())):
-        raise ValueError("任务调度事件未授权")
-    queue = DeploymentQueue(
+def _queue() -> DeploymentQueue:
+    return DeploymentQueue(
         bucket=os.environ["SCENETURN_QUEUE_COS_BUCKET"],
         region=os.environ["TENCENTCLOUD_REGION"],
         secret_id=os.environ["TENCENTCLOUD_SECRETID"],
         secret_key=os.environ["TENCENTCLOUD_SECRETKEY"],
         token=os.environ["TENCENTCLOUD_SESSIONTOKEN"],
     )
-    markers = queue.due(epoch_milliseconds())
+
+
+def main_handler(event, context):
+    if isinstance(event, dict) and event.get("Type") == QUEUE_EVENT_TYPE:
+        action, marker = verified_queue_event(event, os.environ.get("SCENETURN_QUEUE_WRITE_TOKEN", ""))
+        queue = _queue()
+        if action == "publish":
+            queue.publish(marker)
+        else:
+            queue.remove(marker)
+        return {"action": action, "key": marker.key}
+
+    token = os.environ.get("SCENETURN_TIMER_EVENT_TOKEN", "")
+    message = event.get("Message", "") if isinstance(event, dict) else ""
+    if (not isinstance(event, dict) or event.get("Type") != "Timer" or event.get("TriggerName") != _TRIGGER_NAME
+            or len(token) < 32 or not isinstance(message, str) or not compare_digest(message.encode(), token.encode())):
+        raise ValueError("任务调度事件未授权")
+    markers = _queue().due(epoch_milliseconds())
     if markers:
         wake_backend(markers)
     return {"due": len(markers)}

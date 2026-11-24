@@ -10,7 +10,7 @@ from app.agent_models import AgentRun
 from app.db import lock_write
 from app.image_models import ImageJob
 from app.models import Base, Generation, TextGeneration
-from app.services.deployment_queue import DeploymentQueue, DispatchMarker, JOB_KINDS, epoch_milliseconds
+from app.services.deployment_queue import DispatchMarker, JOB_KINDS, QueueWriter, epoch_milliseconds
 from app.services.sensetime import IMAGE_RECEIPT_TIMEOUT_SECONDS
 from app.transfer_models import TransferJob
 
@@ -105,7 +105,7 @@ def _plan_dispatch(session: Session, *, kind: str, job_id: UUID, due_ms: int | N
     return DispatchChange(current, superseded)
 
 
-def register_dispatch(session: Session, queue: DeploymentQueue, job: Job, *,
+def register_dispatch(session: Session, queue: QueueWriter, job: Job, *,
                       image_dependencies_ready: bool | None = None, image_slot_at_ms: int | None = None) -> DispatchChange | None:
     # 调用方需先取得业务写锁，并在 COS 发布成功后一起提交状态和调度版本。
     due_ms = dispatch_due_ms(job, epoch_milliseconds(), image_dependencies_ready=image_dependencies_ready,
@@ -128,7 +128,7 @@ def retire_dispatch(session: Session, marker: DispatchMarker) -> None:
     _plan_dispatch(session, kind=marker.kind, job_id=marker.job_id, due_ms=None)
 
 
-def acknowledge_obsolete_dispatch(factory: sessionmaker, queue: DeploymentQueue, marker: DispatchMarker) -> bool:
+def acknowledge_obsolete_dispatch(factory: sessionmaker, queue: QueueWriter, marker: DispatchMarker) -> bool:
     # 删除也受同一把锁保护，避免误删其他事务刚重新发布的记录。
     with factory.begin() as session:
         lock_write(session)

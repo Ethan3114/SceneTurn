@@ -4,6 +4,7 @@ import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Protocol
 from uuid import UUID
 
 from qcloud_cos import CosClientError, CosConfig, CosS3Client, CosServiceError
@@ -74,6 +75,11 @@ class DispatchMarker:
         if marker.key != key:
             raise ValueError("任务调度记录的标识未使用标准格式")
         return marker
+
+
+class QueueWriter(Protocol):
+    def publish(self, marker: DispatchMarker) -> None: ...
+    def remove(self, marker: DispatchMarker) -> None: ...
 
 
 class DeploymentQueue:

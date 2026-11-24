@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.services.deployment_queue import DeploymentQueue, DeploymentQueueError, DispatchMarker
+from app.services.deployment_queue import DeploymentQueue, DeploymentQueueError, DispatchMarker, QueueWriter
+from app.services.deployment_queue_gateway import CloudBaseDeploymentQueue
 from app.services.deployment_schedule import acknowledge_obsolete_dispatch, register_dispatch
 from app.transfer_models import TransferJob
 
@@ -13,7 +14,9 @@ from app.transfer_models import TransferJob
 logger = logging.getLogger("openfmv")
 
 
-def transfer_queue(settings: Settings) -> DeploymentQueue | None:
+def transfer_queue(settings: Settings) -> QueueWriter | None:
+    if settings.transfer_queue_write_token is not None:
+        return CloudBaseDeploymentQueue(settings.cloudbase_env_id, settings.cloudbase_api_key, settings.transfer_queue_write_token)
     if settings.transfer_queue_bucket is None:
         return None
     token = settings.transfer_queue_session_token
@@ -22,7 +25,7 @@ def transfer_queue(settings: Settings) -> DeploymentQueue | None:
         token=token.get_secret_value() if token is not None else None)
 
 
-def acknowledge_transfer_marker(factory: sessionmaker, queue: DeploymentQueue, marker: DispatchMarker) -> None:
+def acknowledge_transfer_marker(factory: sessionmaker, queue: QueueWriter, marker: DispatchMarker) -> None:
     try:
         acknowledge_obsolete_dispatch(factory, queue, marker)
     except (DeploymentQueueError, SQLAlchemyError):

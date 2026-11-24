@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     transfer_queue_secret_id: SecretStr | None = None
     transfer_queue_secret_key: SecretStr | None = None
     transfer_queue_session_token: SecretStr | None = None
+    transfer_queue_write_token: SecretStr | None = Field(default=None, min_length=32, max_length=256)
     scheduler_token: SecretStr | None = Field(default=None, min_length=32, max_length=256)
     deployment: Literal["local", "cloudbase"] = "local"
     worker_enabled: bool = True
@@ -64,10 +65,13 @@ class Settings(BaseSettings):
             or self.proxy_shared_secret is None or not self.cookie_secure
         ):
             raise ValueError("生产部署需要持久数据库、私有存储、主密钥和安全会话配置")
-        scheduler_fields = (self.transfer_queue_bucket, self.transfer_queue_secret_id, self.transfer_queue_secret_key,
-                            self.scheduler_token)
-        if any(value is not None for value in (*scheduler_fields, self.transfer_queue_session_token)) and (
-            any(value is None for value in scheduler_fields) or self.cloudbase_storage_bucket is None
+        direct_queue_fields = (self.transfer_queue_bucket, self.transfer_queue_secret_id, self.transfer_queue_secret_key)
+        if self.transfer_queue_write_token is not None:
+            if (any(value is not None for value in (*direct_queue_fields, self.transfer_queue_session_token))
+                    or self.scheduler_token is None or self.cloudbase_storage_bucket is None):
+                raise ValueError("云函数队列需要私有素材存储及唤醒密钥，并使用独立队列写入凭据")
+        elif any(value is not None for value in (*direct_queue_fields, self.transfer_queue_session_token, self.scheduler_token)) and (
+            any(value is None for value in (*direct_queue_fields, self.scheduler_token)) or self.cloudbase_storage_bucket is None
         ):
             raise ValueError("传输调度需要私有素材存储、COS 队列访问配置和唤醒密钥")
         return self
