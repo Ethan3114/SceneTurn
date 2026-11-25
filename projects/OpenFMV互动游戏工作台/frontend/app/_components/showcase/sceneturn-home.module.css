@@ -280,6 +280,13 @@
   line-height: 1.62;
 }
 
+.previewNotice {
+  margin-top: 16px;
+  color: var(--home-silver);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;

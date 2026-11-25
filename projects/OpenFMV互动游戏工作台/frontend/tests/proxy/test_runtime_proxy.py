@@ -45,10 +45,10 @@ def runtime_proxy(tmp_path_factory):
     directory = tmp_path_factory.mktemp("runtime-proxy").resolve()
     assert directory.is_relative_to(PRODUCT / ".intermediate")
     shared_secret = secrets.token_urlsafe(48)
-    ports = {key: free_port() for key in ("api_a", "api_b", "front_a", "front_b", "local", "missing")}
+    ports = {key: free_port() for key in ("api_a", "api_b", "front_a", "front_b", "local", "missing", "preview")}
     origins = {key: f"http://127.0.0.1:{port}" for key, port in ports.items()}
     clean_environment = {key: value for key, value in os.environ.items()
-        if not key.startswith("OPENFMV_") and key not in {"BACKEND_URL", "PROXY_SHARED_SECRET"}}
+        if not key.startswith("OPENFMV_") and key not in {"BACKEND_URL", "PROXY_SHARED_SECRET", "SCENETURN_PUBLIC_PREVIEW"}}
     clean_environment.update(TMPDIR=str(directory), XDG_CACHE_HOME=str(directory / "cache"), PYTHONDONTWRITEBYTECODE="1")
     children, logs, packages = [], [], {}
     setup_complete = False
@@ -68,7 +68,7 @@ def runtime_proxy(tmp_path_factory):
                     "OPENFMV_FRONTEND_ORIGIN": origins[f"front_{suffix}"], "PROXY_SHARED_SECRET": shared_secret}, f"api-{suffix}")
             assert wait_for_service(children[-1], origins[f"api_{suffix}"]).status_code == 200
         original_sha = hashlib.sha256((package / "server.js").read_bytes()).hexdigest()
-        for key in ("front_a", "front_b", "local", "missing"):
+        for key in ("front_a", "front_b", "local", "missing", "preview"):
             target = directory / key
             target.mkdir()
             subprocess.run(["rsync", "-a", str(package) + "/", str(target) + "/"], check=True, capture_output=True)
@@ -80,11 +80,14 @@ def runtime_proxy(tmp_path_factory):
                 environment.update(BACKEND_URL=origins[f"api_{suffix}"], PROXY_SHARED_SECRET=shared_secret)
             elif key == "local":
                 environment["OPENFMV_API_ORIGIN"] = origins["api_a"]
+            elif key == "preview":
+                environment.update(BACKEND_URL=origins["api_a"], PROXY_SHARED_SECRET=shared_secret,
+                    SCENETURN_PUBLIC_PREVIEW="1", SCENETURN_PREMIERE_PUBLICATION_SLUG="preview-regression")
             else:
                 environment["BACKEND_URL"] = origins["api_a"]
             launch([str(node), "server.js"], target, environment, key)
             response = wait_for_service(children[-1], origins[key])
-            assert response.status_code == (503 if key == "missing" else 200)
+            assert response.status_code == {"preview": 404, "missing": 503}.get(key, 200)
         manifest = {"origins": origins, "pids": [child.pid for child in children], "packageSha256": original_sha,
             "packages": {key: str(value) for key, value in packages.items()}}
         manifest_path = directory / "services.json"
@@ -111,6 +114,47 @@ def register(client):
     assert len(cookies) == 1 and "HttpOnly" in cookies[0] and "SameSite=strict" in cookies[0]
     assert client.cookies.get("openfmv_session")
     return credentials
+
+
+def test_public_preview_exposes_only_landing_legal_and_trial_assets(runtime_proxy):
+    origins, _ = runtime_proxy
+    messages = {
+        "zh-CN": "公开预览提供产品介绍和互动试玩。",
+        "en": "The public preview includes the product tour and interactive demo.",
+        "ja": "公開プレビューでは、製品紹介とインタラクティブデモをお試しいただけます。",
+        "ko": "공개 미리 보기에서는 제품 소개와 인터랙티브 데모를 이용할 수 있습니다.",
+    }
+    with httpx.Client(base_url=origins["preview"], follow_redirects=True, trust_env=False) as preview:
+        assert preview.get("/").status_code == 200
+        for locale, message in messages.items():
+            homepage = preview.get(f"/{locale}")
+            assert homepage.status_code == 200 and message in homepage.text
+            for path in ("projects", "works", "settings/models"):
+                assert f'href="/{locale}/{path}"' not in homepage.text
+            assert "preview-regression" not in homepage.text
+            assert preview.get(f"/{locale}/privacy").status_code == 200
+            assert preview.get(f"/{locale}/terms").status_code == 200
+            blocked = preview.get(f"/{locale}/editor")
+            assert blocked.status_code == 404 and message in blocked.text
+
+        for path in ("/sceneturn/tide.jpg", "/sceneturn/signal.jpg", "/sceneturn/port.jpg",
+            "/sceneturn/icon.svg", "/sceneturn/home/player.webp"):
+            assert preview.head(path).status_code == 200
+        for path in ("/works", "/account", "/internal/worker/wake", "/sceneturn/canvas/character-one.png",
+            "/_next/image?url=%2Fsceneturn%2Fcanvas%2Fcharacter-one.png&w=384&q=75"):
+            assert preview.get(path).status_code == 404
+
+        for method, path in (("GET", "/api/v1/health"), ("POST", "/api/v1/auth/register"),
+            ("GET", "/api/v1/play/preview-regression"), ("GET", "/api/local-asset"),
+            ("GET", "/api/ai-settings/agents"), ("POST", "/api/ai-settings/agents/example/test")):
+            blocked = preview.request(method, path)
+            assert blocked.status_code == 404 and blocked.headers["cache-control"] == "no-store"
+            assert blocked.json()["error"]["code"] == "PUBLIC_PREVIEW_UNAVAILABLE"
+        assert preview.post("/en").status_code == 405
+
+    with httpx.Client(base_url=origins["front_a"], trust_env=False) as authoring:
+        assert authoring.get("/api/v1/health").status_code == 200
+        assert 'href="/en/projects"' in authoring.get("/en").text
 
 
 def test_one_production_package_uses_two_runtime_backends(runtime_proxy):

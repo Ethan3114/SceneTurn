@@ -6,6 +6,7 @@ import { ArrowRight, ChevronDown, ChevronRight, ExternalLink, Film, FolderOpen, 
 
 import SceneTurnMark from '@/app/_components/workbench/SceneTurnMark';
 import { getLocalizedPath } from '@/app/_utils/localePaths';
+import { publicPreviewMessage } from '@/lib/public-preview';
 
 import { HomeFaqSection, HomeFeatureSection } from './HomeDetails';
 import { HomeNavigation } from './HomeNavigation';
@@ -18,13 +19,13 @@ const repository = 'https://github.com/Ethan3114/SceneTurn';
 const workbenchPreviews = ['blueprint', 'timeline', 'player', 'assets'] as const;
 const questions = ['materials', 'models', 'codex', 'play', 'publish'] as const;
 
-export async function SceneTurnHome({ locale, premiereSlug }: { locale: string; premiereSlug?: string }) {
+export async function SceneTurnHome({ locale, premiereSlug, publicPreview }: { locale: string; premiereSlug?: string; publicPreview: boolean }) {
   const [t, legal] = await Promise.all([
     getTranslations({ locale, namespace: 'home' }),
     getTranslations({ locale, namespace: 'legal' }),
   ]);
   const homeHref = getLocalizedPath(locale, '/');
-  const studioHref = getLocalizedPath(locale, '/projects');
+  const studioHref = publicPreview ? undefined : getLocalizedPath(locale, '/projects');
   const navigation = {
     label: t('nav.label'),
     product: t('nav.product'),
@@ -80,13 +81,14 @@ export async function SceneTurnHome({ locale, premiereSlug }: { locale: string; 
               <h1 id="sceneturn-home-heading"><span>{t('hero.headlineFirst')}</span><span>{t('hero.headlineSecond')}</span></h1>
               <p className={styles.heroDescription}>{t('hero.description')}</p>
               <div className={styles.actions}>
-                <Link href={studioHref} className={styles.primary}>
+                {studioHref && <Link href={studioHref} className={styles.primary}>
                   <ArrowRight size={18} aria-hidden="true" />{t('nav.studio')}
-                </Link>
+                </Link>}
                 <a href={repository} target="_blank" rel="noreferrer" className={styles.outline}>
                   <ExternalLink size={17} aria-hidden="true" />{t('nav.github')}
                 </a>
               </div>
+              {publicPreview && <p className={styles.previewNotice}>{publicPreviewMessage(locale)}</p>}
             </div>
             <a className={styles.explore} href="#product"><ChevronDown size={18} aria-hidden="true" />{t('hero.explore')}</a>
           </div>
@@ -115,7 +117,7 @@ export async function SceneTurnHome({ locale, premiereSlug }: { locale: string; 
         </section>
 
         <HomeTrial copy={trial} />
-        {premiereSlug && <SceneTurnHomePremiere locale={locale} slug={premiereSlug} />}
+        {!publicPreview && premiereSlug && <SceneTurnHomePremiere locale={locale} slug={premiereSlug} />}
 
         <HomeFeatureSection
           title={t('features.title')}
@@ -154,18 +156,22 @@ export async function SceneTurnHome({ locale, premiereSlug }: { locale: string; 
           title={t('faq.title')}
           description={t('faq.description')}
           settingsLabel={t('faq.settingsLabel')}
-          settingsHref={getLocalizedPath(locale, '/settings/models')}
+          settingsHref={publicPreview ? undefined : getLocalizedPath(locale, '/settings/models')}
           items={questions.map((id) => ({ id, question: t(`faq.${id}.question`), answer: t(`faq.${id}.answer`) }))}
         />
       </main>
 
       <footer className={styles.footer}>
         <div className={styles.wrap}>
-          <h2>{t('footer.title')}</h2>
+          <h2>{publicPreview ? t('trial.heading') : t('footer.title')}</h2>
           <div className={styles.actions}>
-            <Link href={studioHref} className={styles.primary}>
-              <ArrowRight size={18} aria-hidden="true" />{t('nav.studio')}
-            </Link>
+            {studioHref ? (
+              <Link href={studioHref} className={styles.primary}>
+                <ArrowRight size={18} aria-hidden="true" />{t('nav.studio')}
+              </Link>
+            ) : (
+              <a href="#trial" className={styles.primary}><Play size={17} aria-hidden="true" />{t('product.trialLink')}</a>
+            )}
             <a href={repository} target="_blank" rel="noreferrer" className={styles.outline}>
               <ExternalLink size={17} aria-hidden="true" />{t('nav.github')}
             </a>
@@ -176,7 +182,7 @@ export async function SceneTurnHome({ locale, premiereSlug }: { locale: string; 
               <span>SceneTurn</span>
             </Link>
             <nav aria-label={legal('navigation')}>
-              <Link href={getLocalizedPath(locale, '/works')}>{t('footer.works')}</Link>
+              {!publicPreview && <Link href={getLocalizedPath(locale, '/works')}>{t('footer.works')}</Link>}
               <Link href={getLocalizedPath(locale, '/privacy')}>{legal('privacy.title')}</Link>
               <Link href={getLocalizedPath(locale, '/terms')}>{legal('terms.title')}</Link>
             </nav>

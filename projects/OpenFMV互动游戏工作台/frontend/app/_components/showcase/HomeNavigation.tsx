@@ -23,7 +23,7 @@ export function HomeNavigation({ copy, locale, homeHref, studioHref, githubHref 
   copy: HomeNavigationCopy;
   locale: string;
   homeHref: string;
-  studioHref: string;
+  studioHref?: string;
   githubHref: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -142,9 +142,9 @@ export function HomeNavigation({ copy, locale, homeHref, studioHref, githubHref 
                 trigger.current?.focus({ preventScroll: true });
               }}><X size={19} aria-hidden="true" /></button>
             </div>
-            <Link className={styles.menuLink} href={studioHref} onClick={() => setOpen(false)}>
+            {studioHref && <Link className={styles.menuLink} href={studioHref} onClick={() => setOpen(false)}>
               <ArrowRight size={17} aria-hidden="true" />{copy.studio}
-            </Link>
+            </Link>}
             <a className={styles.menuLink} href={githubHref} target="_blank" rel="noreferrer" onClick={() => {
               setOpen(false);
               trigger.current?.focus({ preventScroll: true });
@@ -153,9 +153,9 @@ export function HomeNavigation({ copy, locale, homeHref, studioHref, githubHref 
             </a>
           </div>
         </div>
-        <Link href={studioHref} className={styles.headerStudio}>
+        {studioHref && <Link href={studioHref} className={styles.headerStudio}>
           <ArrowRight size={17} aria-hidden="true" />{copy.studio}
-        </Link>
+        </Link>}
       </div>
     </header>
   );

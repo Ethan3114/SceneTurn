@@ -37,7 +37,7 @@ type FaqProps = {
   title: string;
   description: string;
   settingsLabel: string;
-  settingsHref: string;
+  settingsHref?: string;
   items: readonly FaqItem[];
 };
 
@@ -174,10 +174,10 @@ function HomeFaqSection({ id = 'faq', title, description, settingsLabel, setting
         <div className={styles.heading}>
           <h2 id={headingId}>{title}</h2>
           <p>{description}</p>
-          <Link className={styles.settingsLink} href={settingsHref}>
+          {settingsHref && <Link className={styles.settingsLink} href={settingsHref}>
             <Settings size={17} aria-hidden="true" />
             {settingsLabel}
-          </Link>
+          </Link>}
         </div>
         <div className={styles.faqItems}>
           {items.map((item) => {
