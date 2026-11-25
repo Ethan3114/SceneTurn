@@ -12,6 +12,7 @@
 !i18n
 !i18n/**
 !lib
+!lib/public-preview.ts
 !lib/proxy
 !lib/proxy/**
 !messages
