@@ -4,14 +4,20 @@ import subprocess
 import zipfile
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.models import new_id
+from app.schemas import CanvasSnapshot, ProjectSnapshot, WireModel
 from app.services.cloudbase_database import call_cloudbase_rpc, gateway_enabled
+from app.services.cloudbase_imports import TransferRecord
 from app.services.deployment_queue import DeploymentQueueError, DispatchMarker, epoch_milliseconds
-from app.services.project_transfers import build_archive
+from app.services.project_transfers import build_archive, export_asset_record, game_snapshot_from_records
+from app.services.projects import payload_digest
+from app.services.transfer_archives import without_credentials
 from app.services.transfer_dispatch import transfer_queue
+from app.transfer_schemas import ExportCreate
 
 
 logger = logging.getLogger("openfmv")
@@ -30,6 +36,51 @@ class ClaimedTransfer(BaseModel):
     request_json: dict
     source_revision: int | None
     lease_owner: str
+
+
+class ExportAsset(BaseModel):
+    id: str
+    relpath: str
+    poster_relpath: str | None
+    name: str
+    mime_type: str
+    bytes: int
+    sha256: str
+    duration_ms: int | None
+    width: int | None
+    height: int | None
+
+
+class ExportSource(WireModel):
+    project: ProjectSnapshot
+    canvases: list[CanvasSnapshot]
+    assets: list[ExportAsset]
+    history: dict
+    conflicts: list[dict]
+
+
+class ExistingExport(WireModel):
+    existing: TransferRecord
+
+
+class ExportAcceptance(BaseModel):
+    job: TransferRecord
+    replayed: bool
+    obsolete: dict | None = None
+
+
+def export_artifact(settings: Settings, owner_id: str, identifier: str) -> TransferRecord:
+    try:
+        valid_id = str(UUID(identifier)) == identifier
+    except ValueError:
+        valid_id = False
+    if not valid_id:
+        raise AppError(404, "TRANSFER_NOT_FOUND", "导入或导出记录不存在或无权访问")
+    value = call_cloudbase_rpc(settings, "sceneturn_transfer_artifact", {"p_owner_id": owner_id, "p_job_id": identifier})
+    try:
+        return TransferRecord.model_validate(value, strict=True)
+    except ValidationError:
+        raise AppError(502, "DATABASE_GATEWAY_RESPONSE_INVALID", "导出文件记录暂时无法读取") from None
 
 
 class TransferRpc:
@@ -65,23 +116,73 @@ class TransferRpc:
         if replaced := result.get("obsolete"):
             self._remove_obsolete(DispatchMarker(replaced["dueMs"], "transfer", UUID(replaced["jobId"]), UUID(replaced["revision"])))
 
+    def create_export(self, owner_id: str, project_id: str, request: ExportCreate) -> tuple[TransferRecord, DispatchMarker | None]:
+        try:
+            valid_project = str(UUID(project_id)) == project_id
+        except ValueError:
+            valid_project = False
+        if not valid_project:
+            raise AppError(404, "PROJECT_NOT_FOUND", "项目不存在")
+        identity = payload_digest({"projectId": project_id, "revision": request.expected_revision, "kind": request.kind})
+        parameters = {"p_owner_id": owner_id, "p_project_id": project_id, "p_operation_id": request.operation_id,
+            "p_kind": request.kind, "p_expected_revision": request.expected_revision, "p_identity_sha256": identity}
+        result = self._call("prepare_export", **parameters)
+        try:
+            if isinstance(result, dict) and "existing" in result:
+                return ExistingExport.model_validate(result, strict=True).existing, None
+            source = ExportSource.model_validate(result, strict=True)
+        except ValidationError:
+            raise AppError(502, "DATABASE_GATEWAY_RESPONSE_INVALID", "导出项目内容无法读取") from None
+
+        project = source.project.model_dump(by_alias=True, exclude_unset=True)
+        canvases = [canvas.model_dump(by_alias=True, exclude_unset=True) for canvas in source.canvases]
+        if request.kind == "game":
+            game, files, issues = game_snapshot_from_records(project, request.expected_revision, source.assets, source.conflicts,
+                self.settings, verify_source=False)
+            snapshot = {"game": game, "files": files}
+        else:
+            files, issues = [export_asset_record(asset) for asset in source.assets], []
+            snapshot = {"project": without_credentials(project), "canvases": without_credentials(canvases),
+                "revision": request.expected_revision, "files": files, "history": without_credentials(source.history)}
+        preview = {"sourceFormat": "openfmv-workbench-v1", "issues": issues, "projects": [{
+            "id": project_id, "title": source.project.title,
+            "sceneCount": sum(node["type"] == "scene" for node in project["graphData"]["nodes"]),
+            "canvasNodeCount": sum(len(canvas.nodes) for canvas in source.canvases), "assetCount": len(files),
+        }]}
+        job_id = new_id()
+        confirmation = payload_digest({"id": job_id, "revision": request.expected_revision, "private": snapshot})
+        return self.accept_export(owner_id=owner_id, project_id=project_id, job_id=job_id, operation_id=request.operation_id,
+            kind=request.kind, expected_revision=request.expected_revision, identity_sha256=identity,
+            confirmation_hash=confirmation, snapshot=snapshot, preview=preview)
+
+    def _write_export(self, function: str, marker: DispatchMarker | None, **parameters) -> tuple[TransferRecord, DispatchMarker | None]:
+        try:
+            result = self._call(function, **parameters, p_dispatch_revision=str(marker.revision) if marker else None,
+                p_due_ms=marker.due_ms if marker else None)
+        except AppError as error:
+            if marker is not None and 400 <= error.status < 500:
+                self._remove_obsolete(marker)
+            raise
+        try:
+            accepted = ExportAcceptance.model_validate(result, strict=True)
+        except ValidationError:
+            raise AppError(502, "DATABASE_GATEWAY_RESPONSE_INVALID", "导出任务回执无效") from None
+        self._remove_superseded(result)
+        if accepted.replayed and marker is not None:
+            self._remove_obsolete(marker)
+        return accepted.job, None if accepted.replayed else marker
+
     def accept_export(self, *, owner_id: str, project_id: str, job_id: str, operation_id: str, kind: str,
                       expected_revision: int, identity_sha256: str, confirmation_hash: str, snapshot: dict, preview: dict):
         marker = self._publish(job_id, _ACCEPT_WINDOW_MS) if kind == "backup" and not preview["issues"] else None
-        result = self._call("accept_export", p_owner_id=owner_id, p_project_id=project_id, p_job_id=job_id,
+        return self._write_export("accept_export", marker, p_owner_id=owner_id, p_project_id=project_id, p_job_id=job_id,
             p_operation_id=operation_id, p_kind=kind, p_expected_revision=expected_revision, p_identity_sha256=identity_sha256,
-            p_confirmation_hash=confirmation_hash, p_private_snapshot=snapshot, p_preview=preview,
-            p_dispatch_revision=str(marker.revision) if marker else None, p_due_ms=marker.due_ms if marker else None)
-        if marker is not None and result["job"]["id"] != job_id:
-            self._remove_obsolete(marker)
-        return result["job"], marker if marker is not None and not result["replayed"] else None
+            p_confirmation_hash=confirmation_hash, p_private_snapshot=snapshot, p_preview=preview)
 
     def resume_export(self, owner_id: str, job_id: str, *, confirmation_hash=None, missing_archive_sha256=None):
         marker = self._publish(job_id, _ACCEPT_WINDOW_MS)
-        result = self._call("resume_export", p_owner_id=owner_id, p_job_id=job_id, p_confirmation_hash=confirmation_hash,
-            p_missing_archive_sha256=missing_archive_sha256, p_dispatch_revision=str(marker.revision), p_due_ms=marker.due_ms)
-        self._remove_superseded(result)
-        return result["job"], marker if not result["replayed"] else None
+        return self._write_export("resume_export", marker, p_owner_id=owner_id, p_job_id=job_id, p_confirmation_hash=confirmation_hash,
+            p_missing_archive_sha256=missing_archive_sha256)
 
     def read(self, owner_id: str, job_id: str) -> dict:
         return self._call("read", p_owner_id=owner_id, p_job_id=job_id)

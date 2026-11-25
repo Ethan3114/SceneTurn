@@ -11,9 +11,9 @@ from sqlalchemy.exc import DBAPIError
 
 from app.core.config import Settings
 from app.services.deployment_queue import epoch_milliseconds
-from app.services.project_transfers import build_archive
+from app.services.project_transfers import HISTORY_TABLES, build_archive, game_snapshot_from_records
 from app.services.projects import payload_digest
-from app.services.transfer_rpc import ClaimedTransfer
+from app.services.transfer_rpc import ClaimedTransfer, ExportSource
 from conftest import PRODUCT_ROOT
 from test_api import create_project
 from test_postgresql_persistence import postgres_runtime
@@ -68,6 +68,7 @@ def test_real_transfer_rpc_protects_owner_rolls_back_acceptance_and_prevents_dup
         owner = client.post("/auth/register", json=account).json()["user"]["id"]
         other_owner = neighbor.post("/auth/register", json=other_account).json()["user"]["id"]
         envelope = create_project(client)
+        other_project = create_project(neighbor)["project"]["id"]
         data_dir = service.data_dir
     project_id = envelope["project"]["id"]
     revision = envelope["revision"]
@@ -83,6 +84,27 @@ def test_real_transfer_rpc_protects_owner_rolls_back_acceptance_and_prevents_dup
     accept = text("""SELECT public.sceneturn_transfer_accept_export(:owner, :project, :job, :operation, 'backup',
         :version, :identity, :confirm, CAST(:snapshot AS jsonb), CAST(:preview AS jsonb), :marker, :due)""")
     read = text("SELECT public.sceneturn_transfer_read(:owner, :job)")
+    artifact = text("SELECT public.sceneturn_transfer_artifact(:owner, :job)")
+    prepare = text("SELECT public.sceneturn_transfer_prepare_export(:owner, :project, :operation, :kind, :version, :identity)")
+    with pytest.raises(DBAPIError) as unauthorized:
+        with rpc_transaction() as connection:
+            connection.execute(prepare, {**arguments, "project": other_project, "kind": "backup"})
+    assert unauthorized.value.orig.sqlstate == "PT404"
+    with pytest.raises(DBAPIError) as denied:
+        with rpc_transaction(scope=False) as connection:
+            connection.execute(prepare, {**arguments, "kind": "backup"})
+    assert denied.value.orig.sqlstate == "42501"
+    with rpc_transaction() as connection:
+        prepared = connection.execute(prepare, {**arguments, "kind": "backup"}).scalar_one()
+        source = ExportSource.model_validate(prepared, strict=True)
+        assert source.project.id == project_id and source.project.metadata["serverRevision"] == revision
+        assert set(source.history) == HISTORY_TABLES
+        assert {record["project_id"] for record in source.history["project_versions"]} == {project_id}
+        game_source = ExportSource.model_validate(connection.execute(prepare, {**arguments, "kind": "game"}).scalar_one(), strict=True)
+        game, files, issues = game_snapshot_from_records(game_source.project.model_dump(by_alias=True), revision, game_source.assets,
+            game_source.conflicts, Settings(_env_file=None, data_dir=data_dir), verify_source=False)
+        assert game_source.history == {} and game["metadata"]["sourceRevision"] == revision
+        assert not files and not issues
     with pytest.raises(DBAPIError) as denied:
         with rpc_transaction(role="anon") as connection:
             connection.execute(accept, arguments)
@@ -107,6 +129,13 @@ def test_real_transfer_rpc_protects_owner_rolls_back_acceptance_and_prevents_dup
     with rpc_transaction() as connection:
         replay = connection.execute(accept, {**arguments, "job": str(uuid.uuid4())}).scalar_one()
         assert replay["replayed"] and replay["job"]["id"] == job_id
+        assert connection.execute(prepare, {**arguments, "kind": "backup"}).scalar_one()["existing"]["id"] == job_id
+    with pytest.raises(DBAPIError) as unauthorized:
+        with rpc_transaction() as connection:
+            connection.execute(artifact, {"owner": other_owner, "job": job_id})
+    assert unauthorized.value.orig.sqlstate == "PT404"
+    with rpc_transaction() as connection:
+        assert connection.execute(artifact, arguments).scalar_one()["private_json"] == {}
 
     claim = text("SELECT public.sceneturn_transfer_claim(:job, :worker, :marker, :due, :immediate, :recovery, :recovery_due)")
 
@@ -137,6 +166,9 @@ def test_real_transfer_rpc_protects_owner_rolls_back_acceptance_and_prevents_dup
     with rpc_transaction() as connection:
         assert connection.execute(settlement, settle_parameters).scalar_one()["state"] == "lease_lost"
         assert connection.execute(read, {"owner": owner, "job": job_id}).scalar_one()["private_json"]["archive"] == proof["archive"]
+        registered = connection.execute(artifact, arguments).scalar_one()["private_json"]
+        assert registered["archive"] == proof["archive"] and registered["archiveSha256"] == proof["archiveSha256"]
+        assert "history" not in registered and "project" not in registered
     with admin.connect() as connection:
         assert connection.execute(text("SELECT due_ms IS NULL FROM sceneturn.deployment_dispatch WHERE job_id = :job"),
                                   {"job": job_id}).scalar_one()

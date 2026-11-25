@@ -15,7 +15,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import User, new_id
 from app.services.cloudbase_database import gateway_enabled
-from app.services.cloudbase_imports import CloudBaseImports, visible_transfer, visible_transfers
+from app.services.cloudbase_imports import CloudBaseImports, TransferRecord, visible_transfer, visible_transfers
 from app.services.direct_uploads import DirectUploadCreate, finish_upload, prepare_upload, upload_result, validate_import_filename
 from app.services.durable_files import materialize_file, persist_file
 from app.services.object_storage import private_storage
@@ -23,7 +23,7 @@ from app.services.project_transfers import confirm_transfer, create_export, file
 from app.services.projects import lock_write, payload_digest, require_project
 from app.services.transfer_archives import checked_member
 from app.services.transfer_dispatch import commit_transfer
-from app.services.transfer_rpc import TransferRpc
+from app.services.transfer_rpc import TransferRpc, export_artifact
 from app.transfer_models import TransferJob
 from app.transfer_schemas import ExportCreate, SourceHistory, TransferConfirm, TransferList, TransferResult
 
@@ -105,7 +105,14 @@ def complete_import_upload(identifier: str, request: Request, tasks: BackgroundT
 @router.post("/projects/{project_id}/exports", response_model=TransferResult, status_code=201)
 def export_project(project_id: str, body: ExportCreate, request: Request, tasks: BackgroundTasks,
                    user: User = Depends(current_user), session: Session = Depends(get_db)):
-    value = create_export(session, user.id, project_id, body, get_settings())
+    settings = get_settings()
+    if gateway_enabled(settings):
+        dispatch = TransferRpc(settings)
+        value, marker = dispatch.create_export(user.id, project_id, body)
+        if marker is not None:
+            tasks.add_task(dispatch.run_transfer, marker, immediate=True)
+        return {"transfer": transfer_view(value)}
+    value = create_export(session, user.id, project_id, body, settings)
     start_accepted_transfer(request, tasks, value)
     return {"transfer": transfer_view(value)}
 
@@ -135,9 +142,19 @@ def transfer(identifier: str, user: User = Depends(current_user), session: Sessi
 def confirm(identifier: str, body: TransferConfirm, request: Request, tasks: BackgroundTasks,
             user: User = Depends(current_user), session: Session = Depends(get_db)):
     settings = get_settings()
-    if gateway_enabled(settings) and visible_transfer(settings, user.id, identifier).kind == "import":
+    if gateway_enabled(settings):
+        current = visible_transfer(settings, user.id, identifier)
         dispatch = TransferRpc(settings)
-        value, marker = CloudBaseImports(settings).resume(user.id, identifier, body.confirmation_hash, dispatch.publish_marker)
+        if current.kind == "import":
+            value, marker = CloudBaseImports(settings).resume(user.id, identifier, body.confirmation_hash, dispatch.publish_marker)
+        elif current.confirmation_hash != body.confirmation_hash:
+            raise AppError(409, "TRANSFER_CONFIRMATION_CHANGED", "确认内容已变化，请重新核对")
+        elif current.status in {"queued", "processing", "ready"}:
+            return {"transfer": transfer_view(current)}
+        elif current.status != "awaiting_confirmation":
+            raise AppError(409, "TRANSFER_NOT_CONFIRMABLE", "当前记录尚未通过完整检查")
+        else:
+            value, marker = dispatch.resume_export(user.id, identifier, confirmation_hash=body.confirmation_hash)
         if marker is not None:
             tasks.add_task(dispatch.run_transfer, marker, immediate=True)
         return {"transfer": transfer_view(value)}
@@ -146,14 +163,16 @@ def confirm(identifier: str, body: TransferConfirm, request: Request, tasks: Bac
     return {"transfer": transfer_view(value)}
 
 
-def ready_artifact(session, identifier, owner_id, settings):
-    value = require_transfer(session, identifier, owner_id)
+def ready_archive(value: TransferJob | TransferRecord, settings) -> Path:
     if value.status != "ready" or value.kind == "import":
         raise AppError(409, "TRANSFER_NOT_READY", "项目或游戏包尚未完成")
-    archive = (settings.data_dir / value.private_json["archive"]).resolve()
-    if not archive.is_relative_to(transfer_root(settings, identifier)):
+    key = value.private_json.get("archive")
+    if not isinstance(key, str) or not key:
         raise AppError(404, "TRANSFER_FILE_MISSING", "成品包文件缺失，原项目与导出记录保留")
-    return value, archive
+    archive = (settings.data_dir / key).resolve()
+    if not archive.is_relative_to(transfer_root(settings, value.id)):
+        raise AppError(404, "TRANSFER_FILE_MISSING", "成品包文件缺失，原项目与导出记录保留")
+    return archive
 
 
 def check_archive(value, archive):
@@ -166,7 +185,8 @@ def check_archive(value, archive):
 @router.get("/transfers/{identifier}/download")
 def download(identifier: str, request: Request, user: User = Depends(current_user), session: Session = Depends(get_db)):
     settings = get_settings()
-    value, archive = ready_artifact(session, identifier, user.id, settings)
+    value = export_artifact(settings, user.id, identifier) if gateway_enabled(settings) else require_transfer(session, identifier, user.id)
+    archive = ready_archive(value, settings)
     name = "SceneTurn 项目备份" if value.kind == "backup" else "SceneTurn 互动游戏"
     filename = f"{name}-v{value.source_revision}.zip"
     headers = {"Cache-Control": "private, no-store"}
@@ -181,9 +201,33 @@ def download(identifier: str, request: Request, user: User = Depends(current_use
 @router.post("/transfers/{identifier}/retry", response_model=TransferResult)
 def retry(identifier: str, request: Request, tasks: BackgroundTasks, user: User = Depends(current_user), session: Session = Depends(get_db)):
     settings = get_settings()
-    if gateway_enabled(settings) and visible_transfer(settings, user.id, identifier).kind == "import":
+    if gateway_enabled(settings):
+        current = export_artifact(settings, user.id, identifier)
         dispatch = TransferRpc(settings)
-        value, marker = CloudBaseImports(settings).resume(user.id, identifier, None, dispatch.publish_marker)
+        if current.kind == "import":
+            value, marker = CloudBaseImports(settings).resume(user.id, identifier, None, dispatch.publish_marker)
+        elif current.status in {"queued", "processing"}:
+            return {"transfer": transfer_view(current)}
+        else:
+            archive_sha = None
+            if current.status == "ready":
+                archive = ready_archive(current, settings)
+                storage = private_storage(settings)
+                if storage is None:
+                    raise AppError(503, "TRANSFER_STORAGE_FAILED", "成品包存储尚未配置")
+                key = archive.relative_to(settings.data_dir.resolve()).as_posix()
+                try:
+                    size = storage.object_size(key)
+                except AppError as error:
+                    if error.code != "STORAGE_OBJECT_MISSING":
+                        raise
+                else:
+                    if size == current.private_json["archiveBytes"]:
+                        raise AppError(409, "TRANSFER_ALREADY_READY", "当前成品包完整可用")
+                archive_sha = current.private_json["archiveSha256"]
+            elif current.status != "failed":
+                raise AppError(409, "TRANSFER_RETRY_NOT_ALLOWED", "请修复来源后重新导出")
+            value, marker = dispatch.resume_export(user.id, identifier, missing_archive_sha256=archive_sha)
         if marker is not None:
             tasks.add_task(dispatch.run_transfer, marker, immediate=True)
         return {"transfer": transfer_view(value)}
@@ -216,11 +260,12 @@ def retry(identifier: str, request: Request, tasks: BackgroundTasks, user: User 
 
 @router.get("/transfers/{identifier}/play/{name:path}")
 def play(identifier: str, name: str, request: Request, user: User = Depends(current_user), session: Session = Depends(get_db)):
-    return game_response(require_transfer(session, identifier, user.id), name, get_settings(), request,
-                         headers={"Cache-Control": "private, no-store"})
+    settings = get_settings()
+    value = export_artifact(settings, user.id, identifier) if gateway_enabled(settings) else require_transfer(session, identifier, user.id)
+    return game_response(value, name, settings, request, headers={"Cache-Control": "private, no-store"})
 
 
-def game_file_record(value: TransferJob, name: str, settings):
+def game_file_record(value: TransferJob | TransferRecord, name: str, settings):
     if value.status != "ready" or value.kind != "game":
         raise AppError(404, "GAME_VERSION_NOT_FOUND", "固定游戏版本不可用")
     root = (settings.data_dir / value.private_json["directory"]).resolve()
@@ -237,7 +282,7 @@ def game_file_record(value: TransferJob, name: str, settings):
     return target, expected
 
 
-def game_file(value: TransferJob, name: str, settings) -> Path:
+def game_file(value: TransferJob | TransferRecord, name: str, settings) -> Path:
     target, expected = game_file_record(value, name, settings)
     materialize_file(settings, target, max_bytes=expected["bytes"], sha256=expected["sha256"])
     if not target.is_file():
@@ -247,7 +292,7 @@ def game_file(value: TransferJob, name: str, settings) -> Path:
     return target
 
 
-def game_response(value: TransferJob, name: str, settings, request: Request, *, headers: dict[str, str]):
+def game_response(value: TransferJob | TransferRecord, name: str, settings, request: Request, *, headers: dict[str, str]):
     storage = private_storage(settings)
     if storage is not None and name != "index.html":
         target, _expected = game_file_record(value, name, settings)

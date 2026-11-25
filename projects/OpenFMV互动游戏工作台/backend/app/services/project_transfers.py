@@ -102,6 +102,12 @@ def history_snapshot(session, project):
     return result
 
 
+def export_asset_record(asset):
+    return {"sourceId": asset.id, "path": f"assets/{asset.id}{Path(asset.relpath).suffix.lower()}", "name": asset.name, "mimeType": asset.mime_type,
+        "bytes": asset.bytes, "sha256": asset.sha256, "relpath": asset.relpath, "posterRelpath": asset.poster_relpath,
+        "durationMs": asset.duration_ms, "width": asset.width, "height": asset.height}
+
+
 def checked_asset(asset, settings):
     try:
         path = resolve_asset_path(settings, asset.relpath)
@@ -111,15 +117,17 @@ def checked_asset(asset, settings):
         raise AppError(404, "EXPORT_MEDIA_MISSING", f"媒体文件缺失：{asset.name}") from error
     if path.stat().st_size != asset.bytes or file_sha256(path) != asset.sha256:
         raise AppError(409, "EXPORT_MEDIA_CHANGED", f"媒体文件与保存记录不一致：{asset.name}")
-    return {"sourceId": asset.id, "path": f"assets/{asset.id}{path.suffix.lower()}", "name": asset.name, "mimeType": asset.mime_type,
-        "bytes": asset.bytes, "sha256": asset.sha256, "relpath": asset.relpath, "posterRelpath": asset.poster_relpath,
-        "durationMs": asset.duration_ms, "width": asset.width, "height": asset.height}
+    return export_asset_record(asset)
 
 
 def game_snapshot(session, project, settings):
-    source = project.data_json
-    issues = [{"code": item["code"], "message": "项目仍有待处理的素材采用冲突", "sourceId": item.get("clipId")} for item in conflict_issues(session, project.id, project.owner_id)]
     assets = session.scalars(select(Asset).where(Asset.project_id == project.id, Asset.owner_id == project.owner_id)).all()
+    return game_snapshot_from_records(project.data_json, project.revision, assets,
+        conflict_issues(session, project.id, project.owner_id), settings, verify_source=True)
+
+
+def game_snapshot_from_records(source, revision, assets, conflicts, settings, *, verify_source):
+    issues = [{"code": item["code"], "message": "项目仍有待处理的素材采用冲突", "sourceId": item.get("clipId")} for item in conflicts]
     by_id, by_path = {asset.id: asset for asset in assets}, {}
     for asset in assets:
         by_path[f"/api/v1/assets/{asset.id}/content"] = (asset, False)
@@ -160,21 +168,22 @@ def game_snapshot(session, project, settings):
             issues.append({"code": "EXPORT_MEDIA_UNREGISTERED", "message": "播放媒体或互动背景图未完整登记", "sourceId": reference[:200]})
             continue
         asset, poster = match
-        record = checked_asset(asset, settings)
+        record = checked_asset(asset, settings) if verify_source else export_asset_record(asset)
         if poster:
             if not asset.poster_relpath:
                 issues.append({"code": "EXPORT_POSTER_MISSING", "message": "播放封面文件缺失", "sourceId": asset.id})
                 continue
-            poster_path = resolve_asset_path(settings, asset.poster_relpath)
-            record = {**record, "path": f"assets/{asset.id}-poster.jpg", "relpath": asset.poster_relpath,
-                "bytes": poster_path.stat().st_size, "sha256": file_sha256(poster_path)}
+            record = {**record, "path": f"assets/{asset.id}-poster.jpg", "relpath": asset.poster_relpath, "bytes": None, "sha256": None}
+            if verify_source:
+                poster_path = resolve_asset_path(settings, asset.poster_relpath)
+                record.update(bytes=poster_path.stat().st_size, sha256=file_sha256(poster_path))
         files[record["path"]] = record
         paths[reference] = record["path"]
     entry = source["metadata"].get("entryNodeId")
     if entry not in node_ids:
         issues.append({"code": "EXPORT_ENTRY_MISSING", "message": "项目缺少有效的游戏入口", "sourceId": entry})
     game = {"schemaVersion": 1, "title": source["title"], "graphData": rewrite_references(without_credentials(graph), {}, paths), "assets": [],
-        "metadata": {"entryNodeId": entry, "locale": "zh-CN", "resolution": {"width": 1280, "height": 720}, "sourceRevision": project.revision}}
+        "metadata": {"entryNodeId": entry, "locale": "zh-CN", "resolution": {"width": 1280, "height": 720}, "sourceRevision": revision}}
     return game, list(files.values()), issues
 
 
@@ -263,12 +272,16 @@ def build_archive(value, settings, attempt_id):
     files = value.private_json["files"]
     for record in files:
         source = resolve_asset_path(settings, record["relpath"])
-        if source.stat().st_size != record["bytes"] or file_sha256(source) != record["sha256"]:
+        sha256 = file_sha256(source)
+        # 封面使用独立生成的不可覆盖对象，在导出时保存实际文件摘要。
+        pending_poster = (value.kind == "game" and record["relpath"] == record.get("posterRelpath")
+                         and record["bytes"] is None and record["sha256"] is None)
+        if not pending_poster and (source.stat().st_size != record["bytes"] or sha256 != record["sha256"]):
             raise AppError(409, "EXPORT_MEDIA_CHANGED", f"媒体文件已变化：{record['name']}")
         target = directory / checked_member(record["path"])
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
-        if file_sha256(target) != record["sha256"]:
+        if file_sha256(target) != sha256:
             raise AppError(507, "EXPORT_COPY_FAILED", "媒体复制后的摘要不一致")
     def write_json(name, content):
         (directory / name).write_text(json.dumps(content, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
