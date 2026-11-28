@@ -1,0 +1,22 @@
+FROM node:24.22.3-bookworm-slim AS build
+WORKDIR /app
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1 \
+    NEXT_TELEMETRY_DISABLED=1
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
+COPY . .
+RUN npm run build
+
+FROM node:24.22.3-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000 \
+    BACKEND_URL=""
+COPY --from=build --chown=node:node /app/.next/standalone ./
+COPY --from=build /app/LICENSE ./LICENSE
+COPY --from=build /app/app/_features/creation-canvas/upstream/LICENSE ./licenses/canvas-LICENSE
+USER node
+EXPOSE 3000
+CMD ["node", "server.js"]

@@ -1,0 +1,64 @@
+name: sceneturn
+
+services:
+  sceneturn-api:
+    image: ${SCENETURN_API_IMAGE:?Set SCENETURN_API_IMAGE}
+    restart: unless-stopped
+    stop_grace_period: 2m
+    environment:
+      SCENETURN_DEPLOYMENT: standalone
+      SCENETURN_FRONTEND_ORIGIN: ${SCENETURN_ORIGIN:?Set SCENETURN_ORIGIN}
+      PROXY_SHARED_SECRET: ${SCENETURN_PROXY_SHARED_SECRET:?Set SCENETURN_PROXY_SHARED_SECRET}
+      SCENETURN_COOKIE_SECURE: "true"
+      SCENETURN_WORKER_ENABLED: "true"
+      SCENETURN_TEXT_ADMIN_EMAIL: ${SCENETURN_TEXT_ADMIN_EMAIL:-}
+    volumes:
+      - data:/opt/sceneturn/data
+    networks:
+      - edge
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; assert urlopen('http://127.0.0.1:8080/api/v1/health', timeout=3).status == 200\""]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 35s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  sceneturn-web:
+    image: ${SCENETURN_WEB_IMAGE:?Set SCENETURN_WEB_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      sceneturn-api:
+        condition: service_healthy
+    environment:
+      BACKEND_URL: http://sceneturn-api:8080
+      PROXY_SHARED_SECRET: ${SCENETURN_PROXY_SHARED_SECRET:?Set SCENETURN_PROXY_SHARED_SECRET}
+      SCENETURN_DESKTOP_LOCAL_AI: "0"
+      SCENETURN_DESKTOP_LOCAL_ASSETS: "0"
+      SCENETURN_PUBLIC_PREVIEW: "0"
+      SCENETURN_PREMIERE_PUBLICATION_SLUG: ${SCENETURN_PREMIERE_PUBLICATION_SLUG:-}
+    networks:
+      - edge
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/zh-CN', {redirect:'error',signal:AbortSignal.timeout(4000)}).then(response => { if (!response.ok) process.exitCode = 1; }).catch(() => { process.exitCode = 1; });\""]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 35s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  edge:
+    external: true
+    name: ${SCENETURN_EDGE_NETWORK:?Set SCENETURN_EDGE_NETWORK}
+
+volumes:
+  data:

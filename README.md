@@ -1,14 +1,14 @@
 <div align="center">
 
-<img src="projects/OpenFMV互动游戏工作台/frontend/public/sceneturn/icon.svg" alt="SceneTurn" width="88">
+<img src="projects/SceneTurn/frontend/public/sceneturn/icon.svg" alt="SceneTurn" width="88">
 
 # SceneTurn
 
 **让观众决定下一幕**
 
-生成影像素材、编排剧情分支，制作观众可亲自选择的互动影片。[SceneTurn 项目指南](projects/OpenFMV互动游戏工作台/README.md)
+生成影像素材、编排剧情分支，制作观众可亲自选择的互动影片。[SceneTurn 项目指南](projects/SceneTurn/README.md)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![SceneTurn MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](projects/SceneTurn/LICENSE)
 ![面向人群](https://img.shields.io/badge/面向-非技术产品经理-green.svg)
 ![系统](https://img.shields.io/badge/系统-macOS-lightgrey.svg)
 ![工具](https://img.shields.io/badge/工具-Claude_Code_%7C_Codex_%7C_Pi-black.svg)
@@ -193,4 +193,6 @@
 
 ## 📄 许可
 
-[MIT License](./LICENSE) © 2025 hubooooooo
+SceneTurn 项目采用 MIT 许可。[SceneTurn 项目许可证](projects/SceneTurn/LICENSE)
+
+Idea to Launch 工具包采用 MIT 许可，版权归 hubooooooo（2025）。[工具包许可证](./LICENSE)
