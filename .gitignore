@@ -7,8 +7,10 @@ __pycache__/
 .intermediate/
 node_modules/
 .next/
+.next-dev/
+*.tsbuildinfo
 dist/
+out/
 data/
 .vefaas/
 .DS_Store
-projects/忆谈/
